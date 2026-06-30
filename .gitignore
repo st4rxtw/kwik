@@ -502,3 +502,4 @@ runtime/build/switch/build
 
 #Plugin
 plugin/*.bld
+/build
