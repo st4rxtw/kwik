@@ -1,14 +1,11 @@
 #include "gml_runtime.h"
+#include "render.h"
 
-#include <cstdio>
 #include <vector>
 
 namespace gml {
 
 int run_game(const ObjectDef* objects, int object_count, const RoomDef& room) {
-    std::printf("room \"%s\" %dx%d, %d instances\n", room.name, room.width, room.height,
-                room.instance_count);
-
     std::vector<Instance> instances;
     instances.reserve(room.instance_count);
     for (int i = 0; i < room.instance_count; ++i) {
@@ -21,20 +18,22 @@ int run_game(const ObjectDef* objects, int object_count, const RoomDef& room) {
         instances.push_back(inst);
     }
 
+    if (!render_init(room.name, room.width, room.height, room.bg_color)) return 1;
+
     for (Instance& inst : instances) {
         if (inst.object_index < 0 || inst.object_index >= object_count) continue;
         EventFn fn = objects[inst.object_index].create;
         if (fn) fn(inst);
     }
 
-    const int frames = 3;
-    for (int f = 0; f < frames; ++f) {
-        std::printf("-- frame %d --\n", f);
+    while (!render_should_close()) {
         for (Instance& inst : instances) {
             if (inst.object_index < 0 || inst.object_index >= object_count) continue;
             EventFn fn = objects[inst.object_index].step;
             if (fn) fn(inst);
         }
+
+        render_begin_frame();
         for (Instance& inst : instances) {
             if (inst.object_index < 0 || inst.object_index >= object_count) continue;
             EventFn fn = objects[inst.object_index].draw;
@@ -45,8 +44,10 @@ int run_game(const ObjectDef* objects, int object_count, const RoomDef& room) {
             EventFn fn = objects[inst.object_index].draw_gui;
             if (fn) fn(inst);
         }
+        render_end_frame();
     }
 
+    render_shutdown();
     return 0;
 }
 

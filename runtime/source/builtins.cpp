@@ -1,6 +1,5 @@
 #include "gml_runtime.h"
-
-#include <cstdio>
+#include "render.h"
 
 namespace gml {
 
@@ -10,7 +9,7 @@ double& global_var(const std::string& name) {
 }
 
 void draw_text(double x, double y, const std::string& text) {
-    std::printf("draw_text @ (%g, %g): \"%s\"\n", x, y, text.c_str());
+    render_draw_text(x, y, text);
 }
 
 }
