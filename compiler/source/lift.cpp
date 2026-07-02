@@ -86,31 +86,6 @@ static int stack_delta(const Instruction& in) {
     }
 }
 
-static int net_delta(const GameData& gd, const std::vector<Instruction>& instrs, size_t i) {
-    const Instruction& in = instrs[i];
-    switch (in.opcode) {
-        case 0xC0: case 0xC1: case 0xC2: case 0xC3:
-            if (in.type1 == 0x5 && i >= 2 && instrs[i - 1].opcode == 0x84 &&
-                instrs[i - 1].operand >= 0 && instrs[i - 2].opcode == 0x84 &&
-                is_inst_type(instrs[i - 2].operand) && instrs[i - 2].operand != -9)
-                return -1;
-            if (in.type1 == 0x5 && i > 0 && instrs[i - 1].opcode == 0x84 &&
-                is_inst_type(instrs[i - 1].operand)) {
-                if (instrs[i - 1].operand == -9)
-                    return gd.var_at(in.address).name.empty() ? 0 : -1;
-                return 0;
-            }
-            return 1;
-        case 0x45:
-            if (i >= 2 && instrs[i - 1].opcode == 0x84 && instrs[i - 2].opcode == 0x84 &&
-                is_inst_type(instrs[i - 2].operand))
-                return -3;
-            return -1;
-        default:
-            return stack_delta(in);
-    }
-}
-
 static std::string binop_helper(uint8_t op) {
     switch (op) {
         case 0x08: return "gml_mul";
@@ -152,6 +127,76 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
     std::unordered_map<uint32_t, size_t> idx_of;
     for (size_t i = 0; i < n; ++i) idx_of[instrs[i].address] = i;
 
+    std::vector<int> delta(n, 0);
+    std::vector<int> mode(n, 0);
+    {
+        std::vector<char> ms;
+        auto push_m = [&](char m) { ms.push_back(m); };
+        auto pop_m = [&]() { if (!ms.empty()) ms.pop_back(); };
+        for (size_t i = 0; i < n; ++i) {
+            const Instruction& in = instrs[i];
+            int ld = (int)ms.size();
+            switch (in.opcode) {
+                case 0x84:
+                    mode[i] = 0; delta[i] = 1; push_m(in.operand == -9 ? 1 : 0);
+                    break;
+                case 0xC0: case 0xC1: case 0xC2: case 0xC3:
+                    if (in.type1 == 0x5 && ld >= 2 && ms[ld - 1]) {
+                        mode[i] = 13; delta[i] = -1; pop_m(); if (!ms.empty()) ms.back() = 0;
+                    } else if (in.type1 == 0x5 && i >= 2 && instrs[i - 1].opcode == 0x84 &&
+                               instrs[i - 1].operand >= 0 && instrs[i - 2].opcode == 0x84 &&
+                               is_inst_type(instrs[i - 2].operand) && instrs[i - 2].operand != -9) {
+                        mode[i] = 11; delta[i] = -1; pop_m(); if (!ms.empty()) ms.back() = 0;
+                    } else if (in.type1 == 0x5 && i > 0 && instrs[i - 1].opcode == 0x84 &&
+                               is_inst_type(instrs[i - 1].operand)) {
+                        mode[i] = 12; delta[i] = 0; if (!ms.empty()) ms.back() = 0;
+                    } else {
+                        mode[i] = 10; delta[i] = 1; push_m(0);
+                    }
+                    break;
+                case 0x86:
+                    if (ld >= 2 && ms[ld - 1]) {
+                        mode[i] = 31; delta[i] = 2;
+                        char a = ms[ld - 2], b = ms[ld - 1];
+                        push_m(a); push_m(b);
+                    } else {
+                        mode[i] = 30; delta[i] = 1; push_m(ld > 0 ? ms[ld - 1] : 0);
+                    }
+                    break;
+                case 0x45:
+                    if (ld >= 3 && ms[ld - 1]) {
+                        mode[i] = 23; delta[i] = -3; pop_m(); pop_m(); pop_m();
+                    } else if (ld >= 3 && ms[ld - 2]) {
+                        mode[i] = 22; delta[i] = -3; pop_m(); pop_m(); pop_m();
+                    } else if (i >= 2 && instrs[i - 1].opcode == 0x84 && instrs[i - 2].opcode == 0x84 &&
+                               is_inst_type(instrs[i - 2].operand)) {
+                        mode[i] = 21; delta[i] = -3; pop_m(); pop_m(); pop_m();
+                    } else {
+                        mode[i] = 20; delta[i] = -1; pop_m();
+                    }
+                    break;
+                case 0xBA:
+                    if (ld >= 2 && ms[ld - 1]) {
+                        mode[i] = 40; delta[i] = -2; pop_m(); pop_m();
+                    } else {
+                        mode[i] = 41; delta[i] = -1; pop_m();
+                    }
+                    break;
+                case 0xBB:
+                    mode[i] = 42; delta[i] = 0;
+                    break;
+                default: {
+                    int sd = stack_delta(in);
+                    delta[i] = sd; mode[i] = 0;
+                    for (int k = 0; k < sd; ++k) push_m(0);
+                    for (int k = 0; k < -sd; ++k) pop_m();
+                    if (in.opcode >= 0x07 && in.opcode <= 0x15 && !ms.empty()) ms.back() = 0;
+                    break;
+                }
+            }
+        }
+    }
+
     std::vector<int> depth_before(n, -1);
     int maxd = 1;
     if (n > 0) {
@@ -182,7 +227,7 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
             } else if (in.opcode == 0x9C || in.opcode == 0x9D) {
                 // ret / exit: no successor
             } else {
-                int dout = din + net_delta(gd, instrs, i);
+                int dout = din + delta[i];
                 if (dout < 0) dout = 0;
                 if (dout > maxd) maxd = dout;
                 visit(i + 1, dout);
@@ -223,31 +268,25 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
                 ++d;
                 break;
             case 0xC0: case 0xC1: case 0xC2: case 0xC3: {
-                if (in.type1 == 0x5 && i >= 2 && instrs[i - 1].opcode == 0x84 &&
-                    instrs[i - 1].operand >= 0 && instrs[i - 2].opcode == 0x84 &&
-                    is_inst_type(instrs[i - 2].operand) && instrs[i - 2].operand != -9 &&
-                    d >= 2) {
+                if (mode[i] == 13 && d >= 2) {
+                    std::string name = gd.var_at(in.address).name;
+                    out << "    " << S(d - 2) << " = kwik_inst_get(" << S(d - 2) << ", "
+                        << quote(name) << ");\n";
+                    d -= 1;
+                    break;
+                }
+                if (mode[i] == 11 && d >= 2) {
                     std::string r = var_ref(gd, in, locals);
                     if (r.empty()) r = "Value()";
                     out << "    " << S(d - 2) << " = " << r << ";\n";
                     d -= 1;
                     break;
                 }
-                if (in.type1 == 0x5 && i > 0 && instrs[i - 1].opcode == 0x84 &&
-                    is_inst_type(instrs[i - 1].operand)) {
-                    std::string name = gd.var_at(in.address).name;
-                    if (instrs[i - 1].operand == -9 && d >= 2 && !name.empty()) {
-                        out << "    " << S(d - 2) << " = kwik_inst_get(" << S(d - 2) << ", "
-                            << quote(name) << ");\n";
-                        d -= 1;
-                        break;
-                    }
-                    if (d >= 1) {
-                        std::string r = var_ref(gd, in, locals);
-                        if (r.empty()) r = "Value()";
-                        out << "    " << S(d - 1) << " = " << r << ";\n";
-                        break;
-                    }
+                if (mode[i] == 12 && d >= 1) {
+                    std::string r = var_ref(gd, in, locals);
+                    if (r.empty()) r = "Value()";
+                    out << "    " << S(d - 1) << " = " << r << ";\n";
+                    break;
                 }
                 std::string rhs;
                 if (in.type1 == 0x6 && in.extra < gd.strings().size())
@@ -283,7 +322,14 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
                 }
                 break;
             case 0x86:
-                if (d >= 1) { out << "    " << S(d) << " = " << S(d - 1) << ";\n"; ++d; }
+                if (mode[i] == 31 && d >= 2) {
+                    out << "    " << S(d) << " = " << S(d - 2) << ";\n";
+                    out << "    " << S(d + 1) << " = " << S(d - 1) << ";\n";
+                    d += 2;
+                } else if (d >= 1) {
+                    out << "    " << S(d) << " = " << S(d - 1) << ";\n";
+                    ++d;
+                }
                 break;
             case 0x07:
                 break;
@@ -309,9 +355,20 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
                 if (d >= 1) out << "    " << S(d - 1) << " = gml_not(" << S(d - 1) << ");\n";
                 break;
             case 0x45: {
-                if (i >= 2 && instrs[i - 1].opcode == 0x84 && instrs[i - 2].opcode == 0x84 &&
-                    is_inst_type(instrs[i - 2].operand) && d >= 3) {
-                    std::string name = gd.var_at(in.address).name;
+                std::string name = gd.var_at(in.address).name;
+                if (mode[i] == 23 && d >= 3) {
+                    out << "    kwik_inst_set(" << S(d - 2) << ", " << quote(name) << ", "
+                        << S(d - 3) << ");\n";
+                    d -= 3;
+                    break;
+                }
+                if (mode[i] == 22 && d >= 3) {
+                    out << "    kwik_inst_set(" << S(d - 3) << ", " << quote(name) << ", "
+                        << S(d - 1) << ");\n";
+                    d -= 3;
+                    break;
+                }
+                if (mode[i] == 21 && d >= 3) {
                     int pfx = instrs[i - 2].operand;
                     if (pfx == -9) {
                         if (!name.empty())
@@ -371,10 +428,19 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
             case 0x9D:
                 out << "    return;\n";
                 break;
-            case 0xBA:
-                if (d > 0) --d;
+            case 0xBA: {
+                char w[24];
+                std::snprintf(w, sizeof(w), "__w_%x", in.address);
+                int ref = (mode[i] == 40 && d >= 2) ? d - 2 : (d >= 1 ? d - 1 : 0);
+                out << "    for (Instance* " << w << " = kwik_with_first(" << S(ref) << "); " << w
+                    << "; " << w << " = kwik_with_next()) {\n";
+                out << "    Instance& self = *" << w << "; (void)self;\n";
+                d -= (mode[i] == 40) ? 2 : 1;
+                if (d < 0) d = 0;
                 break;
+            }
             case 0xBB:
+                out << "    }\n";
                 break;
             default:
                 break;
@@ -393,10 +459,13 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
 }
 
 struct ObjectSlots {
+    std::string pre_create;
     std::string create;
     std::string step;
     std::string draw;
     std::string draw_gui;
+    std::string room_start;
+    std::vector<std::pair<std::string, std::string>> collisions;
 };
 
 static int obj_index_for(const GameData& gd, const std::string& code_name, std::string* suffix_out) {
@@ -424,13 +493,22 @@ static void assign_event(const GameData& gd, const std::string& code_name,
     int best = obj_index_for(gd, code_name, &suffix);
     if (best < 0) return;
 
+    ObjectSlots& s = slots[best];
+
+    const std::string coll = "Collision_";
+    if (suffix.compare(0, coll.size(), coll) == 0) {
+        s.collisions.emplace_back(suffix.substr(coll.size()), code_name);
+        return;
+    }
+
     size_t us = suffix.find_last_of('_');
     if (us == std::string::npos) return;
     std::string event = suffix.substr(0, us);
     int sub = std::atoi(suffix.substr(us + 1).c_str());
 
-    ObjectSlots& s = slots[best];
-    if (event == "Create" && sub == 0)
+    if (event == "PreCreate" && sub == 0)
+        s.pre_create = code_name;
+    else if (event == "Create" && sub == 0)
         s.create = code_name;
     else if (event == "Step" && sub == 0)
         s.step = code_name;
@@ -438,6 +516,8 @@ static void assign_event(const GameData& gd, const std::string& code_name,
         s.draw = code_name;
     else if (event == "Draw" && sub == 64)
         s.draw_gui = code_name;
+    else if (event == "Other" && sub == 4)
+        s.room_start = code_name;
 }
 
 static std::string slot_or_null(const std::string& fn) {
@@ -455,12 +535,30 @@ static void emit_object_table(std::ostream& os, const GameData& gd) {
     for (const auto& e : gd.code())
         assign_event(gd, e.name, slots);
 
+    auto obj_by_name = [&](const std::string& nm) -> int {
+        for (size_t j = 0; j < gd.objects().size(); ++j)
+            if (gd.objects()[j].name == nm) return static_cast<int>(j);
+        return -1;
+    };
+
+    for (size_t i = 0; i < gd.objects().size(); ++i) {
+        if (slots[i].collisions.empty()) continue;
+        os << "static const CollisionHandler g_coll_" << i << "[] = {\n";
+        for (const auto& c : slots[i].collisions)
+            os << "    { " << obj_by_name(c.first) << ", " << c.second << " },\n";
+        os << "};\n";
+    }
+
     os << "const ObjectDef g_objects[] = {\n";
     for (size_t i = 0; i < gd.objects().size(); ++i) {
         const ObjectSlots& s = slots[i];
-        os << "    { " << quote(gd.objects()[i].name) << ", " << slot_or_null(s.create) << ", "
+        std::string coll = s.collisions.empty() ? "nullptr" : ("g_coll_" + std::to_string(i));
+        os << "    { " << quote(gd.objects()[i].name) << ", " << slot_or_null(s.pre_create) << ", "
+           << slot_or_null(s.create) << ", "
            << slot_or_null(s.step) << ", " << slot_or_null(s.draw) << ", " << slot_or_null(s.draw_gui)
-           << ", " << gd.objects()[i].sprite_index << " },\n";
+           << ", " << slot_or_null(s.room_start) << ", " << gd.objects()[i].sprite_index << ", "
+           << gd.objects()[i].parent_index << ", " << gd.objects()[i].persistent << ", " << coll
+           << ", " << s.collisions.size() << " },\n";
     }
     os << "};\n";
     os << "const int g_object_count = " << gd.objects().size() << ";\n\n";
@@ -470,11 +568,15 @@ static void emit_room_data(std::ostream& os, const GameData& gd) {
     const auto& rooms = gd.rooms();
     for (size_t i = 0; i < rooms.size(); ++i) {
         os << "static const InstanceInit g_instances_" << i << "[] = {\n";
-        for (const auto& ri : rooms[i].instances)
+        for (const auto& ri : rooms[i].instances) {
+            std::string cc = "nullptr";
+            if (ri.creation_code >= 0 && ri.creation_code < (int)gd.code().size())
+                cc = gd.code()[ri.creation_code].name;
             os << "    { " << ri.object_index << ", " << ri.x << ", " << ri.y << ", " << ri.id
                << ", " << ri.scale_x << ", " << ri.scale_y << ", " << ri.image_index << ", "
-               << ri.angle << ", " << ri.depth << " },\n";
-        os << "    { 0, 0, 0, 0, 1, 1, 0, 0, 0 },\n";
+               << ri.angle << ", " << ri.depth << ", " << cc << " },\n";
+        }
+        os << "    { 0, 0, 0, 0, 1, 1, 0, 0, 0, nullptr },\n";
         os << "};\n";
         os << "static const RoomBg g_bgs_" << i << "[] = {\n";
         for (const auto& bg : rooms[i].backgrounds)
@@ -579,7 +681,9 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
         data << "static const KwikSprite g_sprites_data[] = {\n";
         for (const auto& s : ex.sprites)
             data << "    { " << s.first_frame << ", " << s.frame_count << ", " << s.origin_x
-                 << ", " << s.origin_y << ", " << s.speed << ", " << s.speed_type << " },\n";
+                 << ", " << s.origin_y << ", " << s.speed << ", " << s.speed_type << ", "
+                 << s.bbox_left << ", " << s.bbox_top << ", " << s.bbox_right << ", "
+                 << s.bbox_bottom << " },\n";
         data << "};\n";
         data << "const KwikSprite* g_sprites = g_sprites_data;\n";
     } else {

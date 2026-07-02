@@ -164,6 +164,8 @@ void GameData::parse_objects() {
         GameObject o;
         o.name = string_at_offset(u32(ptr));
         o.sprite_index = i32(ptr + 4);
+        o.persistent = i32(ptr + 24);
+        o.parent_index = i32(ptr + 28);
         objects_.push_back(o);
     }
 }
@@ -203,6 +205,7 @@ void GameData::parse_rooms() {
             ri.y = i32(ip + 4);
             ri.object_index = i32(ip + 8);
             ri.id = i32(ip + 12);
+            ri.creation_code = i32(ip + 16);
             float sx, sy, rot;
             uint32_t usx = u32(ip + 20), usy = u32(ip + 24), urot = u32(ip + 40);
             std::memcpy(&sx, &usx, 4);

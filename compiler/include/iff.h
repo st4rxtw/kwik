@@ -29,6 +29,8 @@ struct VarRef {
 struct GameObject {
     std::string name;
     int32_t sprite_index = -1;
+    int32_t parent_index = -100;
+    int32_t persistent = 0;
 };
 
 struct RoomInstance {
@@ -41,6 +43,7 @@ struct RoomInstance {
     int32_t image_index;
     double angle;
     int32_t depth = 0;
+    int32_t creation_code = -1;
 };
 
 struct RoomBackground {

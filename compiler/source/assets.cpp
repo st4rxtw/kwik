@@ -184,6 +184,10 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
             info.name = gd.string_at_offset(gd.u32(sp));
             info.width = gd.i32(sp + 4);
             info.height = gd.i32(sp + 8);
+            info.bbox_left = gd.i32(sp + 12);
+            info.bbox_right = gd.i32(sp + 16);
+            info.bbox_bottom = gd.i32(sp + 20);
+            info.bbox_top = gd.i32(sp + 24);
             info.origin_x = gd.i32(sp + 48);
             info.origin_y = gd.i32(sp + 52);
             info.first_frame = images.size();

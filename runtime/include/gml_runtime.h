@@ -54,13 +54,24 @@ struct Instance {
 
 using EventFn = void (*)(Instance&);
 
+struct CollisionHandler {
+    int other_object;
+    EventFn fn;
+};
+
 struct ObjectDef {
     const char* name;
+    EventFn pre_create;
     EventFn create;
     EventFn step;
     EventFn draw;
     EventFn draw_gui;
+    EventFn room_start;
     int sprite_index;
+    int parent_index;
+    int persistent;
+    const CollisionHandler* collisions;
+    int collision_count;
 };
 
 struct KwikSprite {
@@ -70,6 +81,10 @@ struct KwikSprite {
     int origin_y;
     double speed;
     int speed_type;
+    int bbox_left;
+    int bbox_top;
+    int bbox_right;
+    int bbox_bottom;
 };
 
 struct KwikFont {
@@ -95,6 +110,7 @@ struct InstanceInit {
     int image_index;
     double angle;
     double depth;
+    EventFn creation_code;
 };
 
 struct RoomBg {
@@ -135,6 +151,9 @@ void kwik_room_goto_previous();
 
 Value kwik_inst_get(const Value& who, const std::string& name);
 void kwik_inst_set(const Value& who, const std::string& name, const Value& val);
+
+Instance* kwik_with_first(const Value& target);
+Instance* kwik_with_next();
 
 Value& global_var(const std::string& name);
 Value& builtin_var(const std::string& name);

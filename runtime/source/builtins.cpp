@@ -162,9 +162,6 @@ Value clamp(const Value& v, const Value& lo, const Value& hi) {
 }
 Value round(const Value& v) { return Value(std::nearbyint(static_cast<double>(v))); }
 
-Value instance_find(const Value&, const Value&) { return Value(-4.0); }
-Value place_meeting(const Value&, const Value&, const Value&) { return Value(0.0); }
-
 Value keyboard_check(const Value& key) {
     return Value(render_key_down(static_cast<int>(static_cast<double>(key))) ? 1.0 : 0.0);
 }

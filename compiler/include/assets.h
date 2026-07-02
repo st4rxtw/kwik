@@ -16,6 +16,10 @@ struct SpriteInfo {
     int origin_y;
     int width;
     int height;
+    int bbox_left;
+    int bbox_top;
+    int bbox_right;
+    int bbox_bottom;
     double speed;
     int speed_type;
 };
