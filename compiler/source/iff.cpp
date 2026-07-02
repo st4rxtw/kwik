@@ -1,6 +1,7 @@
 #include "iff.h"
 
 #include <cstdio>
+#include <cstring>
 
 namespace kwik {
 
@@ -202,6 +203,15 @@ void GameData::parse_rooms() {
             ri.y = i32(ip + 4);
             ri.object_index = i32(ip + 8);
             ri.id = i32(ip + 12);
+            float sx, sy, rot;
+            uint32_t usx = u32(ip + 20), usy = u32(ip + 24), urot = u32(ip + 40);
+            std::memcpy(&sx, &usx, 4);
+            std::memcpy(&sy, &usy, 4);
+            std::memcpy(&rot, &urot, 4);
+            ri.scale_x = (sx == 0.0f) ? 1.0 : sx;
+            ri.scale_y = (sy == 0.0f) ? 1.0 : sy;
+            ri.image_index = i32(ip + 32);
+            ri.angle = rot;
             r.instances.push_back(ri);
         }
 
@@ -221,12 +231,35 @@ void GameData::parse_rooms() {
             uint32_t lc = u32(layers);
             for (uint32_t k = 0; k < lc; ++k) {
                 uint32_t lp = u32(layers + 4 + k * 4);
-                if (u32(lp + 8) != 1) continue;
-                int32_t xoff = i32(lp + 16);
-                int32_t yoff = i32(lp + 20);
-                int32_t sprite = i32(lp + 56);
-                if (sprite < 0 || sprite >= sprite_count) continue;
-                r.backgrounds.push_back(RoomBackground{sprite, xoff, yoff});
+                uint32_t ltype = u32(lp + 8);
+                int32_t depth = i32(lp + 12);
+                if (ltype == 1) {
+                    int32_t xoff = i32(lp + 16);
+                    int32_t yoff = i32(lp + 20);
+                    int32_t sprite = i32(lp + 56);
+                    if (sprite < 0 || sprite >= sprite_count) continue;
+                    r.backgrounds.push_back(RoomBackground{sprite, xoff, yoff});
+                } else if (ltype == 2) {
+                    for (uint32_t off = 36; off <= 64; off += 4) {
+                        uint32_t n = u32(lp + off);
+                        if (n == 0 || n > r.instances.size()) continue;
+                        bool ok = true;
+                        for (uint32_t j = 0; j < n && ok; ++j) {
+                            uint32_t id = u32(lp + off + 4 + j * 4);
+                            bool found = false;
+                            for (const auto& ins : r.instances)
+                                if (static_cast<uint32_t>(ins.id) == id) { found = true; break; }
+                            if (!found) ok = false;
+                        }
+                        if (!ok) continue;
+                        for (uint32_t j = 0; j < n; ++j) {
+                            uint32_t id = u32(lp + off + 4 + j * 4);
+                            for (auto& ins : r.instances)
+                                if (static_cast<uint32_t>(ins.id) == id) ins.depth = depth;
+                        }
+                        break;
+                    }
+                }
             }
         }
         rooms_.push_back(r);

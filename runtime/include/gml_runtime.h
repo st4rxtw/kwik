@@ -90,6 +90,11 @@ struct InstanceInit {
     double x;
     double y;
     int id;
+    double scale_x;
+    double scale_y;
+    int image_index;
+    double angle;
+    double depth;
 };
 
 struct RoomBg {
@@ -127,6 +132,9 @@ bool kwik_draw_text_custom(double x, double y, const std::string& text);
 void kwik_room_goto(int index);
 void kwik_room_goto_next();
 void kwik_room_goto_previous();
+
+Value kwik_inst_get(const Value& who, const std::string& name);
+void kwik_inst_set(const Value& who, const std::string& name, const Value& val);
 
 Value& global_var(const std::string& name);
 Value& builtin_var(const std::string& name);

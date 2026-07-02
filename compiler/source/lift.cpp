@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -58,6 +59,8 @@ static std::string var_ref(const GameData& gd, const Instruction& in, std::set<s
 }
 
 static bool is_branch(uint8_t op) { return op == 0xB6 || op == 0xB7 || op == 0xB8; }
+
+static bool is_inst_type(int op) { return op >= -9 && op <= -1 && op != -8; }
 
 static int stack_delta(const Instruction& in) {
     switch (in.opcode) {
@@ -160,16 +163,45 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
                 ++d;
                 break;
             case 0xC0: case 0xC1: case 0xC2: case 0xC3: {
+                if (in.type1 == 0x5 && i > 0 && instrs[i - 1].opcode == 0x84 &&
+                    is_inst_type(instrs[i - 1].operand)) {
+                    std::string name = gd.var_at(in.address).name;
+                    if (instrs[i - 1].operand == -9 && d >= 2 && !name.empty()) {
+                        out << "    " << S(d - 2) << " = kwik_inst_get(" << S(d - 2) << ", "
+                            << quote(name) << ");\n";
+                        d -= 1;
+                        break;
+                    }
+                    if (d >= 1) {
+                        std::string r = var_ref(gd, in, locals);
+                        if (r.empty()) r = "Value()";
+                        out << "    " << S(d - 1) << " = " << r << ";\n";
+                        break;
+                    }
+                }
                 std::string rhs;
                 if (in.type1 == 0x6 && in.extra < gd.strings().size())
                     rhs = quote(gd.strings()[in.extra]);
                 else if (in.type1 == 0x5) {
                     rhs = var_ref(gd, in, locals);
                     if (rhs.empty()) rhs = "Value()";
-                } else if (in.type1 == 0xF)
+                } else if (in.type1 == 0xF) {
                     rhs = std::to_string(in.operand);
-                else
+                } else if (in.type1 == 0x0) {
+                    uint64_t bits = static_cast<uint64_t>(gd.u32(in.address + 4)) |
+                                    (static_cast<uint64_t>(gd.u32(in.address + 8)) << 32);
+                    double dv;
+                    std::memcpy(&dv, &bits, 8);
+                    char buf[40];
+                    std::snprintf(buf, sizeof(buf), "%.17g", dv);
+                    rhs = buf;
+                } else if (in.type1 == 0x3) {
+                    uint64_t bits = static_cast<uint64_t>(gd.u32(in.address + 4)) |
+                                    (static_cast<uint64_t>(gd.u32(in.address + 8)) << 32);
+                    rhs = std::to_string(static_cast<int64_t>(bits)) + "LL";
+                } else {
                     rhs = std::to_string(static_cast<int32_t>(in.extra));
+                }
                 out << "    " << S(d) << " = " << rhs << ";\n";
                 ++d;
                 break;
@@ -207,6 +239,21 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
                 if (d >= 1) out << "    " << S(d - 1) << " = gml_not(" << S(d - 1) << ");\n";
                 break;
             case 0x45: {
+                if (i >= 2 && instrs[i - 1].opcode == 0x84 && instrs[i - 2].opcode == 0x84 &&
+                    is_inst_type(instrs[i - 2].operand) && d >= 3) {
+                    std::string name = gd.var_at(in.address).name;
+                    int pfx = instrs[i - 2].operand;
+                    if (pfx == -9) {
+                        if (!name.empty())
+                            out << "    kwik_inst_set(" << S(d - 1) << ", " << quote(name) << ", "
+                                << S(d - 3) << ");\n";
+                    } else {
+                        std::string dst = var_ref(gd, in, locals);
+                        if (!dst.empty()) out << "    " << dst << " = " << S(d - 3) << ";\n";
+                    }
+                    d -= 3;
+                    break;
+                }
                 std::string dst = var_ref(gd, in, locals);
                 if (!dst.empty() && d >= 1)
                     out << "    " << dst << " = " << S(d - 1) << ";\n";
@@ -354,8 +401,10 @@ static void emit_room_data(std::ostream& os, const GameData& gd) {
     for (size_t i = 0; i < rooms.size(); ++i) {
         os << "static const InstanceInit g_instances_" << i << "[] = {\n";
         for (const auto& ri : rooms[i].instances)
-            os << "    { " << ri.object_index << ", " << ri.x << ", " << ri.y << ", " << ri.id << " },\n";
-        os << "    { 0, 0, 0, 0 },\n";
+            os << "    { " << ri.object_index << ", " << ri.x << ", " << ri.y << ", " << ri.id
+               << ", " << ri.scale_x << ", " << ri.scale_y << ", " << ri.image_index << ", "
+               << ri.angle << ", " << ri.depth << " },\n";
+        os << "    { 0, 0, 0, 0, 1, 1, 0, 0, 0 },\n";
         os << "};\n";
         os << "static const RoomBg g_bgs_" << i << "[] = {\n";
         for (const auto& bg : rooms[i].backgrounds)

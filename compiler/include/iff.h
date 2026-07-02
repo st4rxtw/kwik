@@ -36,6 +36,11 @@ struct RoomInstance {
     int32_t y;
     int32_t object_index;
     int32_t id;
+    double scale_x;
+    double scale_y;
+    int32_t image_index;
+    double angle;
+    int32_t depth = 0;
 };
 
 struct RoomBackground {

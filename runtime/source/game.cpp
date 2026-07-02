@@ -1,7 +1,9 @@
 #include "gml_runtime.h"
 #include "render.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <vector>
 
 namespace gml {
@@ -10,6 +12,32 @@ static int g_current_room = -1;
 static int g_pending_room = -1;
 static int g_room_total = 0;
 static const RoomDef* g_room_defs = nullptr;
+static std::vector<Instance>* g_live = nullptr;
+
+static Instance* find_instance(int who) {
+    if (!g_live) return nullptr;
+    for (Instance& inst : *g_live) {
+        if (who >= 100000 ? (inst.id == who) : (inst.object_index == who))
+            return &inst;
+    }
+    return nullptr;
+}
+
+Value kwik_inst_get(const Value& who, const std::string& name) {
+    Instance* inst = find_instance((int)(double)who);
+    if (!inst) return Value();
+    if (name == "x") return Value(inst->x);
+    if (name == "y") return Value(inst->y);
+    return inst->var(name);
+}
+
+void kwik_inst_set(const Value& who, const std::string& name, const Value& val) {
+    Instance* inst = find_instance((int)(double)who);
+    if (!inst) return;
+    if (name == "x") { inst->x = (double)val; return; }
+    if (name == "y") { inst->y = (double)val; return; }
+    inst->var(name) = val;
+}
 
 void kwik_room_goto(int index) {
     if (index >= 0 && index < g_room_total) g_pending_room = index;
@@ -34,15 +62,17 @@ static void load_room(const ObjectDef* objects, int object_count, const RoomDef&
         inst.id = init.id;
         if (init.object_index >= 0 && init.object_index < object_count)
             inst.var("sprite_index") = Value((double)objects[init.object_index].sprite_index);
-        inst.var("image_index") = Value(0.0);
+        inst.var("image_index") = Value((double)init.image_index);
         inst.var("image_speed") = Value(1.0);
-        inst.var("image_xscale") = Value(1.0);
-        inst.var("image_yscale") = Value(1.0);
-        inst.var("image_angle") = Value(0.0);
+        inst.var("image_xscale") = Value(init.scale_x);
+        inst.var("image_yscale") = Value(init.scale_y);
+        inst.var("image_angle") = Value(init.angle);
         inst.var("image_alpha") = Value(1.0);
+        inst.var("depth") = Value(init.depth);
         instances.push_back(inst);
     }
 
+    g_live = &instances;
     g_current_room = index;
     g_pending_room = -1;
     builtin_var("room") = Value((double)index);
@@ -73,6 +103,7 @@ int run_game(const ObjectDef* objects, int object_count, const RoomDef* rooms, i
     load_room(objects, object_count, rooms[0], 0, instances);
 
     const double game_fps = 30.0;
+    std::vector<size_t> draw_order;
     while (!render_should_close()) {
         for (Instance& inst : instances) {
             if (inst.object_index < 0 || inst.object_index >= object_count) continue;
@@ -107,7 +138,13 @@ int run_game(const ObjectDef* objects, int object_count, const RoomDef* rooms, i
                     draw_sprite(Value(bg.sprite_index), Value(0), Value((double)bg.x), Value((double)bg.y));
             }
         }
-        for (Instance& inst : instances) {
+        draw_order.resize(instances.size());
+        for (size_t i = 0; i < instances.size(); ++i) draw_order[i] = i;
+        std::stable_sort(draw_order.begin(), draw_order.end(), [&](size_t a, size_t b) {
+            return (double)instances[a].var("depth") > (double)instances[b].var("depth");
+        });
+        for (size_t oi : draw_order) {
+            Instance& inst = instances[oi];
             if (inst.object_index < 0 || inst.object_index >= object_count) continue;
             const ObjectDef& obj = objects[inst.object_index];
             if (obj.draw)
