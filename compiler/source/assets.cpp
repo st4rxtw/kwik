@@ -321,6 +321,15 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
         }
     }
 
+    const Chunk* sond = gd.chunk("SOND");
+    if (sond) {
+        uint32_t sc = gd.u32(sond->offset);
+        for (uint32_t i = 0; i < sc; ++i) {
+            uint32_t p = gd.u32(sond->offset + 4 + i * 4);
+            out.sound_audio_id.push_back(gd.i32(p + 32));
+        }
+    }
+
     out.image_count = images.size();
     out.sound_count = sounds.size();
 

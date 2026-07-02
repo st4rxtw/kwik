@@ -615,6 +615,9 @@ bool emit_cpp(const GameData& gd, const std::string& out_path) {
     f << "const KwikFont* g_fonts = nullptr;\n";
     f << "int g_font_count = 0;\n";
     f << "int g_glyph_count = 0;\n";
+    f << "const int* g_sound_audio_id = nullptr;\n";
+    f << "int g_sound_map_count = 0;\n";
+    f << "int g_sound_count = 0;\n";
     f << "}\n\n";
 
     f << "int main() {\n";
@@ -713,6 +716,17 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     }
     data << "int g_font_count = " << ex.fonts.size() << ";\n";
     data << "int g_glyph_count = " << ex.glyphs.size() << ";\n";
+    if (!ex.sound_audio_id.empty()) {
+        data << "static const int g_sound_audio_id_data[] = {";
+        for (size_t i = 0; i < ex.sound_audio_id.size(); ++i)
+            data << (i ? ", " : " ") << ex.sound_audio_id[i];
+        data << " };\n";
+        data << "const int* g_sound_audio_id = g_sound_audio_id_data;\n";
+    } else {
+        data << "const int* g_sound_audio_id = nullptr;\n";
+    }
+    data << "int g_sound_map_count = " << ex.sound_audio_id.size() << ";\n";
+    data << "int g_sound_count = " << ex.sound_count << ";\n";
     data << "}\n\n";
     data.close();
 

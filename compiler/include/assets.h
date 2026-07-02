@@ -43,6 +43,7 @@ struct AssetExtraction {
     int sound_count = 0;
     std::vector<SpriteInfo> sprites;
     std::vector<std::string> sound_names;
+    std::vector<int> sound_audio_id;
     std::vector<FontInfo> fonts;
     std::vector<GlyphInfo> glyphs;
 };

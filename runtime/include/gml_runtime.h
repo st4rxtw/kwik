@@ -141,6 +141,11 @@ extern const KwikFont* g_fonts;
 extern int g_font_count;
 extern const KwikGlyph* g_glyphs;
 extern int g_glyph_count;
+extern const int* g_sound_audio_id;
+extern int g_sound_map_count;
+extern int g_sound_count;
+
+const unsigned char* kwik_sound_blob(int audio_index, unsigned int& size, int& type);
 
 void kwik_set_font(int font_id);
 bool kwik_draw_text_custom(double x, double y, const std::string& text);

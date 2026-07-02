@@ -49,6 +49,20 @@ static void ensure_assets() {
     g_images.resize(g_image_count);
 }
 
+const unsigned char* kwik_sound_blob(int audio_index, unsigned int& size, int& type) {
+    ensure_assets();
+    size = 0;
+    type = 0;
+    if (audio_index < 0 || audio_index >= g_sound_count) return nullptr;
+    size_t off = rd32((size_t)g_image_count * 2 + (size_t)(g_image_count + audio_index) * 4);
+    if (off == 0 || off + 8 > g_assets.size()) return nullptr;
+    type = (int)rd32(off);
+    uint32_t sz = rd32(off + 4);
+    if (off + 8 + sz > g_assets.size()) return nullptr;
+    size = sz;
+    return &g_assets[off + 8];
+}
+
 static LoadedImage& load_image(int index) {
     ensure_assets();
     static LoadedImage dummy;

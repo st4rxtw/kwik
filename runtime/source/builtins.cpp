@@ -151,8 +151,6 @@ Value draw_rectangle(const Value& x1, const Value& y1, const Value& x2, const Va
 
 Value event_inherited() { return Value(); }
 
-Value audio_play_sound(const Value&, const Value&, const Value&) { return Value(); }
-Value audio_stop_sound(const Value&) { return Value(); }
 
 Value clamp(const Value& v, const Value& lo, const Value& hi) {
     double x = v, a = lo, b = hi;
