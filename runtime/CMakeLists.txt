@@ -1,17 +1,19 @@
 find_package(OpenGL REQUIRED)
 find_package(glfw3 REQUIRED)
 
+set(KWIK_THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
+
 add_library(kwik_runtime STATIC
-    source/builtins.cpp
-    source/game.cpp
-    source/backends/opengl.cpp
-    ${CMAKE_SOURCE_DIR}/third_party/glad/src/glad.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/builtins.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/game.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/backends/opengl.cpp
+    ${KWIK_THIRD_PARTY}/glad/src/glad.c
 )
 
-target_include_directories(kwik_runtime PUBLIC include)
+target_include_directories(kwik_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(kwik_runtime PRIVATE
-    ${CMAKE_SOURCE_DIR}/third_party/glad/include
-    ${CMAKE_SOURCE_DIR}/third_party/stb
+    ${KWIK_THIRD_PARTY}/glad/include
+    ${KWIK_THIRD_PARTY}/stb
 )
 
 target_link_libraries(kwik_runtime PUBLIC glfw OpenGL::GL ${CMAKE_DL_LIBS})

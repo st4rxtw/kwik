@@ -141,7 +141,7 @@ void GameData::parse_variables() {
         std::string name = string_at_offset(name_off);
         for (uint32_t k = 0; k < occurrences && addr < data_.size(); ++k) {
             var_by_addr_[addr] = VarRef{name, instance_type};
-            uint32_t raw = u32(addr);
+            uint32_t raw = u32(addr + 4);
             uint32_t next = raw & 0x07FFFFFF;
             if (next == 0) break;
             addr += next;

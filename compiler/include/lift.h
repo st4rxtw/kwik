@@ -8,5 +8,6 @@ namespace kwik {
 
 std::string lift_code_entry(const GameData& gd, const CodeEntry& entry);
 bool emit_cpp(const GameData& gd, const std::string& out_path);
+bool emit_dir(const GameData& gd, const std::string& out_dir);
 
 }

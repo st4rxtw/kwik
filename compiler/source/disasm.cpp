@@ -74,6 +74,8 @@ std::vector<Instruction> disassemble(const GameData& gd, const CodeEntry& e) {
         in.has_extra = false;
         in.extra = 0;
         in.size = 4;
+        in.jump_target = 0;
+        in.cmp_kind = 0;
 
         if (in.opcode == 0xD9 || in.opcode == 0x99 || in.opcode == 0x45) {
             in.has_extra = true;
@@ -86,6 +88,19 @@ std::vector<Instruction> disassemble(const GameData& gd, const CodeEntry& e) {
                 in.extra = gd.u32(addr + 4);
                 in.size = 4 + words * 4;
             }
+        } else if (in.opcode == 0xFF) {
+            if (in.operand == -11) {
+                in.has_extra = true;
+                in.extra = gd.u32(addr + 4);
+                in.size = 8;
+            }
+        } else if (in.opcode == 0xB6 || in.opcode == 0xB7 || in.opcode == 0xB8 ||
+                   in.opcode == 0xBA || in.opcode == 0xBB) {
+            int32_t off = word & 0x00FFFFFF;
+            if (off & 0x00800000) off |= 0xFF000000;
+            in.jump_target = addr + off * 4;
+        } else if (in.opcode == 0x15) {
+            in.cmp_kind = (word >> 8) & 0xFF;
         }
         out.push_back(in);
         addr += in.size;

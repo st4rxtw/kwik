@@ -28,6 +28,8 @@ struct Instruction {
     bool has_extra;
     uint32_t extra;
     uint8_t size;
+    uint32_t jump_target;
+    uint8_t cmp_kind;
 };
 
 std::vector<Instruction> disassemble(const GameData& gd, const CodeEntry& entry);

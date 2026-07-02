@@ -10,20 +10,35 @@ using namespace kwik;
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s <game.unx> [--emit <out.cpp>]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <game.unx> [<out_dir>] [--emit <out.cpp>] [--emit-dir <out_dir>]\n",
+                     argv[0]);
         return 1;
     }
 
     std::string emit_path;
+    std::string emit_dir_path;
     for (int i = 2; i < argc; ++i) {
         if (std::strcmp(argv[i], "--emit") == 0 && i + 1 < argc)
             emit_path = argv[++i];
+        else if (std::strcmp(argv[i], "--emit-dir") == 0 && i + 1 < argc)
+            emit_dir_path = argv[++i];
+        else if (argv[i][0] != '-' && emit_dir_path.empty())
+            emit_dir_path = argv[i];
     }
 
     GameData gd;
     if (!gd.load(argv[1])) {
         std::fprintf(stderr, "failed to load %s\n", argv[1]);
         return 1;
+    }
+
+    if (!emit_dir_path.empty()) {
+        if (!emit_dir(gd, emit_dir_path)) {
+            std::fprintf(stderr, "failed to write %s\n", emit_dir_path.c_str());
+            return 1;
+        }
+        std::printf("wrote %s/\n", emit_dir_path.c_str());
+        return 0;
     }
 
     if (!emit_path.empty()) {

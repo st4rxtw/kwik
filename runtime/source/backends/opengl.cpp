@@ -28,6 +28,37 @@ static GLuint g_font_tex = 0;
 static stbtt_bakedchar g_baked[kCharCount];
 static int g_win_w = 0;
 static int g_win_h = 0;
+static float g_ascent = kFontPixelHeight;
+
+static float g_color_r = 1.0f;
+static float g_color_g = 1.0f;
+static float g_color_b = 1.0f;
+static float g_alpha = 1.0f;
+static int g_halign = 0;
+static int g_valign = 0;
+
+static bool g_keys_now[512] = {false};
+static bool g_keys_prev[512] = {false};
+
+static int gml_vk_to_glfw(int vk) {
+    switch (vk) {
+        case 37: return GLFW_KEY_LEFT;
+        case 38: return GLFW_KEY_UP;
+        case 39: return GLFW_KEY_RIGHT;
+        case 40: return GLFW_KEY_DOWN;
+        case 32: return GLFW_KEY_SPACE;
+        case 13: return GLFW_KEY_ENTER;
+        case 27: return GLFW_KEY_ESCAPE;
+        case 16: return GLFW_KEY_LEFT_SHIFT;
+        case 17: return GLFW_KEY_LEFT_CONTROL;
+        case 18: return GLFW_KEY_LEFT_ALT;
+        case 8: return GLFW_KEY_BACKSPACE;
+        default:
+            if (vk >= 'A' && vk <= 'Z') return GLFW_KEY_A + (vk - 'A');
+            if (vk >= '0' && vk <= '9') return GLFW_KEY_0 + (vk - '0');
+            return -1;
+    }
+}
 
 static std::vector<unsigned char> read_font() {
     for (const char* path : kFontPaths) {
@@ -54,6 +85,14 @@ static bool build_font_atlas() {
         return false;
     }
 
+    stbtt_fontinfo info;
+    if (stbtt_InitFont(&info, font.data(), 0)) {
+        float scale = stbtt_ScaleForPixelHeight(&info, kFontPixelHeight);
+        int ascent, descent, line_gap;
+        stbtt_GetFontVMetrics(&info, &ascent, &descent, &line_gap);
+        g_ascent = ascent * scale;
+    }
+
     std::vector<unsigned char> bitmap(kAtlasW * kAtlasH);
     int r = stbtt_BakeFontBitmap(font.data(), 0, kFontPixelHeight, bitmap.data(), kAtlasW, kAtlasH,
                                  kFirstChar, kCharCount, g_baked);
@@ -69,6 +108,15 @@ static bool build_font_atlas() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     return true;
+}
+
+static float text_width(const std::string& text) {
+    float w = 0.0f;
+    for (unsigned char c : text) {
+        if (c < kFirstChar || c >= kFirstChar + kCharCount) continue;
+        w += g_baked[c - kFirstChar].xadvance;
+    }
+    return w;
 }
 
 bool render_init(const char* title, int width, int height, unsigned int bg_color) {
@@ -128,20 +176,44 @@ void render_begin_frame() {
 
 void render_end_frame() {
     glfwSwapBuffers(g_window);
+    for (int i = 0; i < 512; ++i) g_keys_prev[i] = g_keys_now[i];
     glfwPollEvents();
+    for (int i = 0; i < 512; ++i) {
+        int gk = gml_vk_to_glfw(i);
+        g_keys_now[i] = gk >= 0 && glfwGetKey(g_window, gk) == GLFW_PRESS;
+    }
 }
 
-void render_draw_text(double x, double y, const std::string& text) {
-    if (!g_font_tex) return;
+bool render_key_down(int gml_vk) {
+    if (gml_vk < 0 || gml_vk >= 512) return false;
+    return g_keys_now[gml_vk];
+}
 
-    glBindTexture(GL_TEXTURE_2D, g_font_tex);
-    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+bool render_key_pressed(int gml_vk) {
+    if (gml_vk < 0 || gml_vk >= 512) return false;
+    return g_keys_now[gml_vk] && !g_keys_prev[gml_vk];
+}
 
-    float px = static_cast<float>(x);
-    float py = static_cast<float>(y) + kFontPixelHeight;
+void render_set_color(unsigned int bgr) {
+    g_color_r = static_cast<float>(bgr & 0xFF) / 255.0f;
+    g_color_g = static_cast<float>((bgr >> 8) & 0xFF) / 255.0f;
+    g_color_b = static_cast<float>((bgr >> 16) & 0xFF) / 255.0f;
+}
 
-    glBegin(GL_QUADS);
-    for (unsigned char c : text) {
+void render_set_alpha(double alpha) {
+    g_alpha = static_cast<float>(alpha);
+}
+
+void render_set_halign(int align) {
+    g_halign = align;
+}
+
+void render_set_valign(int align) {
+    g_valign = align;
+}
+
+static void draw_line(const std::string& line, float px, float py) {
+    for (unsigned char c : line) {
         if (c < kFirstChar || c >= kFirstChar + kCharCount) continue;
         stbtt_aligned_quad q;
         stbtt_GetBakedQuad(g_baked, kAtlasW, kAtlasH, c - kFirstChar, &px, &py, &q, 1);
@@ -150,7 +222,74 @@ void render_draw_text(double x, double y, const std::string& text) {
         glTexCoord2f(q.s1, q.t1); glVertex2f(q.x1, q.y1);
         glTexCoord2f(q.s0, q.t1); glVertex2f(q.x0, q.y1);
     }
+}
+
+void render_draw_text(double x, double y, const std::string& text) {
+    if (!g_font_tex) return;
+
+    std::vector<std::string> lines;
+    std::string cur;
+    for (char c : text) {
+        if (c == '\n') {
+            lines.push_back(cur);
+            cur.clear();
+        } else if (c != '\r') {
+            cur.push_back(c);
+        }
+    }
+    lines.push_back(cur);
+
+    float line_height = kFontPixelHeight;
+    float total_height = line_height * static_cast<float>(lines.size());
+
+    float base_y = static_cast<float>(y) + g_ascent;
+    if (g_valign == 1)
+        base_y -= total_height * 0.5f;
+    else if (g_valign == 2)
+        base_y -= total_height;
+
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, g_font_tex);
+    glColor4f(g_color_r, g_color_g, g_color_b, g_alpha);
+
+    glBegin(GL_QUADS);
+    for (size_t i = 0; i < lines.size(); ++i) {
+        float px = static_cast<float>(x);
+        if (g_halign == 1)
+            px -= text_width(lines[i]) * 0.5f;
+        else if (g_halign == 2)
+            px -= text_width(lines[i]);
+        draw_line(lines[i], px, base_y + static_cast<float>(i) * line_height);
+    }
     glEnd();
+}
+
+void render_draw_rectangle(double x1, double y1, double x2, double y2, bool outline) {
+    glDisable(GL_TEXTURE_2D);
+    glColor4f(g_color_r, g_color_g, g_color_b, g_alpha);
+
+    glBegin(outline ? GL_LINE_LOOP : GL_QUADS);
+    glVertex2f(static_cast<float>(x1), static_cast<float>(y1));
+    glVertex2f(static_cast<float>(x2), static_cast<float>(y1));
+    glVertex2f(static_cast<float>(x2), static_cast<float>(y2));
+    glVertex2f(static_cast<float>(x1), static_cast<float>(y2));
+    glEnd();
+
+    glEnable(GL_TEXTURE_2D);
+}
+
+int render_gui_width() {
+    return g_win_w;
+}
+
+int render_gui_height() {
+    return g_win_h;
+}
+
+void render_set_window_size(int width, int height) {
+    g_win_w = width;
+    g_win_h = height;
+    if (g_window) glfwSetWindowSize(g_window, width, height);
 }
 
 void render_shutdown() {

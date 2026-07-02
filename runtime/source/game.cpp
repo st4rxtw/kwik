@@ -18,6 +18,12 @@ int run_game(const ObjectDef* objects, int object_count, const RoomDef& room) {
         instances.push_back(inst);
     }
 
+    builtin_var("room_width") = Value(static_cast<double>(room.width));
+    builtin_var("room_height") = Value(static_cast<double>(room.height));
+    builtin_var("room_speed") = Value(30.0);
+    builtin_var("fps") = Value(30.0);
+    builtin_var("room") = Value(0.0);
+
     if (!render_init(room.name, room.width, room.height, room.bg_color)) return 1;
 
     for (Instance& inst : instances) {
