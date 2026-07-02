@@ -60,6 +60,27 @@ struct ObjectDef {
     EventFn step;
     EventFn draw;
     EventFn draw_gui;
+    int sprite_index;
+};
+
+struct KwikSprite {
+    int first_frame;
+    int frame_count;
+    int origin_x;
+    int origin_y;
+};
+
+struct KwikFont {
+    int atlas_image;
+    int glyph_start;
+    int glyph_count;
+    int size;
+};
+
+struct KwikGlyph {
+    int ch;
+    int x, y, w, h;
+    int shift, offset;
 };
 
 struct InstanceInit {
@@ -78,8 +99,22 @@ struct RoomDef {
     int instance_count;
 };
 
+extern const KwikSprite* g_sprites;
+extern int g_sprite_count;
+extern int g_image_count;
+extern const KwikFont* g_fonts;
+extern int g_font_count;
+extern const KwikGlyph* g_glyphs;
+extern int g_glyph_count;
+
+void kwik_set_font(int font_id);
+bool kwik_draw_text_custom(double x, double y, const std::string& text);
+
 Value& global_var(const std::string& name);
 Value& builtin_var(const std::string& name);
+
+Value draw_sprite(const Value& sprite, const Value& subimg, const Value& x, const Value& y);
+Value draw_self(Instance& self);
 
 Value string(const Value& v);
 Value show_debug_message(const Value& v);

@@ -105,7 +105,10 @@ Value camera_get_view_height(const Value&) { return Value(static_cast<double>(re
 Value room_goto(const Value&) { return Value(); }
 Value room_goto_next() { return Value(); }
 
-Value draw_set_font(const Value&) { return Value(); }
+Value draw_set_font(const Value& font) {
+    kwik_set_font((int)(double)font);
+    return Value();
+}
 
 Value draw_set_halign(const Value& align) {
     render_set_halign(static_cast<int>(static_cast<double>(align)));
@@ -124,7 +127,10 @@ Value draw_set_alpha(const Value& alpha) {
     return Value();
 }
 Value draw_text(const Value& x, const Value& y, const Value& text) {
-    render_draw_text(static_cast<double>(x), static_cast<double>(y), static_cast<std::string>(text));
+    double dx = x, dy = y;
+    std::string s = text;
+    if (!kwik_draw_text_custom(dx, dy, s))
+        render_draw_text(dx, dy, s);
     return Value();
 }
 Value draw_rectangle(const Value& x1, const Value& y1, const Value& x2, const Value& y2,

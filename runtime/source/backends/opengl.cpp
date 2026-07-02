@@ -6,6 +6,7 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
@@ -263,6 +264,61 @@ void render_draw_text(double x, double y, const std::string& text) {
     }
     glEnd();
 }
+
+unsigned int render_upload_texture(const unsigned char* rgba, int w, int h) {
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    return tex;
+}
+
+void render_draw_sprite(unsigned int tex, double x, double y, double w, double h,
+                        double origin_x, double origin_y, double xscale, double yscale,
+                        double angle_deg, double alpha) {
+    double rad = angle_deg * 3.14159265358979323846 / 180.0;
+    double c = std::cos(rad), s = std::sin(rad);
+    double lx[4] = {0.0, w, w, 0.0};
+    double ly[4] = {0.0, 0.0, h, h};
+    float vx[4], vy[4];
+    for (int i = 0; i < 4; ++i) {
+        double px = (lx[i] - origin_x) * xscale;
+        double py = (ly[i] - origin_y) * yscale;
+        vx[i] = (float)(x + px * c + py * s);
+        vy[i] = (float)(y - px * s + py * c);
+    }
+
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glColor4f(1.0f, 1.0f, 1.0f, (float)alpha);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0); glVertex2f(vx[0], vy[0]);
+    glTexCoord2f(1, 0); glVertex2f(vx[1], vy[1]);
+    glTexCoord2f(1, 1); glVertex2f(vx[2], vy[2]);
+    glTexCoord2f(0, 1); glVertex2f(vx[3], vy[3]);
+    glEnd();
+}
+
+void render_draw_glyph(unsigned int tex, double dx, double dy, double dw, double dh,
+                       float u0, float v0, float u1, float v1) {
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glColor4f(g_color_r, g_color_g, g_color_b, g_alpha);
+    float x0 = (float)dx, y0 = (float)dy, x1 = (float)(dx + dw), y1 = (float)(dy + dh);
+    glBegin(GL_QUADS);
+    glTexCoord2f(u0, v0); glVertex2f(x0, y0);
+    glTexCoord2f(u1, v0); glVertex2f(x1, y0);
+    glTexCoord2f(u1, v1); glVertex2f(x1, y1);
+    glTexCoord2f(u0, v1); glVertex2f(x0, y1);
+    glEnd();
+}
+
+int render_get_halign() { return g_halign; }
+int render_get_valign() { return g_valign; }
 
 void render_draw_rectangle(double x1, double y1, double x2, double y2, bool outline) {
     glDisable(GL_TEXTURE_2D);

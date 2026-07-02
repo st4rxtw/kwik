@@ -162,6 +162,7 @@ void GameData::parse_objects() {
         uint32_t ptr = u32(c->offset + 4 + i * 4);
         GameObject o;
         o.name = string_at_offset(u32(ptr));
+        o.sprite_index = i32(ptr + 4);
         objects_.push_back(o);
     }
 }

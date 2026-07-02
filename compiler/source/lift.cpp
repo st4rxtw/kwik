@@ -10,6 +10,7 @@
 #include <sstream>
 #include <vector>
 
+#include "assets.h"
 #include "disasm.h"
 
 namespace kwik {
@@ -342,7 +343,7 @@ static void emit_object_table(std::ostream& os, const GameData& gd) {
         const ObjectSlots& s = slots[i];
         os << "    { " << quote(gd.objects()[i].name) << ", " << slot_or_null(s.create) << ", "
            << slot_or_null(s.step) << ", " << slot_or_null(s.draw) << ", " << slot_or_null(s.draw_gui)
-           << " },\n";
+           << ", " << gd.objects()[i].sprite_index << " },\n";
     }
     os << "};\n";
     os << "const int g_object_count = " << gd.objects().size() << ";\n\n";
@@ -377,6 +378,15 @@ bool emit_cpp(const GameData& gd, const std::string& out_path) {
 
     emit_object_table(f, gd);
     emit_room_data(f, gd);
+    f << "namespace gml {\n";
+    f << "const KwikSprite* g_sprites = nullptr;\n";
+    f << "int g_sprite_count = 0;\n";
+    f << "int g_image_count = 0;\n";
+    f << "const KwikGlyph* g_glyphs = nullptr;\n";
+    f << "const KwikFont* g_fonts = nullptr;\n";
+    f << "int g_font_count = 0;\n";
+    f << "int g_glyph_count = 0;\n";
+    f << "}\n\n";
 
     f << "int main() {\n";
     f << "    return run_game(g_objects, g_object_count, g_room);\n";
@@ -429,10 +439,49 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
         write_unit(root / "rooms" / "rooms.cpp", rooms_code);
     write_unit(root / "scripts" / "scripts.cpp", scripts_code);
 
+    AssetExtraction ex;
+    extract_assets(gd, out_dir, ex);
+
     std::ofstream data(root / "game_data.cpp", std::ios::binary);
     data << "#include \"generated.h\"\n\nusing namespace gml;\n\n";
     emit_object_table(data, gd);
     emit_room_data(data, gd);
+    data << "namespace gml {\n";
+    if (!ex.sprites.empty()) {
+        data << "static const KwikSprite g_sprites_data[] = {\n";
+        for (const auto& s : ex.sprites)
+            data << "    { " << s.first_frame << ", " << s.frame_count << ", " << s.origin_x
+                 << ", " << s.origin_y << " },\n";
+        data << "};\n";
+        data << "const KwikSprite* g_sprites = g_sprites_data;\n";
+    } else {
+        data << "const KwikSprite* g_sprites = nullptr;\n";
+    }
+    data << "int g_sprite_count = " << ex.sprites.size() << ";\n";
+    data << "int g_image_count = " << ex.image_count << ";\n";
+    if (!ex.glyphs.empty()) {
+        data << "static const KwikGlyph g_glyphs_data[] = {\n";
+        for (const auto& g : ex.glyphs)
+            data << "    { " << g.ch << ", " << g.x << ", " << g.y << ", " << g.w << ", " << g.h
+                 << ", " << g.shift << ", " << g.offset << " },\n";
+        data << "};\n";
+        data << "const KwikGlyph* g_glyphs = g_glyphs_data;\n";
+    } else {
+        data << "const KwikGlyph* g_glyphs = nullptr;\n";
+    }
+    if (!ex.fonts.empty()) {
+        data << "static const KwikFont g_fonts_data[] = {\n";
+        for (const auto& f : ex.fonts)
+            data << "    { " << f.atlas_image << ", " << f.glyph_start << ", " << f.glyph_count
+                 << ", " << f.size << " },\n";
+        data << "};\n";
+        data << "const KwikFont* g_fonts = g_fonts_data;\n";
+    } else {
+        data << "const KwikFont* g_fonts = nullptr;\n";
+    }
+    data << "int g_font_count = " << ex.fonts.size() << ";\n";
+    data << "int g_glyph_count = " << ex.glyphs.size() << ";\n";
+    data << "}\n\n";
     data.close();
 
     std::ofstream mainf(root / "main.cpp", std::ios::binary);

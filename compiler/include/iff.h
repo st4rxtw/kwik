@@ -28,6 +28,7 @@ struct VarRef {
 
 struct GameObject {
     std::string name;
+    int32_t sprite_index = -1;
 };
 
 struct RoomInstance {
