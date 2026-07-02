@@ -48,13 +48,17 @@ int run_game(const ObjectDef* objects, int object_count, const RoomDef& room) {
             if (fn) fn(inst);
         }
 
+        double dt = render_delta_time();
+        const double game_fps = 30.0;
         for (Instance& inst : instances) {
             int spr = (int)(double)inst.var("sprite_index");
             if (spr < 0 || spr >= g_sprite_count) continue;
-            int fc = g_sprites[spr].frame_count;
-            if (fc <= 1) continue;
-            double idx = (double)inst.var("image_index") + (double)inst.var("image_speed");
-            idx = idx - fc * std::floor(idx / fc);
+            const KwikSprite& s = g_sprites[spr];
+            if (s.frame_count <= 1) continue;
+            double fps = s.speed_type == 0 ? s.speed : s.speed * game_fps;
+            double adv = fps * (double)inst.var("image_speed") * dt;
+            double idx = (double)inst.var("image_index") + adv;
+            idx = idx - s.frame_count * std::floor(idx / s.frame_count);
             inst.var("image_index") = Value(idx);
         }
 

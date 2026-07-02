@@ -68,6 +68,8 @@ struct KwikSprite {
     int frame_count;
     int origin_x;
     int origin_y;
+    double speed;
+    int speed_type;
 };
 
 struct KwikFont {

@@ -18,6 +18,8 @@ void render_set_alpha(double alpha);
 void render_set_halign(int align);
 void render_set_valign(int align);
 
+double render_delta_time();
+
 int render_gui_width();
 int render_gui_height();
 void render_set_window_size(int width, int height);

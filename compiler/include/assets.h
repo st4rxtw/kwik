@@ -16,6 +16,8 @@ struct SpriteInfo {
     int origin_y;
     int width;
     int height;
+    double speed;
+    int speed_type;
 };
 
 struct GlyphInfo {

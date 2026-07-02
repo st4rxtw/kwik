@@ -41,6 +41,9 @@ static int g_valign = 0;
 static bool g_keys_now[512] = {false};
 static bool g_keys_prev[512] = {false};
 
+static double g_last_time = 0.0;
+static double g_dt = 0.0;
+
 static int gml_vk_to_glfw(int vk) {
     switch (vk) {
         case 37: return GLFW_KEY_LEFT;
@@ -175,8 +178,14 @@ void render_begin_frame() {
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
+double render_delta_time() { return g_dt; }
+
 void render_end_frame() {
     glfwSwapBuffers(g_window);
+    double now = glfwGetTime();
+    g_dt = g_last_time > 0.0 ? now - g_last_time : 0.0;
+    if (g_dt > 0.25) g_dt = 0.25;
+    g_last_time = now;
     for (int i = 0; i < 512; ++i) g_keys_prev[i] = g_keys_now[i];
     glfwPollEvents();
     for (int i = 0; i < 512; ++i) {

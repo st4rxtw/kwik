@@ -190,8 +190,15 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
             info.frame_count = 0;
 
             uint32_t tex_list = 0;
+            info.speed = 1.0;
+            info.speed_type = 1;
             if (gd.i32(sp + 56) == -1) {
                 uint32_t sver = gd.u32(sp + 60);
+                uint32_t raw = gd.u32(sp + 68);
+                float fspeed;
+                std::memcpy(&fspeed, &raw, 4);
+                info.speed = fspeed;
+                info.speed_type = (int)gd.u32(sp + 72);
                 uint32_t base = sp + 76;
                 if (sver >= 2) base += 4;
                 if (sver >= 3) base += 4;

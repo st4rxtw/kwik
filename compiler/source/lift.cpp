@@ -451,7 +451,7 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
         data << "static const KwikSprite g_sprites_data[] = {\n";
         for (const auto& s : ex.sprites)
             data << "    { " << s.first_frame << ", " << s.frame_count << ", " << s.origin_x
-                 << ", " << s.origin_y << " },\n";
+                 << ", " << s.origin_y << ", " << s.speed << ", " << s.speed_type << " },\n";
         data << "};\n";
         data << "const KwikSprite* g_sprites = g_sprites_data;\n";
     } else {
