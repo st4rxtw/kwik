@@ -204,6 +204,31 @@ void GameData::parse_rooms() {
             ri.id = i32(ip + 12);
             r.instances.push_back(ri);
         }
+
+        const Chunk* sc = chunk("SPRT");
+        int sprite_count = sc ? static_cast<int>(u32(sc->offset)) : 0;
+        uint32_t layers = 0;
+        for (uint32_t o = 56; o <= 100; o += 4) {
+            uint32_t lp = u32(ptr + o);
+            if (lp <= c->offset || lp >= c->offset + c->size) continue;
+            uint32_t n = u32(lp);
+            if (n < 1 || n > 64) continue;
+            uint32_t e0 = u32(lp + 4);
+            if (e0 <= c->offset || e0 >= c->offset + c->size) continue;
+            if (u32(e0 + 8) <= 7 && !string_at_offset(u32(e0)).empty()) { layers = lp; break; }
+        }
+        if (layers) {
+            uint32_t lc = u32(layers);
+            for (uint32_t k = 0; k < lc; ++k) {
+                uint32_t lp = u32(layers + 4 + k * 4);
+                if (u32(lp + 8) != 1) continue;
+                int32_t xoff = i32(lp + 16);
+                int32_t yoff = i32(lp + 20);
+                int32_t sprite = i32(lp + 56);
+                if (sprite < 0 || sprite >= sprite_count) continue;
+                r.backgrounds.push_back(RoomBackground{sprite, xoff, yoff});
+            }
+        }
         rooms_.push_back(r);
     }
 }

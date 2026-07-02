@@ -9,6 +9,7 @@ namespace gml {
 static int g_current_room = -1;
 static int g_pending_room = -1;
 static int g_room_total = 0;
+static const RoomDef* g_room_defs = nullptr;
 
 void kwik_room_goto(int index) {
     if (index >= 0 && index < g_room_total) g_pending_room = index;
@@ -49,6 +50,7 @@ static void load_room(const ObjectDef* objects, int object_count, const RoomDef&
     builtin_var("room_height") = Value((double)room.height);
     render_set_room(room.width, room.height, room.bg_color);
     render_set_view(room.view_x, room.view_y, room.view_w, room.view_h);
+    render_set_title(room.name);
 
     for (Instance& inst : instances) {
         if (inst.object_index < 0 || inst.object_index >= object_count) continue;
@@ -60,6 +62,7 @@ static void load_room(const ObjectDef* objects, int object_count, const RoomDef&
 int run_game(const ObjectDef* objects, int object_count, const RoomDef* rooms, int room_count) {
     if (room_count <= 0) return 1;
     g_room_total = room_count;
+    g_room_defs = rooms;
 
     builtin_var("room_speed") = Value(30.0);
     builtin_var("fps") = Value(30.0);
@@ -96,6 +99,14 @@ int run_game(const ObjectDef* objects, int object_count, const RoomDef* rooms, i
         }
 
         render_begin_frame();
+        if (g_current_room >= 0) {
+            const RoomDef& cur = g_room_defs[g_current_room];
+            for (int i = 0; i < cur.background_count; ++i) {
+                const RoomBg& bg = cur.backgrounds[i];
+                if (bg.sprite_index >= 0)
+                    draw_sprite(Value(bg.sprite_index), Value(0), Value((double)bg.x), Value((double)bg.y));
+            }
+        }
         for (Instance& inst : instances) {
             if (inst.object_index < 0 || inst.object_index >= object_count) continue;
             const ObjectDef& obj = objects[inst.object_index];

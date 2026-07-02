@@ -196,6 +196,10 @@ void render_begin_gui() {
     glLoadIdentity();
 }
 
+void render_set_title(const char* title) {
+    if (g_window && title) glfwSetWindowTitle(g_window, title);
+}
+
 void render_set_view(double x, double y, double w, double h) {
     g_view_x = x; g_view_y = y; g_view_w = w; g_view_h = h;
 }

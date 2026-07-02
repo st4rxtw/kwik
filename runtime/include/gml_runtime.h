@@ -92,6 +92,12 @@ struct InstanceInit {
     int id;
 };
 
+struct RoomBg {
+    int sprite_index;
+    int x;
+    int y;
+};
+
 struct RoomDef {
     const char* name;
     int width;
@@ -103,6 +109,8 @@ struct RoomDef {
     int view_h;
     const InstanceInit* instances;
     int instance_count;
+    const RoomBg* backgrounds;
+    int background_count;
 };
 
 extern const KwikSprite* g_sprites;

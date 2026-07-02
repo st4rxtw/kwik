@@ -357,13 +357,19 @@ static void emit_room_data(std::ostream& os, const GameData& gd) {
             os << "    { " << ri.object_index << ", " << ri.x << ", " << ri.y << ", " << ri.id << " },\n";
         os << "    { 0, 0, 0, 0 },\n";
         os << "};\n";
+        os << "static const RoomBg g_bgs_" << i << "[] = {\n";
+        for (const auto& bg : rooms[i].backgrounds)
+            os << "    { " << bg.sprite_index << ", " << bg.x << ", " << bg.y << " },\n";
+        os << "    { -1, 0, 0 },\n";
+        os << "};\n";
     }
     os << "\nconst RoomDef g_rooms[] = {\n";
     for (size_t i = 0; i < rooms.size(); ++i)
         os << "    { " << quote(rooms[i].name) << ", " << rooms[i].width << ", " << rooms[i].height
            << ", " << rooms[i].bg_color << "u, " << rooms[i].view_x << ", " << rooms[i].view_y
            << ", " << rooms[i].view_w << ", " << rooms[i].view_h << ", g_instances_" << i << ", "
-           << rooms[i].instances.size() << " },\n";
+           << rooms[i].instances.size() << ", g_bgs_" << i << ", " << rooms[i].backgrounds.size()
+           << " },\n";
     os << "};\n";
     os << "const int g_room_count = " << rooms.size() << ";\n\n";
 }

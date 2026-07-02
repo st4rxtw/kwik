@@ -38,6 +38,12 @@ struct RoomInstance {
     int32_t id;
 };
 
+struct RoomBackground {
+    int32_t sprite_index;
+    int32_t x;
+    int32_t y;
+};
+
 struct Room {
     std::string name;
     int32_t width;
@@ -48,6 +54,7 @@ struct Room {
     int32_t view_w = 0;
     int32_t view_h = 0;
     std::vector<RoomInstance> instances;
+    std::vector<RoomBackground> backgrounds;
 };
 
 class GameData {

@@ -30,6 +30,7 @@ int render_gui_width();
 int render_gui_height();
 void render_set_window_size(int width, int height);
 void render_set_room(int width, int height, unsigned int bg_color);
+void render_set_title(const char* title);
 
 bool render_key_down(int gml_vk);
 bool render_key_pressed(int gml_vk);
