@@ -103,30 +103,40 @@ int run_game(const ObjectDef* objects, int object_count, const RoomDef* rooms, i
     load_room(objects, object_count, rooms[0], 0, instances);
 
     const double game_fps = 30.0;
+    const double step_time = 1.0 / game_fps;
+    double accumulator = 0.0;
     std::vector<size_t> draw_order;
     while (!render_should_close()) {
-        for (Instance& inst : instances) {
-            if (inst.object_index < 0 || inst.object_index >= object_count) continue;
-            EventFn fn = objects[inst.object_index].step;
-            if (fn) fn(inst);
-        }
+        accumulator += render_delta_time();
+        if (accumulator > 0.25) accumulator = 0.25;
 
-        if (g_pending_room >= 0 && g_pending_room < room_count) {
-            load_room(objects, object_count, rooms[g_pending_room], g_pending_room, instances);
-            continue;
-        }
+        int guard = 0;
+        while (accumulator >= step_time && guard++ < 5) {
+            accumulator -= step_time;
 
-        double dt = render_delta_time();
-        for (Instance& inst : instances) {
-            int spr = (int)(double)inst.var("sprite_index");
-            if (spr < 0 || spr >= g_sprite_count) continue;
-            const KwikSprite& s = g_sprites[spr];
-            if (s.frame_count <= 1) continue;
-            double fps = s.speed_type == 0 ? s.speed : s.speed * game_fps;
-            double adv = fps * (double)inst.var("image_speed") * dt;
-            double idx = (double)inst.var("image_index") + adv;
-            idx = idx - s.frame_count * std::floor(idx / s.frame_count);
-            inst.var("image_index") = Value(idx);
+            for (Instance& inst : instances) {
+                if (inst.object_index < 0 || inst.object_index >= object_count) continue;
+                EventFn fn = objects[inst.object_index].step;
+                if (fn) fn(inst);
+            }
+
+            if (g_pending_room >= 0 && g_pending_room < room_count) {
+                load_room(objects, object_count, rooms[g_pending_room], g_pending_room, instances);
+                accumulator = 0.0;
+                break;
+            }
+
+            for (Instance& inst : instances) {
+                int spr = (int)(double)inst.var("sprite_index");
+                if (spr < 0 || spr >= g_sprite_count) continue;
+                const KwikSprite& s = g_sprites[spr];
+                if (s.frame_count <= 1) continue;
+                double fps = s.speed_type == 0 ? s.speed : s.speed * game_fps;
+                double adv = fps * (double)inst.var("image_speed") * step_time;
+                double idx = (double)inst.var("image_index") + adv;
+                idx = idx - s.frame_count * std::floor(idx / s.frame_count);
+                inst.var("image_index") = Value(idx);
+            }
         }
 
         render_begin_frame();

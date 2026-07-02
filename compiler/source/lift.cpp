@@ -9,6 +9,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <unordered_map>
 #include <vector>
 
 #include "assets.h"
@@ -118,20 +119,54 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
     std::vector<Instruction> instrs = disassemble(gd, e);
     size_t n = instrs.size();
 
-    std::vector<int> depth_before(n, 0);
     std::set<uint32_t> targets;
     std::set<std::string> locals;
-    int d = 0;
-    int maxd = 1;
-    for (size_t i = 0; i < n; ++i) {
-        depth_before[i] = d;
+    for (size_t i = 0; i < n; ++i)
         if (is_branch(instrs[i].opcode)) targets.insert(instrs[i].jump_target);
-        int after = d + stack_delta(instrs[i]);
-        if (after < 0) after = 0;
-        if (d > maxd) maxd = d;
-        if (after > maxd) maxd = after;
-        d = after;
+
+    std::unordered_map<uint32_t, size_t> idx_of;
+    for (size_t i = 0; i < n; ++i) idx_of[instrs[i].address] = i;
+
+    std::vector<int> depth_before(n, -1);
+    int maxd = 1;
+    if (n > 0) {
+        std::vector<size_t> work;
+        depth_before[0] = 0;
+        work.push_back(0);
+        auto visit = [&](size_t j, int dep) {
+            if (dep < 0) dep = 0;
+            if (j < n && depth_before[j] < 0) {
+                depth_before[j] = dep;
+                work.push_back(j);
+            }
+        };
+        while (!work.empty()) {
+            size_t i = work.back();
+            work.pop_back();
+            int din = depth_before[i];
+            if (din > maxd) maxd = din;
+            const Instruction& in = instrs[i];
+            if (in.opcode == 0xB6) {
+                auto it = idx_of.find(in.jump_target);
+                if (it != idx_of.end()) visit(it->second, din);
+            } else if (in.opcode == 0xB7 || in.opcode == 0xB8) {
+                int dep = din > 0 ? din - 1 : 0;
+                auto it = idx_of.find(in.jump_target);
+                if (it != idx_of.end()) visit(it->second, dep);
+                visit(i + 1, dep);
+            } else if (in.opcode == 0x9C || in.opcode == 0x9D) {
+                // ret / exit: no successor
+            } else {
+                int dout = din + stack_delta(in);
+                if (dout < 0) dout = 0;
+                if (dout > maxd) maxd = dout;
+                visit(i + 1, dout);
+            }
+        }
     }
+    for (size_t i = 0; i < n; ++i)
+        if (depth_before[i] < 0) depth_before[i] = 0;
+    int d = 0;
 
     for (size_t i = 0; i < n; ++i) {
         const Instruction& in = instrs[i];
@@ -154,8 +189,8 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
         if (targets.count(in.address)) {
             std::snprintf(lbl, sizeof(lbl), "L_%x", in.address);
             out << "  " << lbl << ": ;\n";
-            d = depth_before[i];
         }
+        d = depth_before[i];
 
         switch (in.opcode) {
             case 0x84:
