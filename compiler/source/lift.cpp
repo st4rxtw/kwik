@@ -86,6 +86,31 @@ static int stack_delta(const Instruction& in) {
     }
 }
 
+static int net_delta(const GameData& gd, const std::vector<Instruction>& instrs, size_t i) {
+    const Instruction& in = instrs[i];
+    switch (in.opcode) {
+        case 0xC0: case 0xC1: case 0xC2: case 0xC3:
+            if (in.type1 == 0x5 && i >= 2 && instrs[i - 1].opcode == 0x84 &&
+                instrs[i - 1].operand >= 0 && instrs[i - 2].opcode == 0x84 &&
+                is_inst_type(instrs[i - 2].operand) && instrs[i - 2].operand != -9)
+                return -1;
+            if (in.type1 == 0x5 && i > 0 && instrs[i - 1].opcode == 0x84 &&
+                is_inst_type(instrs[i - 1].operand)) {
+                if (instrs[i - 1].operand == -9)
+                    return gd.var_at(in.address).name.empty() ? 0 : -1;
+                return 0;
+            }
+            return 1;
+        case 0x45:
+            if (i >= 2 && instrs[i - 1].opcode == 0x84 && instrs[i - 2].opcode == 0x84 &&
+                is_inst_type(instrs[i - 2].operand))
+                return -3;
+            return -1;
+        default:
+            return stack_delta(in);
+    }
+}
+
 static std::string binop_helper(uint8_t op) {
     switch (op) {
         case 0x08: return "gml_mul";
@@ -157,7 +182,7 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
             } else if (in.opcode == 0x9C || in.opcode == 0x9D) {
                 // ret / exit: no successor
             } else {
-                int dout = din + stack_delta(in);
+                int dout = din + net_delta(gd, instrs, i);
                 if (dout < 0) dout = 0;
                 if (dout > maxd) maxd = dout;
                 visit(i + 1, dout);
@@ -198,6 +223,16 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
                 ++d;
                 break;
             case 0xC0: case 0xC1: case 0xC2: case 0xC3: {
+                if (in.type1 == 0x5 && i >= 2 && instrs[i - 1].opcode == 0x84 &&
+                    instrs[i - 1].operand >= 0 && instrs[i - 2].opcode == 0x84 &&
+                    is_inst_type(instrs[i - 2].operand) && instrs[i - 2].operand != -9 &&
+                    d >= 2) {
+                    std::string r = var_ref(gd, in, locals);
+                    if (r.empty()) r = "Value()";
+                    out << "    " << S(d - 2) << " = " << r << ";\n";
+                    d -= 1;
+                    break;
+                }
                 if (in.type1 == 0x5 && i > 0 && instrs[i - 1].opcode == 0x84 &&
                     is_inst_type(instrs[i - 1].operand)) {
                     std::string name = gd.var_at(in.address).name;

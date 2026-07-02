@@ -39,6 +39,10 @@ void kwik_inst_set(const Value& who, const std::string& name, const Value& val) 
     inst->var(name) = val;
 }
 
+Value instance_exists(const Value& obj) {
+    return Value(find_instance((int)(double)obj) != nullptr ? 1.0 : 0.0);
+}
+
 void kwik_room_goto(int index) {
     if (index >= 0 && index < g_room_total) g_pending_room = index;
 }
