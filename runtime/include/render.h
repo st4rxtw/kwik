@@ -7,8 +7,14 @@ namespace gml {
 bool render_init(const char* title, int width, int height, unsigned int bg_color);
 bool render_should_close();
 void render_begin_frame();
+void render_begin_gui();
 void render_end_frame();
 void render_shutdown();
+
+void render_set_view(double x, double y, double w, double h);
+void render_set_view_pos(double x, double y);
+double render_view_width();
+double render_view_height();
 
 void render_draw_text(double x, double y, const std::string& text);
 void render_draw_rectangle(double x1, double y1, double x2, double y2, bool outline);
@@ -23,6 +29,7 @@ double render_delta_time();
 int render_gui_width();
 int render_gui_height();
 void render_set_window_size(int width, int height);
+void render_set_room(int width, int height, unsigned int bg_color);
 
 bool render_key_down(int gml_vk);
 bool render_key_pressed(int gml_vk);

@@ -43,6 +43,10 @@ struct Room {
     int32_t width;
     int32_t height;
     uint32_t bg_color;
+    int32_t view_x = 0;
+    int32_t view_y = 0;
+    int32_t view_w = 0;
+    int32_t view_h = 0;
     std::vector<RoomInstance> instances;
 };
 

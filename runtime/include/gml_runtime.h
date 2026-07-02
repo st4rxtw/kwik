@@ -97,6 +97,10 @@ struct RoomDef {
     int width;
     int height;
     unsigned int bg_color;
+    int view_x;
+    int view_y;
+    int view_w;
+    int view_h;
     const InstanceInit* instances;
     int instance_count;
 };
@@ -111,6 +115,10 @@ extern int g_glyph_count;
 
 void kwik_set_font(int font_id);
 bool kwik_draw_text_custom(double x, double y, const std::string& text);
+
+void kwik_room_goto(int index);
+void kwik_room_goto_next();
+void kwik_room_goto_previous();
 
 Value& global_var(const std::string& name);
 Value& builtin_var(const std::string& name);
@@ -159,6 +167,6 @@ Value display_get_gui_height();
 
 Value window_set_size(const Value& w, const Value& h);
 
-int run_game(const ObjectDef* objects, int object_count, const RoomDef& room);
+int run_game(const ObjectDef* objects, int object_count, const RoomDef* rooms, int room_count);
 
 }

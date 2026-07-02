@@ -98,12 +98,21 @@ Value show_debug_message(const Value& v) {
     return Value();
 }
 
-Value camera_set_view_pos(const Value&, const Value&, const Value&) { return Value(); }
-Value camera_get_view_width(const Value&) { return Value(static_cast<double>(render_gui_width())); }
-Value camera_get_view_height(const Value&) { return Value(static_cast<double>(render_gui_height())); }
+Value camera_set_view_pos(const Value&, const Value& x, const Value& y) {
+    render_set_view_pos(static_cast<double>(x), static_cast<double>(y));
+    return Value();
+}
+Value camera_get_view_width(const Value&) { return Value(render_view_width()); }
+Value camera_get_view_height(const Value&) { return Value(render_view_height()); }
 
-Value room_goto(const Value&) { return Value(); }
-Value room_goto_next() { return Value(); }
+Value room_goto(const Value& index) {
+    kwik_room_goto((int)(double)index);
+    return Value();
+}
+Value room_goto_next() {
+    kwik_room_goto_next();
+    return Value();
+}
 
 Value draw_set_font(const Value& font) {
     kwik_set_font((int)(double)font);

@@ -29,6 +29,9 @@ static GLuint g_font_tex = 0;
 static stbtt_bakedchar g_baked[kCharCount];
 static int g_win_w = 0;
 static int g_win_h = 0;
+static int g_room_w = 0;
+static int g_room_h = 0;
+static double g_view_x = 0, g_view_y = 0, g_view_w = 0, g_view_h = 0;
 static float g_ascent = kFontPixelHeight;
 
 static float g_color_r = 1.0f;
@@ -146,6 +149,8 @@ bool render_init(const char* title, int width, int height, unsigned int bg_color
 
     g_win_w = width;
     g_win_h = height;
+    g_room_w = width;
+    g_room_h = height;
 
     float r = static_cast<float>(bg_color & 0xFF) / 255.0f;
     float g = static_cast<float>((bg_color >> 8) & 0xFF) / 255.0f;
@@ -169,14 +174,34 @@ void render_begin_frame() {
     glfwGetFramebufferSize(g_window, &fbw, &fbh);
     glViewport(0, 0, fbw, fbh);
 
+    double vw = g_view_w > 0 ? g_view_w : g_room_w;
+    double vh = g_view_h > 0 ? g_view_h : g_room_h;
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    glOrtho(0.0, g_win_w, g_win_h, 0.0, -1.0, 1.0);
+    glOrtho(g_view_x, g_view_x + vw, g_view_y + vh, g_view_y, -1.0, 1.0);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
     glClear(GL_COLOR_BUFFER_BIT);
 }
+
+void render_begin_gui() {
+    int fbw = g_win_w, fbh = g_win_h;
+    glfwGetFramebufferSize(g_window, &fbw, &fbh);
+    glViewport(0, 0, fbw, fbh);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0.0, g_win_w, g_win_h, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+}
+
+void render_set_view(double x, double y, double w, double h) {
+    g_view_x = x; g_view_y = y; g_view_w = w; g_view_h = h;
+}
+void render_set_view_pos(double x, double y) { g_view_x = x; g_view_y = y; }
+double render_view_width() { return g_view_w > 0 ? g_view_w : g_room_w; }
+double render_view_height() { return g_view_h > 0 ? g_view_h : g_room_h; }
 
 double render_delta_time() { return g_dt; }
 
@@ -355,6 +380,15 @@ void render_set_window_size(int width, int height) {
     g_win_w = width;
     g_win_h = height;
     if (g_window) glfwSetWindowSize(g_window, width, height);
+}
+
+void render_set_room(int width, int height, unsigned int bg_color) {
+    g_room_w = width;
+    g_room_h = height;
+    float r = static_cast<float>(bg_color & 0xFF) / 255.0f;
+    float g = static_cast<float>((bg_color >> 8) & 0xFF) / 255.0f;
+    float b = static_cast<float>((bg_color >> 16) & 0xFF) / 255.0f;
+    glClearColor(r, g, b, 1.0f);
 }
 
 void render_shutdown() {

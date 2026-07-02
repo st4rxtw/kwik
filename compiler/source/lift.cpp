@@ -350,20 +350,22 @@ static void emit_object_table(std::ostream& os, const GameData& gd) {
 }
 
 static void emit_room_data(std::ostream& os, const GameData& gd) {
-    const Room* room = gd.rooms().empty() ? nullptr : &gd.rooms()[0];
-    os << "static const InstanceInit g_instances[] = {\n";
-    if (room)
-        for (const auto& ri : room->instances)
+    const auto& rooms = gd.rooms();
+    for (size_t i = 0; i < rooms.size(); ++i) {
+        os << "static const InstanceInit g_instances_" << i << "[] = {\n";
+        for (const auto& ri : rooms[i].instances)
             os << "    { " << ri.object_index << ", " << ri.x << ", " << ri.y << ", " << ri.id << " },\n";
-    os << "};\n\n";
-
-    os << "const RoomDef g_room = {\n";
-    if (room)
-        os << "    " << quote(room->name) << ", " << room->width << ", " << room->height << ", "
-           << room->bg_color << "u, g_instances, " << room->instances.size() << "\n";
-    else
-        os << "    \"\", 0, 0, 0u, g_instances, 0\n";
-    os << "};\n\n";
+        os << "    { 0, 0, 0, 0 },\n";
+        os << "};\n";
+    }
+    os << "\nconst RoomDef g_rooms[] = {\n";
+    for (size_t i = 0; i < rooms.size(); ++i)
+        os << "    { " << quote(rooms[i].name) << ", " << rooms[i].width << ", " << rooms[i].height
+           << ", " << rooms[i].bg_color << "u, " << rooms[i].view_x << ", " << rooms[i].view_y
+           << ", " << rooms[i].view_w << ", " << rooms[i].view_h << ", g_instances_" << i << ", "
+           << rooms[i].instances.size() << " },\n";
+    os << "};\n";
+    os << "const int g_room_count = " << rooms.size() << ";\n\n";
 }
 
 bool emit_cpp(const GameData& gd, const std::string& out_path) {
@@ -389,7 +391,7 @@ bool emit_cpp(const GameData& gd, const std::string& out_path) {
     f << "}\n\n";
 
     f << "int main() {\n";
-    f << "    return run_game(g_objects, g_object_count, g_room);\n";
+    f << "    return run_game(g_objects, g_object_count, g_rooms, g_room_count);\n";
     f << "}\n";
     return true;
 }
@@ -409,7 +411,8 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
         hdr << "void " << e.name << "(gml::Instance& self);\n";
     hdr << "\nextern const gml::ObjectDef g_objects[];\n";
     hdr << "extern const int g_object_count;\n";
-    hdr << "extern const gml::RoomDef g_room;\n";
+    hdr << "extern const gml::RoomDef g_rooms[];\n";
+    hdr << "extern const int g_room_count;\n";
     hdr.close();
 
     std::map<std::string, std::vector<const CodeEntry*>> by_object;
@@ -487,7 +490,7 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     std::ofstream mainf(root / "main.cpp", std::ios::binary);
     mainf << "#include \"generated.h\"\n\n";
     mainf << "int main() {\n";
-    mainf << "    return gml::run_game(g_objects, g_object_count, g_room);\n";
+    mainf << "    return gml::run_game(g_objects, g_object_count, g_rooms, g_room_count);\n";
     mainf << "}\n";
     mainf.close();
 

@@ -178,6 +178,21 @@ void GameData::parse_rooms() {
         r.width = i32(ptr + 8);
         r.height = i32(ptr + 12);
         r.bg_color = u32(ptr + 24);
+        r.view_x = 0;
+        r.view_y = 0;
+        r.view_w = r.width;
+        r.view_h = r.height;
+        uint32_t flags = u32(ptr + 36);
+        uint32_t views_ptr = u32(ptr + 44);
+        if ((flags & 1) && views_ptr && u32(views_ptr) > 0) {
+            uint32_t v0 = u32(views_ptr + 4);
+            if (i32(v0) != 0) {
+                r.view_x = i32(v0 + 4);
+                r.view_y = i32(v0 + 8);
+                int32_t vw = i32(v0 + 12), vh = i32(v0 + 16);
+                if (vw > 0 && vh > 0) { r.view_w = vw; r.view_h = vh; }
+            }
+        }
         uint32_t inst_list = u32(ptr + 48);
         uint32_t ic = u32(inst_list);
         for (uint32_t k = 0; k < ic; ++k) {
