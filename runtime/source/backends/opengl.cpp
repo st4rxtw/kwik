@@ -3,6 +3,7 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -223,15 +224,22 @@ void render_end_frame() {
         glLoadIdentity();
         glClearColor(0.f, 0.f, 0.f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT);
+        double scale = std::min((double)fbw / g_fbo_w, (double)fbh / g_fbo_h);
+        double dw = g_fbo_w * scale / fbw;
+        double dh = g_fbo_h * scale / fbh;
+        float x0 = (float)((1.0 - dw) * 0.5);
+        float y0 = (float)((1.0 - dh) * 0.5);
+        float x1 = x0 + (float)dw;
+        float y1 = y0 + (float)dh;
         glDisable(GL_BLEND);
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, g_fbo_tex);
         glColor4f(1.f, 1.f, 1.f, 1.f);
         glBegin(GL_QUADS);
-        glTexCoord2f(0, 1); glVertex2f(0, 0);
-        glTexCoord2f(1, 1); glVertex2f(1, 0);
-        glTexCoord2f(1, 0); glVertex2f(1, 1);
-        glTexCoord2f(0, 0); glVertex2f(0, 1);
+        glTexCoord2f(0, 1); glVertex2f(x0, y0);
+        glTexCoord2f(1, 1); glVertex2f(x1, y0);
+        glTexCoord2f(1, 0); glVertex2f(x1, y1);
+        glTexCoord2f(0, 0); glVertex2f(x0, y1);
         glEnd();
         glEnable(GL_BLEND);
     }
@@ -272,21 +280,34 @@ bool render_key_released(int vk) {
     return !g_keys_now[vk] && g_keys_prev[vk];
 }
 
-double render_mouse_x() {
-    if (!g_window) return 0;
+static void mouse_to_gui(double& gx, double& gy) {
+    gx = 0;
+    gy = 0;
+    if (!g_window) return;
     double mx, my;
     glfwGetCursorPos(g_window, &mx, &my);
     int ww, wh;
     glfwGetWindowSize(g_window, &ww, &wh);
-    return mx * g_gui_w / (ww > 0 ? ww : 1);
+    if (ww <= 0 || wh <= 0) return;
+    int cw = g_fbo_w > 0 ? g_fbo_w : g_gui_w;
+    int ch = g_fbo_h > 0 ? g_fbo_h : g_gui_h;
+    double scale = std::min((double)ww / cw, (double)wh / ch);
+    if (scale <= 0) return;
+    double ox = (ww - cw * scale) * 0.5;
+    double oy = (wh - ch * scale) * 0.5;
+    gx = (mx - ox) / scale;
+    gy = (my - oy) / scale;
+}
+
+double render_mouse_x() {
+    double gx, gy;
+    mouse_to_gui(gx, gy);
+    return gx;
 }
 double render_mouse_y() {
-    if (!g_window) return 0;
-    double mx, my;
-    glfwGetCursorPos(g_window, &mx, &my);
-    int ww, wh;
-    glfwGetWindowSize(g_window, &ww, &wh);
-    return my * g_gui_h / (wh > 0 ? wh : 1);
+    double gx, gy;
+    mouse_to_gui(gx, gy);
+    return gy;
 }
 bool render_mouse_down(int b) { return b >= 0 && b < 3 && g_mouse_now[b]; }
 bool render_mouse_pressed(int b) { return b >= 0 && b < 3 && g_mouse_now[b] && !g_mouse_prev[b]; }
