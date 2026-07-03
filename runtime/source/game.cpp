@@ -1013,7 +1013,12 @@ Value kwik_builtin_get(Instance* self, const char* name) {
     if (!std::strcmp(name, "view_enabled")) return Value(1.0);
     if (!std::strcmp(name, "async_load")) return Value((double)g_async_load_map);
     if (!std::strcmp(name, "application_surface")) return Value(0.0);
-    if (self && self->has(name)) return self->var(name);
+    if (self) {
+        bool handled;
+        Value v = scope_get_special(self, name, handled);
+        if (handled) return v;
+        if (self->has(name)) return self->var(name);
+    }
     if (g_dummy_instance && g_dummy_instance->has(name)) return g_dummy_instance->var(name);
     return kwik_missing(self, (std::string("builtin var ") + name).c_str());
 }

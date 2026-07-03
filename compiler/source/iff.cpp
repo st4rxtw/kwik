@@ -150,6 +150,7 @@ void GameData::parse_functions() {
         uint32_t addr = u32(p + 8);
         p += 12;
         std::string name = string_at_offset(name_off);
+        func_names_.push_back(name);
         for (uint32_t k = 0; k < occurrences && addr < data_.size(); ++k) {
             func_by_call_[addr] = name;
             uint32_t raw = u32(addr);

@@ -129,6 +129,9 @@ public:
     const std::string& display_name() const { return display_name_; }
 
     std::string function_at_call(uint32_t call_addr) const;
+    std::string function_by_index(uint32_t idx) const {
+        return idx < func_names_.size() ? func_names_[idx] : std::string();
+    }
     VarRef var_at(uint32_t push_addr) const;
 
     uint8_t u8(uint32_t off) const;
@@ -152,6 +155,7 @@ private:
     std::vector<std::string> strings_;
     std::vector<CodeEntry> code_;
     std::unordered_map<uint32_t, std::string> func_by_call_;
+    std::vector<std::string> func_names_;
     std::unordered_map<uint32_t, VarRef> var_by_addr_;
     std::vector<GameObject> objects_;
     std::vector<Room> rooms_;

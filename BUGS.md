@@ -15,21 +15,21 @@
 
 ## DELTARUNE CHAPTER 2
 
-* N/A
+* A lot of unhandled events + compile errors
 
 ## DELTARUNE CHAPTER 3
 
-* N/A
+* A lot of unhandled events + compile errors
 
 ## DELTARUNE CHAPTER 4
 
-* N/A
+* A lot of unhandled events + compile errors
 
 ## DELTARUNE CHAPTER 5
 
-* N/A
+* A lot of unhandled events + compile errors
 
 
 ## DELTATALE
 
-* It's fully broken on this branch due to a lot of things being rewritten.
+* None

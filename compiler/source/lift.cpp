@@ -753,11 +753,27 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                              << ".type == Value::UNDEF);\n";
                     push(4);
                     break;
-                case -11:
-                    warn(ctx, in.address, "pushref not supported");
-                    if (out) *out << "    " << S(d()) << " = Value();\n";
+                case -11: {
+                    uint32_t atype = (in.extra >> 24) & 0xFF;
+                    int32_t aidx = (int32_t)(in.extra & 0x00FFFFFF);
+                    if (atype == 5) {
+                        std::string fn = gd.function_by_index((uint32_t)aidx);
+                        if (!fn.empty()) {
+                            std::string plain =
+                                fn.rfind("gml_Script_", 0) == 0 ? fn.substr(11) : fn;
+                            if (out)
+                                *out << "    " << S(d()) << " = kwik_make_fnref(&"
+                                     << sanitize(fn) << ", " << quote(plain) << ");\n";
+                        } else {
+                            warn(ctx, in.address, "pushref: unknown script index");
+                            if (out) *out << "    " << S(d()) << " = Value();\n";
+                        }
+                    } else {
+                        if (out) *out << "    " << S(d()) << " = " << aidx << ";\n";
+                    }
                     push(16);
                     break;
+                }
                 default:
                     warn(ctx, in.address, "unknown break op");
                     break;
