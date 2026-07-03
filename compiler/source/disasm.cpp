@@ -51,7 +51,9 @@ static uint8_t push_extra_words(uint8_t type1) {
     switch (type1) {
         case 0x0: return 2;
         case 0x3: return 2;
+        case 0x1: return 1;
         case 0x2: return 1;
+        case 0x4: return 1;
         case 0x5: return 1;
         case 0x6: return 1;
         default: return 0;
@@ -77,7 +79,7 @@ std::vector<Instruction> disassemble(const GameData& gd, const CodeEntry& e) {
         in.jump_target = 0;
         in.cmp_kind = 0;
 
-        if (in.opcode == 0xD9 || in.opcode == 0x99 || in.opcode == 0x45) {
+        if (in.opcode == 0xD9 || in.opcode == 0x45) {
             in.has_extra = true;
             in.extra = gd.u32(addr + 4);
             in.size = 8;
@@ -96,8 +98,8 @@ std::vector<Instruction> disassemble(const GameData& gd, const CodeEntry& e) {
             }
         } else if (in.opcode == 0xB6 || in.opcode == 0xB7 || in.opcode == 0xB8 ||
                    in.opcode == 0xBA || in.opcode == 0xBB) {
-            int32_t off = word & 0x00FFFFFF;
-            if (off & 0x00800000) off |= 0xFF000000;
+            int32_t off = word & 0x007FFFFF;
+            if (off & 0x00400000) off |= 0xFF800000;
             in.jump_target = addr + off * 4;
         } else if (in.opcode == 0x15) {
             in.cmp_kind = (word >> 8) & 0xFF;

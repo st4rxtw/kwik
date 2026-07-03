@@ -297,6 +297,21 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
         }
     }
 
+    auto pack_blob = [&](const uint8_t* data, uint32_t size) {
+        uint32_t type = 0;
+        if (size >= 4) {
+            if (!std::memcmp(data, "RIFF", 4)) type = 1;
+            else if (!std::memcmp(data, "OggS", 4)) type = 2;
+            else type = 3;
+        }
+        std::vector<uint8_t> e;
+        auto w32 = [&](uint32_t v) { e.push_back(v); e.push_back(v >> 8); e.push_back(v >> 16); e.push_back(v >> 24); };
+        w32(type);
+        w32(size);
+        e.insert(e.end(), data, data + size);
+        sounds.push_back(std::move(e));
+    };
+
     const Chunk* audo = gd.chunk("AUDO");
     if (audo) {
         const auto& bytes = gd.bytes();
@@ -304,20 +319,42 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
         for (uint32_t i = 0; i < ac; ++i) {
             uint32_t p = gd.u32(audo->offset + 4 + i * 4);
             uint32_t size = gd.u32(p);
-            const uint8_t* data = &bytes[p + 4];
-            uint32_t type = 0;
-            if (size >= 4) {
-                if (!std::memcmp(data, "RIFF", 4)) type = 1;
-                else if (!std::memcmp(data, "OggS", 4)) type = 2;
-                else type = 3;
+            if ((size_t)p + 4 + size > bytes.size()) size = bytes.size() - p - 4;
+            pack_blob(&bytes[p + 4], size);
+        }
+    }
+
+    int group1_base = (int)sounds.size();
+    bool have_group1 = false;
+    {
+        std::string agpath = gd.source_dir() + "/audiogroup1.dat";
+        std::ifstream ag(agpath, std::ios::binary);
+        if (ag) {
+            std::vector<uint8_t> agb((std::istreambuf_iterator<char>(ag)),
+                                     std::istreambuf_iterator<char>());
+            auto agu32 = [&](size_t o) -> uint32_t {
+                if (o + 4 > agb.size()) return 0;
+                return agb[o] | (agb[o + 1] << 8) | (agb[o + 2] << 16) | ((uint32_t)agb[o + 3] << 24);
+            };
+            if (agb.size() > 16 && !std::memcmp(agb.data(), "FORM", 4)) {
+                size_t pos = 8;
+                while (pos + 8 <= agb.size()) {
+                    std::string cname((const char*)&agb[pos], 4);
+                    uint32_t csize = agu32(pos + 4);
+                    if (cname == "AUDO") {
+                        uint32_t ac = agu32(pos + 8);
+                        for (uint32_t i = 0; i < ac; ++i) {
+                            uint32_t p = agu32(pos + 12 + i * 4);
+                            uint32_t size = agu32(p);
+                            if ((size_t)p + 4 + size > agb.size()) continue;
+                            pack_blob(&agb[p + 4], size);
+                        }
+                        have_group1 = true;
+                        break;
+                    }
+                    pos += 8 + csize;
+                }
             }
-            std::vector<uint8_t> e;
-            auto w32 = [&](uint32_t v) { e.push_back(v); e.push_back(v >> 8); e.push_back(v >> 16); e.push_back(v >> 24); };
-            w32(type);
-            w32(size);
-            e.insert(e.end(), data, data + size);
-            sounds.push_back(std::move(e));
-            out.sound_names.push_back("sound_" + std::to_string(i));
         }
     }
 
@@ -326,7 +363,24 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
         uint32_t sc = gd.u32(sond->offset);
         for (uint32_t i = 0; i < sc; ++i) {
             uint32_t p = gd.u32(sond->offset + 4 + i * 4);
-            out.sound_audio_id.push_back(gd.i32(p + 32));
+            SoundInfo si;
+            si.name = gd.string_at_offset(gd.u32(p));
+            si.file = gd.string_at_offset(gd.u32(p + 12));
+            uint32_t uvol = gd.u32(p + 20), upit = gd.u32(p + 24);
+            float fvol, fpit;
+            std::memcpy(&fvol, &uvol, 4);
+            std::memcpy(&fpit, &upit, 4);
+            si.volume = fvol;
+            si.pitch = fpit;
+            int32_t group = gd.i32(p + 28);
+            int32_t audio_id = gd.i32(p + 32);
+            if (audio_id < 0)
+                si.blob = -1;
+            else if (group >= 1 && have_group1)
+                si.blob = group1_base + audio_id;
+            else
+                si.blob = audio_id;
+            out.sounds.push_back(si);
         }
     }
 

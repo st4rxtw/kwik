@@ -1,0 +1,843 @@
+#include "gml_runtime.h"
+
+#include <cstdio>
+#include <cstring>
+#include <map>
+#include <vector>
+
+namespace gml {
+
+static double A(const Value* args, int argc, int i, double dflt = 0.0) {
+    return i < argc ? (double)args[i] : dflt;
+}
+static std::string S(const Value* args, int argc, int i) {
+    return i < argc ? (std::string)args[i] : std::string();
+}
+
+struct DsKey {
+    bool is_str;
+    double num;
+    std::string str;
+    bool operator<(const DsKey& o) const {
+        if (is_str != o.is_str) return is_str < o.is_str;
+        if (is_str) return str < o.str;
+        return num < o.num;
+    }
+};
+
+static DsKey key_of(const Value& v) {
+    DsKey k;
+    k.is_str = v.type == Value::STR;
+    if (k.is_str) k.str = v.str;
+    else k.num = (double)v;
+    return k;
+}
+static Value key_value(const DsKey& k) {
+    return k.is_str ? Value(k.str) : Value(k.num);
+}
+
+struct DsMap {
+    std::map<DsKey, Value> data;
+    bool alive = true;
+};
+struct DsList {
+    std::vector<Value> data;
+    bool alive = true;
+};
+
+static std::vector<DsMap> g_maps;
+static std::vector<DsList> g_lists;
+
+static DsMap* map_of(const Value& v) {
+    int i = (int)(double)v;
+    if (i < 0 || (size_t)i >= g_maps.size() || !g_maps[i].alive) return nullptr;
+    return &g_maps[i];
+}
+static DsList* list_of(const Value& v) {
+    int i = (int)(double)v;
+    if (i < 0 || (size_t)i >= g_lists.size() || !g_lists[i].alive) return nullptr;
+    return &g_lists[i];
+}
+
+GMLFN(ds_map_create) {
+    (void)self; (void)args; (void)argc;
+    g_maps.emplace_back();
+    return Value((double)(g_maps.size() - 1));
+}
+GMLFN(ds_map_destroy) {
+    (void)self;
+    DsMap* m = argc > 0 ? map_of(args[0]) : nullptr;
+    if (m) { m->alive = false; m->data.clear(); }
+    return Value();
+}
+GMLFN(ds_map_set) {
+    (void)self;
+    DsMap* m = argc > 2 ? map_of(args[0]) : nullptr;
+    if (m) m->data[key_of(args[1])] = args[2];
+    return Value();
+}
+GMLFN(ds_map_set_post) { return ds_map_set(self, args, argc); }
+GMLFN(ds_map_add) {
+    (void)self;
+    DsMap* m = argc > 2 ? map_of(args[0]) : nullptr;
+    if (!m) return Value(0.0);
+    if (m->data.count(key_of(args[1]))) return Value(0.0);
+    m->data[key_of(args[1])] = args[2];
+    return Value(1.0);
+}
+GMLFN(ds_map_find_value) {
+    (void)self;
+    DsMap* m = argc > 1 ? map_of(args[0]) : nullptr;
+    if (!m) return Value();
+    auto it = m->data.find(key_of(args[1]));
+    if (it == m->data.end()) return Value();
+    return it->second;
+}
+GMLFN(ds_map_exists) {
+    (void)self;
+    DsMap* m = argc > 1 ? map_of(args[0]) : nullptr;
+    return Value(m && m->data.count(key_of(args[1])) != 0);
+}
+GMLFN(ds_map_delete) {
+    (void)self;
+    DsMap* m = argc > 1 ? map_of(args[0]) : nullptr;
+    if (m) m->data.erase(key_of(args[1]));
+    return Value();
+}
+GMLFN(ds_map_size) {
+    (void)self;
+    DsMap* m = argc > 0 ? map_of(args[0]) : nullptr;
+    return Value(m ? (double)m->data.size() : 0.0);
+}
+GMLFN(ds_map_find_first) {
+    (void)self;
+    DsMap* m = argc > 0 ? map_of(args[0]) : nullptr;
+    if (!m || m->data.empty()) return Value();
+    return key_value(m->data.begin()->first);
+}
+GMLFN(ds_map_find_next) {
+    (void)self;
+    DsMap* m = argc > 1 ? map_of(args[0]) : nullptr;
+    if (!m) return Value();
+    auto it = m->data.upper_bound(key_of(args[1]));
+    if (it == m->data.end()) return Value();
+    return key_value(it->first);
+}
+GMLFN(ds_map_keys_to_array) {
+    (void)self;
+    DsMap* m = argc > 0 ? map_of(args[0]) : nullptr;
+    Value out = argc > 1 && args[1].type == Value::ARR ? args[1] : kwik_new_array(nullptr, 0);
+    if (m)
+        for (auto& kv : m->data) out.arr->items.push_back(key_value(kv.first));
+    return out;
+}
+
+GMLFN(ds_list_create) {
+    (void)self; (void)args; (void)argc;
+    g_lists.emplace_back();
+    return Value((double)(g_lists.size() - 1));
+}
+GMLFN(ds_list_destroy) {
+    (void)self;
+    DsList* l = argc > 0 ? list_of(args[0]) : nullptr;
+    if (l) { l->alive = false; l->data.clear(); }
+    return Value();
+}
+GMLFN(ds_list_add) {
+    (void)self;
+    DsList* l = argc > 0 ? list_of(args[0]) : nullptr;
+    if (l)
+        for (int i = 1; i < argc; ++i) l->data.push_back(args[i]);
+    return Value();
+}
+GMLFN(ds_list_size) {
+    (void)self;
+    DsList* l = argc > 0 ? list_of(args[0]) : nullptr;
+    return Value(l ? (double)l->data.size() : 0.0);
+}
+GMLFN(ds_list_find_value) {
+    (void)self;
+    DsList* l = argc > 1 ? list_of(args[0]) : nullptr;
+    if (!l) return Value();
+    int i = (int)(double)args[1];
+    if (i < 0 || (size_t)i >= l->data.size()) return Value();
+    return l->data[i];
+}
+GMLFN(ds_list_clear) {
+    (void)self;
+    DsList* l = argc > 0 ? list_of(args[0]) : nullptr;
+    if (l) l->data.clear();
+    return Value();
+}
+GMLFN(ds_list_delete_fn) {
+    (void)self;
+    DsList* l = argc > 1 ? list_of(args[0]) : nullptr;
+    if (l) {
+        int i = (int)(double)args[1];
+        if (i >= 0 && (size_t)i < l->data.size()) l->data.erase(l->data.begin() + i);
+    }
+    return Value();
+}
+GMLFN(ds_list_read) { (void)args; (void)argc; return kwik_missing(self, "ds_list_read"); }
+GMLFN(ds_list_write) { (void)args; (void)argc; return kwik_missing(self, "ds_list_write"); }
+GMLFN(ds_exists) {
+    (void)self;
+    if (argc < 2) return Value(0.0);
+    int type = (int)(double)args[1];
+    if (type == 1) return Value(map_of(args[0]) != nullptr);
+    if (type == 2) return Value(list_of(args[0]) != nullptr);
+    return Value(0.0);
+}
+
+struct JsonParser {
+    const char* p;
+    const char* end;
+
+    void skip_ws() {
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) ++p;
+    }
+
+    bool parse_string(std::string& out) {
+        if (p >= end || *p != '"') return false;
+        ++p;
+        out.clear();
+        while (p < end && *p != '"') {
+            if (*p == '\\' && p + 1 < end) {
+                ++p;
+                switch (*p) {
+                    case 'n': out.push_back('\n'); break;
+                    case 't': out.push_back('\t'); break;
+                    case 'r': out.push_back('\r'); break;
+                    case 'b': out.push_back('\b'); break;
+                    case 'f': out.push_back('\f'); break;
+                    case 'u': {
+                        if (p + 4 < end) {
+                            unsigned int cp = 0;
+                            for (int i = 1; i <= 4; ++i) {
+                                char c = p[i];
+                                cp <<= 4;
+                                if (c >= '0' && c <= '9') cp |= c - '0';
+                                else if (c >= 'a' && c <= 'f') cp |= c - 'a' + 10;
+                                else if (c >= 'A' && c <= 'F') cp |= c - 'A' + 10;
+                            }
+                            p += 4;
+                            if (cp < 0x80) {
+                                out.push_back((char)cp);
+                            } else if (cp < 0x800) {
+                                out.push_back((char)(0xC0 | (cp >> 6)));
+                                out.push_back((char)(0x80 | (cp & 0x3F)));
+                            } else {
+                                out.push_back((char)(0xE0 | (cp >> 12)));
+                                out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+                                out.push_back((char)(0x80 | (cp & 0x3F)));
+                            }
+                        }
+                        break;
+                    }
+                    default: out.push_back(*p); break;
+                }
+                ++p;
+            } else {
+                out.push_back(*p);
+                ++p;
+            }
+        }
+        if (p < end) ++p;
+        return true;
+    }
+
+    bool parse_ds(Value& out) {
+        skip_ws();
+        if (p >= end) return false;
+        if (*p == '{') {
+            ++p;
+            g_maps.emplace_back();
+            int id = (int)g_maps.size() - 1;
+            skip_ws();
+            if (p < end && *p == '}') { ++p; out = Value((double)id); return true; }
+            while (p < end) {
+                skip_ws();
+                std::string key;
+                if (!parse_string(key)) return false;
+                skip_ws();
+                if (p >= end || *p != ':') return false;
+                ++p;
+                Value v;
+                if (!parse_ds(v)) return false;
+                g_maps[id].data[key_of(Value(key))] = v;
+                skip_ws();
+                if (p < end && *p == ',') { ++p; continue; }
+                break;
+            }
+            skip_ws();
+            if (p < end && *p == '}') ++p;
+            out = Value((double)id);
+            return true;
+        }
+        if (*p == '[') {
+            ++p;
+            g_lists.emplace_back();
+            int id = (int)g_lists.size() - 1;
+            skip_ws();
+            if (p < end && *p == ']') { ++p; out = Value((double)id); return true; }
+            while (p < end) {
+                Value v;
+                if (!parse_ds(v)) return false;
+                g_lists[id].data.push_back(v);
+                skip_ws();
+                if (p < end && *p == ',') { ++p; continue; }
+                break;
+            }
+            skip_ws();
+            if (p < end && *p == ']') ++p;
+            out = Value((double)id);
+            return true;
+        }
+        if (*p == '"') {
+            std::string s;
+            if (!parse_string(s)) return false;
+            out = Value(s);
+            return true;
+        }
+        if (!std::strncmp(p, "true", 4)) { p += 4; out = Value(1.0); return true; }
+        if (!std::strncmp(p, "false", 5)) { p += 5; out = Value(0.0); return true; }
+        if (!std::strncmp(p, "null", 4)) { p += 4; out = Value(); return true; }
+        char* endp = nullptr;
+        double d = std::strtod(p, &endp);
+        if (endp == p) return false;
+        p = endp;
+        out = Value(d);
+        return true;
+    }
+};
+
+GMLFN(json_decode) {
+    (void)self;
+    std::string src = S(args, argc, 0);
+    JsonParser jp{src.c_str(), src.c_str() + src.size()};
+    Value out;
+    jp.skip_ws();
+    if (jp.p < jp.end && *jp.p == '[') {
+        Value lst;
+        if (!jp.parse_ds(lst)) return Value(-1.0);
+        g_maps.emplace_back();
+        int id = (int)g_maps.size() - 1;
+        g_maps[id].data[key_of(Value("default"))] = lst;
+        return Value((double)id);
+    }
+    if (!jp.parse_ds(out)) return Value(-1.0);
+    return out;
+}
+
+static void json_encode_value(const Value& v, std::string& out);
+
+static void json_encode_string(const std::string& s, std::string& out) {
+    out.push_back('"');
+    for (char c : s) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\t': out += "\\t"; break;
+            case '\r': out += "\\r"; break;
+            default: out.push_back(c); break;
+        }
+    }
+    out.push_back('"');
+}
+
+static void json_encode_value(const Value& v, std::string& out) {
+    if (v.type == Value::STR) {
+        json_encode_string(v.str, out);
+    } else {
+        char buf[40];
+        double d = (double)v;
+        if (d == (long long)d)
+            std::snprintf(buf, sizeof(buf), "%lld", (long long)d);
+        else
+            std::snprintf(buf, sizeof(buf), "%g", d);
+        out += buf;
+    }
+}
+
+GMLFN(json_encode) {
+    (void)self;
+    DsMap* m = argc > 0 ? map_of(args[0]) : nullptr;
+    if (!m) return Value("{}");
+    std::string out = "{ ";
+    bool first = true;
+    for (auto& kv : m->data) {
+        if (!first) out += ", ";
+        first = false;
+        json_encode_string(kv.first.is_str ? kv.first.str : (std::string)Value(kv.first.num), out);
+        out += ": ";
+        json_encode_value(kv.second, out);
+    }
+    out += " }";
+    return Value(out);
+}
+
+static bool json_parse_struct(JsonParser& jp, Instance* self, Value& out);
+
+GMLFN(json_parse) {
+    (void)self;
+    std::string src = S(args, argc, 0);
+    JsonParser jp{src.c_str(), src.c_str() + src.size()};
+    Value out;
+    if (!json_parse_struct(jp, self, out)) return Value();
+    return out;
+}
+
+static bool json_parse_struct(JsonParser& jp, Instance* self, Value& out) {
+    jp.skip_ws();
+    if (jp.p >= jp.end) return false;
+    if (*jp.p == '{') {
+        ++jp.p;
+        Value obj = kwik_new_object(self, nullptr, 0);
+        jp.skip_ws();
+        if (jp.p < jp.end && *jp.p == '}') { ++jp.p; out = obj; return true; }
+        while (jp.p < jp.end) {
+            jp.skip_ws();
+            std::string key;
+            if (!jp.parse_string(key)) return false;
+            jp.skip_ws();
+            if (jp.p >= jp.end || *jp.p != ':') return false;
+            ++jp.p;
+            Value v;
+            if (!json_parse_struct(jp, self, v)) return false;
+            if (obj.obj) obj.obj->var(key) = v;
+            jp.skip_ws();
+            if (jp.p < jp.end && *jp.p == ',') { ++jp.p; continue; }
+            break;
+        }
+        jp.skip_ws();
+        if (jp.p < jp.end && *jp.p == '}') ++jp.p;
+        out = obj;
+        return true;
+    }
+    if (*jp.p == '[') {
+        ++jp.p;
+        Value arr = kwik_new_array(nullptr, 0);
+        jp.skip_ws();
+        if (jp.p < jp.end && *jp.p == ']') { ++jp.p; out = arr; return true; }
+        while (jp.p < jp.end) {
+            Value v;
+            if (!json_parse_struct(jp, self, v)) return false;
+            arr.arr->items.push_back(v);
+            jp.skip_ws();
+            if (jp.p < jp.end && *jp.p == ',') { ++jp.p; continue; }
+            break;
+        }
+        jp.skip_ws();
+        if (jp.p < jp.end && *jp.p == ']') ++jp.p;
+        out = arr;
+        return true;
+    }
+    return jp.parse_ds(out);
+}
+
+GMLFN(json_stringify) { (void)args; (void)argc; return kwik_missing(self, "json_stringify"); }
+
+struct IniSection {
+    std::map<std::string, std::string> entries;
+};
+static std::map<std::string, IniSection> g_ini;
+static std::string g_ini_file;
+static bool g_ini_open = false;
+static bool g_ini_dirty = false;
+static bool g_ini_from_string = false;
+
+static void ini_parse(const std::string& text) {
+    g_ini.clear();
+    std::string section;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t eol = text.find('\n', pos);
+        if (eol == std::string::npos) eol = text.size();
+        std::string line = text.substr(pos, eol - pos);
+        pos = eol + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        size_t st = line.find_first_not_of(" \t");
+        if (st == std::string::npos) continue;
+        line = line.substr(st);
+        if (line[0] == ';' || line[0] == '#') continue;
+        if (line[0] == '[') {
+            size_t e = line.find(']');
+            section = e == std::string::npos ? line.substr(1) : line.substr(1, e - 1);
+            continue;
+        }
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = line.substr(0, eq);
+        std::string v = line.substr(eq + 1);
+        while (!k.empty() && k.back() == ' ') k.pop_back();
+        if (!v.empty() && v.front() == '"' && v.back() == '"' && v.size() >= 2)
+            v = v.substr(1, v.size() - 2);
+        g_ini[section].entries[k] = v;
+    }
+}
+
+GMLFN(ini_open) {
+    (void)self;
+    g_ini_file = S(args, argc, 0);
+    g_ini.clear();
+    g_ini_open = true;
+    g_ini_dirty = false;
+    g_ini_from_string = false;
+    std::FILE* f = std::fopen(g_ini_file.c_str(), "rb");
+    if (f) {
+        std::string text;
+        char buf[4096];
+        size_t n;
+        while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) text.append(buf, n);
+        std::fclose(f);
+        ini_parse(text);
+    }
+    return Value();
+}
+
+GMLFN(ini_open_from_string) {
+    (void)self;
+    g_ini_file.clear();
+    g_ini.clear();
+    g_ini_open = true;
+    g_ini_dirty = false;
+    g_ini_from_string = true;
+    ini_parse(S(args, argc, 0));
+    return Value();
+}
+
+GMLFN(ini_close) {
+    (void)self; (void)args; (void)argc;
+    std::string out;
+    for (auto& sec : g_ini) {
+        out += "[" + sec.first + "]\n";
+        for (auto& kv : sec.second.entries) out += kv.first + "=\"" + kv.second + "\"\n";
+    }
+    if (g_ini_open && g_ini_dirty && !g_ini_from_string && !g_ini_file.empty()) {
+        std::FILE* f = std::fopen(g_ini_file.c_str(), "wb");
+        if (f) {
+            std::fwrite(out.data(), 1, out.size(), f);
+            std::fclose(f);
+        }
+    }
+    g_ini_open = false;
+    g_ini.clear();
+    return Value(out);
+}
+
+GMLFN(ini_read_real) {
+    (void)self;
+    auto s = g_ini.find(S(args, argc, 0));
+    if (s != g_ini.end()) {
+        auto k = s->second.entries.find(S(args, argc, 1));
+        if (k != s->second.entries.end()) return Value(std::atof(k->second.c_str()));
+    }
+    return Value(A(args, argc, 2));
+}
+
+GMLFN(ini_read_string) {
+    (void)self;
+    auto s = g_ini.find(S(args, argc, 0));
+    if (s != g_ini.end()) {
+        auto k = s->second.entries.find(S(args, argc, 1));
+        if (k != s->second.entries.end()) return Value(k->second);
+    }
+    return Value(S(args, argc, 2));
+}
+
+GMLFN(ini_write_real) {
+    (void)self;
+    char buf[40];
+    double d = A(args, argc, 2);
+    if (d == (long long)d)
+        std::snprintf(buf, sizeof(buf), "%lld", (long long)d);
+    else
+        std::snprintf(buf, sizeof(buf), "%g", d);
+    g_ini[S(args, argc, 0)].entries[S(args, argc, 1)] = buf;
+    g_ini_dirty = true;
+    return Value();
+}
+
+GMLFN(ini_write_string) {
+    (void)self;
+    g_ini[S(args, argc, 0)].entries[S(args, argc, 1)] = S(args, argc, 2);
+    g_ini_dirty = true;
+    return Value();
+}
+
+GMLFN(file_exists) {
+    (void)self;
+    std::FILE* f = std::fopen(S(args, argc, 0).c_str(), "rb");
+    if (f) { std::fclose(f); return Value(1.0); }
+    return Value(0.0);
+}
+
+GMLFN(file_delete) {
+    (void)self;
+    return Value(std::remove(S(args, argc, 0).c_str()) == 0);
+}
+
+GMLFN(file_copy) {
+    (void)self;
+    std::FILE* in = std::fopen(S(args, argc, 0).c_str(), "rb");
+    if (!in) return Value(0.0);
+    std::FILE* out = std::fopen(S(args, argc, 1).c_str(), "wb");
+    if (!out) { std::fclose(in); return Value(0.0); }
+    char buf[8192];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), in)) > 0) std::fwrite(buf, 1, n, out);
+    std::fclose(in);
+    std::fclose(out);
+    return Value(1.0);
+}
+
+struct TextFile {
+    std::FILE* f = nullptr;
+    bool write = false;
+    bool alive = false;
+};
+static std::vector<TextFile> g_text_files;
+
+GMLFN(file_text_open_read) {
+    (void)self;
+    std::FILE* f = std::fopen(S(args, argc, 0).c_str(), "rb");
+    if (!f) return Value(-1.0);
+    g_text_files.push_back({f, false, true});
+    return Value((double)(g_text_files.size() - 1));
+}
+GMLFN(file_text_open_write) {
+    (void)self;
+    std::FILE* f = std::fopen(S(args, argc, 0).c_str(), "wb");
+    if (!f) return Value(-1.0);
+    g_text_files.push_back({f, true, true});
+    return Value((double)(g_text_files.size() - 1));
+}
+static TextFile* tf_of(const Value& v) {
+    int i = (int)(double)v;
+    if (i < 0 || (size_t)i >= g_text_files.size() || !g_text_files[i].alive) return nullptr;
+    return &g_text_files[i];
+}
+GMLFN(file_text_close) {
+    (void)self;
+    TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
+    if (tf) {
+        std::fclose(tf->f);
+        tf->f = nullptr;
+        tf->alive = false;
+    }
+    return Value();
+}
+GMLFN(file_text_eof) {
+    (void)self;
+    TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
+    if (!tf) return Value(1.0);
+    int c = std::fgetc(tf->f);
+    if (c == EOF) return Value(1.0);
+    std::ungetc(c, tf->f);
+    return Value(0.0);
+}
+static std::string tf_read_line_peek(TextFile* tf) {
+    std::string line;
+    long pos = std::ftell(tf->f);
+    int c;
+    while ((c = std::fgetc(tf->f)) != EOF && c != '\n') {
+        if (c != '\r') line.push_back((char)c);
+    }
+    std::fseek(tf->f, pos, SEEK_SET);
+    return line;
+}
+GMLFN(file_text_read_string) {
+    (void)self;
+    TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
+    if (!tf) return Value("");
+    std::string line = tf_read_line_peek(tf);
+    for (size_t i = 0; i < line.size(); ++i) std::fgetc(tf->f);
+    return Value(line);
+}
+GMLFN(file_text_read_real) {
+    (void)self;
+    TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
+    if (!tf) return Value(0.0);
+    double d = 0;
+    if (std::fscanf(tf->f, "%lf", &d) != 1) d = 0;
+    return Value(d);
+}
+GMLFN(file_text_readln) {
+    (void)self;
+    TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
+    if (!tf) return Value("");
+    std::string line;
+    int c;
+    while ((c = std::fgetc(tf->f)) != EOF && c != '\n')
+        if (c != '\r') line.push_back((char)c);
+    return Value(line);
+}
+GMLFN(file_text_write_string) {
+    (void)self;
+    TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
+    if (tf && argc > 1) {
+        std::string s = (std::string)args[1];
+        std::fwrite(s.data(), 1, s.size(), tf->f);
+    }
+    return Value();
+}
+GMLFN(file_text_write_real) {
+    (void)self;
+    TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
+    if (tf && argc > 1) {
+        double d = (double)args[1];
+        if (d == (long long)d)
+            std::fprintf(tf->f, "%lld", (long long)d);
+        else
+            std::fprintf(tf->f, "%g", d);
+    }
+    return Value();
+}
+GMLFN(file_text_writeln) {
+    (void)self;
+    TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
+    if (tf) std::fputc('\n', tf->f);
+    return Value();
+}
+
+struct Buffer {
+    std::vector<unsigned char> data;
+    size_t pos = 0;
+    bool alive = false;
+};
+static std::vector<Buffer> g_buffers;
+
+static Buffer* buf_of(const Value& v) {
+    int i = (int)(double)v;
+    if (i < 0 || (size_t)i >= g_buffers.size() || !g_buffers[i].alive) return nullptr;
+    return &g_buffers[i];
+}
+
+GMLFN(buffer_create) {
+    (void)self;
+    Buffer b;
+    b.alive = true;
+    b.data.resize((size_t)A(args, argc, 0, 0));
+    g_buffers.push_back(std::move(b));
+    return Value((double)(g_buffers.size() - 1));
+}
+GMLFN(buffer_delete) {
+    (void)self;
+    Buffer* b = argc > 0 ? buf_of(args[0]) : nullptr;
+    if (b) { b->alive = false; b->data.clear(); }
+    return Value();
+}
+GMLFN(buffer_get_size) {
+    (void)self;
+    Buffer* b = argc > 0 ? buf_of(args[0]) : nullptr;
+    return Value(b ? (double)b->data.size() : 0.0);
+}
+GMLFN(buffer_load) {
+    (void)self;
+    std::FILE* f = std::fopen(S(args, argc, 0).c_str(), "rb");
+    if (!f) return Value(-1.0);
+    Buffer b;
+    b.alive = true;
+    char tmp[8192];
+    size_t n;
+    while ((n = std::fread(tmp, 1, sizeof(tmp), f)) > 0)
+        b.data.insert(b.data.end(), tmp, tmp + n);
+    std::fclose(f);
+    g_buffers.push_back(std::move(b));
+    return Value((double)(g_buffers.size() - 1));
+}
+GMLFN(buffer_read) {
+    (void)self;
+    Buffer* b = argc > 1 ? buf_of(args[0]) : nullptr;
+    if (!b) return Value();
+    int type = (int)(double)args[1];
+    auto rd = [&](int n) {
+        long long v = 0;
+        for (int i = 0; i < n && b->pos < b->data.size(); ++i) v |= (long long)b->data[b->pos++] << (8 * i);
+        return v;
+    };
+    switch (type) {
+        case 1: return Value((double)(unsigned char)rd(1));
+        case 2: return Value((double)(signed char)rd(1));
+        case 3: return Value((double)(unsigned short)rd(2));
+        case 4: return Value((double)(short)rd(2));
+        case 5: return Value((double)(unsigned int)rd(4));
+        case 6: return Value((double)(int)rd(4));
+        case 7: rd(2); return Value(0.0);
+        case 8: {
+            union { int i; float f; } u;
+            u.i = (int)rd(4);
+            return Value((double)u.f);
+        }
+        case 9: {
+            union { long long i; double d; } u;
+            u.i = rd(8);
+            return Value(u.d);
+        }
+        case 10: return Value((double)(rd(1) != 0));
+        case 11: {
+            std::string s;
+            while (b->pos < b->data.size() && b->data[b->pos] != 0) s.push_back((char)b->data[b->pos++]);
+            if (b->pos < b->data.size()) b->pos++;
+            return Value(s);
+        }
+        case 12: return Value((double)rd(8));
+        case 13: {
+            std::string s;
+            while (b->pos < b->data.size()) s.push_back((char)b->data[b->pos++]);
+            return Value(s);
+        }
+        default: return Value((double)(unsigned char)rd(1));
+    }
+}
+GMLFN(buffer_write) {
+    (void)self;
+    Buffer* b = argc > 2 ? buf_of(args[0]) : nullptr;
+    if (!b) return Value();
+    int type = (int)(double)args[1];
+    auto wr = [&](long long v, int n) {
+        for (int i = 0; i < n; ++i) {
+            if (b->pos >= b->data.size()) b->data.resize(b->pos + 1);
+            b->data[b->pos++] = (unsigned char)(v >> (8 * i));
+        }
+    };
+    switch (type) {
+        case 1: case 2: case 10: wr((long long)(double)args[2], 1); break;
+        case 3: case 4: wr((long long)(double)args[2], 2); break;
+        case 5: case 6: wr((long long)(double)args[2], 4); break;
+        case 12: wr((long long)(double)args[2], 8); break;
+        case 8: {
+            union { int i; float f; } u;
+            u.f = (float)(double)args[2];
+            wr(u.i, 4);
+            break;
+        }
+        case 9: {
+            union { long long i; double d; } u;
+            u.d = (double)args[2];
+            wr(u.i, 8);
+            break;
+        }
+        case 11: {
+            std::string s = (std::string)args[2];
+            for (char c : s) wr((unsigned char)c, 1);
+            wr(0, 1);
+            break;
+        }
+        case 13: {
+            std::string s = (std::string)args[2];
+            for (char c : s) wr((unsigned char)c, 1);
+            break;
+        }
+        default: wr((long long)(double)args[2], 1); break;
+    }
+    return Value();
+}
+GMLFN(buffer_load_async) { (void)args; (void)argc; return kwik_missing(self, "buffer_load_async"); }
+GMLFN(buffer_save_async) { (void)args; (void)argc; return kwik_missing(self, "buffer_save_async"); }
+GMLFN(buffer_async_group_begin) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(buffer_async_group_end) { (void)self; (void)args; (void)argc; return Value(-1.0); }
+GMLFN(buffer_async_group_option) { (void)self; (void)args; (void)argc; return Value(); }
+
+}

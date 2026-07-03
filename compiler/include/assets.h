@@ -38,12 +38,19 @@ struct FontInfo {
     int size;
 };
 
+struct SoundInfo {
+    std::string name;
+    std::string file;
+    double volume = 1.0;
+    double pitch = 1.0;
+    int blob = -1;
+};
+
 struct AssetExtraction {
     int image_count = 0;
     int sound_count = 0;
     std::vector<SpriteInfo> sprites;
-    std::vector<std::string> sound_names;
-    std::vector<int> sound_audio_id;
+    std::vector<SoundInfo> sounds;
     std::vector<FontInfo> fonts;
     std::vector<GlyphInfo> glyphs;
 };

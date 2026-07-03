@@ -31,6 +31,9 @@ struct GameObject {
     int32_t sprite_index = -1;
     int32_t parent_index = -100;
     int32_t persistent = 0;
+    int32_t visible = 1;
+    int32_t depth = 0;
+    int32_t mask_index = -1;
 };
 
 struct RoomInstance {
@@ -50,6 +53,9 @@ struct RoomBackground {
     int32_t sprite_index;
     int32_t x;
     int32_t y;
+    int32_t depth = 0;
+    int32_t htiled = 0;
+    int32_t vtiled = 0;
 };
 
 struct Room {
@@ -57,6 +63,9 @@ struct Room {
     int32_t width;
     int32_t height;
     uint32_t bg_color;
+    int32_t speed = 30;
+    int32_t persistent = 0;
+    int32_t creation_code = -1;
     int32_t view_x = 0;
     int32_t view_y = 0;
     int32_t view_w = 0;
@@ -68,6 +77,11 @@ struct Room {
 class GameData {
 public:
     bool load(const std::string& path);
+    const std::string& source_path() const { return source_path_; }
+    std::string source_dir() const {
+        size_t p = source_path_.find_last_of('/');
+        return p == std::string::npos ? std::string(".") : source_path_.substr(0, p);
+    }
 
     const std::vector<uint8_t>& bytes() const { return data_; }
     const std::unordered_map<std::string, Chunk>& chunks() const { return chunks_; }
@@ -79,6 +93,7 @@ public:
     const std::vector<CodeEntry>& code() const { return code_; }
     const std::vector<GameObject>& objects() const { return objects_; }
     const std::vector<Room>& rooms() const { return rooms_; }
+    const std::vector<uint32_t>& global_init_ids() const { return global_init_; }
 
     std::string function_at_call(uint32_t call_addr) const;
     VarRef var_at(uint32_t push_addr) const;
@@ -96,6 +111,7 @@ private:
     void parse_code();
     void parse_objects();
     void parse_rooms();
+    void parse_glob();
 
     std::vector<uint8_t> data_;
     std::unordered_map<std::string, Chunk> chunks_;
@@ -105,6 +121,8 @@ private:
     std::unordered_map<uint32_t, VarRef> var_by_addr_;
     std::vector<GameObject> objects_;
     std::vector<Room> rooms_;
+    std::vector<uint32_t> global_init_;
+    std::string source_path_;
 };
 
 }

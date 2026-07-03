@@ -6,6 +6,7 @@
 namespace kwik {
 
 bool GameData::load(const std::string& path) {
+    source_path_ = path;
     std::FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) return false;
     std::fseek(f, 0, SEEK_END);
@@ -24,7 +25,15 @@ bool GameData::load(const std::string& path) {
     parse_code();
     parse_objects();
     parse_rooms();
+    parse_glob();
     return true;
+}
+
+void GameData::parse_glob() {
+    const Chunk* c = chunk("GLOB");
+    if (!c) return;
+    uint32_t count = u32(c->offset);
+    for (uint32_t i = 0; i < count; ++i) global_init_.push_back(u32(c->offset + 4 + i * 4));
 }
 
 uint8_t GameData::u8(uint32_t off) const {
@@ -164,8 +173,11 @@ void GameData::parse_objects() {
         GameObject o;
         o.name = string_at_offset(u32(ptr));
         o.sprite_index = i32(ptr + 4);
+        o.visible = i32(ptr + 8);
+        o.depth = i32(ptr + 20);
         o.persistent = i32(ptr + 24);
         o.parent_index = i32(ptr + 28);
+        o.mask_index = i32(ptr + 32);
         objects_.push_back(o);
     }
 }
@@ -180,7 +192,10 @@ void GameData::parse_rooms() {
         r.name = string_at_offset(u32(ptr));
         r.width = i32(ptr + 8);
         r.height = i32(ptr + 12);
+        r.speed = i32(ptr + 16);
+        r.persistent = i32(ptr + 20);
         r.bg_color = u32(ptr + 24);
+        r.creation_code = i32(ptr + 32);
         r.view_x = 0;
         r.view_y = 0;
         r.view_w = r.width;
@@ -241,7 +256,11 @@ void GameData::parse_rooms() {
                     int32_t yoff = i32(lp + 20);
                     int32_t sprite = i32(lp + 56);
                     if (sprite < 0 || sprite >= sprite_count) continue;
-                    r.backgrounds.push_back(RoomBackground{sprite, xoff, yoff});
+                    RoomBackground bg{sprite, xoff, yoff, depth, 0, 0};
+                    uint32_t ht = u32(lp + 60), vt = u32(lp + 64);
+                    if (ht <= 1) bg.htiled = (int32_t)ht;
+                    if (vt <= 1) bg.vtiled = (int32_t)vt;
+                    r.backgrounds.push_back(bg);
                 } else if (ltype == 2) {
                     for (uint32_t off = 36; off <= 64; off += 4) {
                         uint32_t n = u32(lp + off);
@@ -280,9 +299,11 @@ void GameData::parse_code() {
         e.name = string_at_offset(name_off);
         e.length = u32(eoff + 4);
         e.locals = u16(eoff + 8);
-        e.args = u16(eoff + 10);
+        e.args = u16(eoff + 10) & 0x7FFF;
         int32_t rel = i32(eoff + 12);
-        e.bytecode_offset = (eoff + 12) + rel;
+        uint32_t child_off = u32(eoff + 16);
+        e.bytecode_offset = (eoff + 12) + rel + child_off;
+        if (child_off < e.length) e.length -= child_off;
         code_.push_back(e);
     }
 }

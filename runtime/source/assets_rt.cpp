@@ -1,11 +1,14 @@
 #include "gml_runtime.h"
+#include "engine_internal.h"
 #include "render.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 namespace gml {
@@ -31,10 +34,9 @@ static uint32_t rd32(size_t o) {
 static void ensure_assets() {
     if (g_assets_tried) return;
     g_assets_tried = true;
-    const char* paths[] = {"Assets.dat", "./Assets.dat"};
-    for (const char* p : paths) {
-        std::FILE* f = std::fopen(p, "rb");
-        if (!f) continue;
+    const char* path = g_assets_path.empty() ? "Assets.dat" : g_assets_path.c_str();
+    std::FILE* f = std::fopen(path, "rb");
+    if (f) {
         std::fseek(f, 0, SEEK_END);
         long n = std::ftell(f);
         std::fseek(f, 0, SEEK_SET);
@@ -44,17 +46,18 @@ static void ensure_assets() {
             g_assets.resize(got);
         }
         std::fclose(f);
-        break;
+    } else {
+        std::fprintf(stderr, "[kwik] could not open %s\n", path);
     }
     g_images.resize(g_image_count);
 }
 
-const unsigned char* kwik_sound_blob(int audio_index, unsigned int& size, int& type) {
+const unsigned char* kwik_sound_blob(int blob_index, unsigned int& size, int& type) {
     ensure_assets();
     size = 0;
     type = 0;
-    if (audio_index < 0 || audio_index >= g_sound_count) return nullptr;
-    size_t off = rd32((size_t)g_image_count * 2 + (size_t)(g_image_count + audio_index) * 4);
+    if (blob_index < 0) return nullptr;
+    size_t off = rd32((size_t)g_image_count * 2 + (size_t)(g_image_count + blob_index) * 4);
     if (off == 0 || off + 8 > g_assets.size()) return nullptr;
     type = (int)rd32(off);
     uint32_t sz = rd32(off + 4);
@@ -87,54 +90,201 @@ static LoadedImage& load_image(int index) {
     return img;
 }
 
-static void draw_sprite_full(int spr, int sub, double x, double y, double xscale, double yscale,
-                             double angle, double alpha) {
-    if (spr < 0 || spr >= g_sprite_count) return;
+static int frame_of(int spr, int sub, const KwikSprite** out) {
+    if (spr < 0 || spr >= g_sprite_count) return -1;
     const KwikSprite& s = g_sprites[spr];
-    if (s.frame_count <= 0) return;
-    int frame = s.first_frame + ((sub % s.frame_count) + s.frame_count) % s.frame_count;
+    if (s.frame_count <= 0) return -1;
+    *out = &s;
+    return s.first_frame + ((sub % s.frame_count) + s.frame_count) % s.frame_count;
+}
+
+bool kwik_sprite_size(int spr, int& w, int& h) {
+    if (spr < 0 || spr >= g_sprite_count) return false;
+    w = g_sprites[spr].width;
+    h = g_sprites[spr].height;
+    return true;
+}
+
+void kwik_draw_sprite_general(int spr, int sub, double x, double y, double xs, double ys,
+                              double angle, unsigned int blend, double alpha) {
+    const KwikSprite* s;
+    int frame = frame_of(spr, sub, &s);
+    if (frame < 0) return;
     LoadedImage& img = load_image(frame);
     if (!img.ok) return;
-    render_draw_sprite(img.tex, x, y, img.w, img.h, s.origin_x, s.origin_y, xscale, yscale, angle,
-                       alpha);
+    render_draw_quad(img.tex, x, y, img.w, img.h, s->origin_x, s->origin_y, xs, ys, angle, 0, 0, 1,
+                     1, blend, alpha);
 }
 
-Value draw_sprite(const Value& sprite, const Value& subimg, const Value& x, const Value& y) {
-    draw_sprite_full((int)(double)sprite, (int)(double)subimg, (double)x, (double)y, 1.0, 1.0, 0.0,
-                     1.0);
-    return Value();
+void kwik_draw_sprite_part(int spr, int sub, double left, double top, double w, double h,
+                           double x, double y, double xs, double ys, unsigned int blend,
+                           double alpha) {
+    const KwikSprite* s;
+    int frame = frame_of(spr, sub, &s);
+    if (frame < 0) return;
+    LoadedImage& img = load_image(frame);
+    if (!img.ok || img.w <= 0 || img.h <= 0) return;
+    if (left < 0) { w += left; x -= left * xs; left = 0; }
+    if (top < 0) { h += top; y -= top * ys; top = 0; }
+    if (left + w > img.w) w = img.w - left;
+    if (top + h > img.h) h = img.h - top;
+    if (w <= 0 || h <= 0) return;
+    float u0 = (float)(left / img.w), v0 = (float)(top / img.h);
+    float u1 = (float)((left + w) / img.w), v1 = (float)((top + h) / img.h);
+    render_draw_quad(img.tex, x, y, w, h, 0, 0, xs, ys, 0, u0, v0, u1, v1, blend, alpha);
 }
 
-static int g_current_font = -1;
-
-void kwik_set_font(int font_id) {
-    g_current_font = (font_id >= 0 && font_id < g_font_count) ? font_id : -1;
+void kwik_draw_sprite_stretched(int spr, int sub, double x, double y, double w, double h,
+                                unsigned int blend, double alpha) {
+    const KwikSprite* s;
+    int frame = frame_of(spr, sub, &s);
+    if (frame < 0) return;
+    LoadedImage& img = load_image(frame);
+    if (!img.ok || img.w <= 0 || img.h <= 0) return;
+    render_draw_quad(img.tex, x, y, w, h, 0, 0, 1, 1, 0, 0, 0, 1, 1, blend, alpha);
 }
 
-static const KwikGlyph* find_glyph(const KwikFont& f, int ch) {
-    for (int i = 0; i < f.glyph_count; ++i) {
-        const KwikGlyph& g = g_glyphs[f.glyph_start + i];
-        if (g.ch == ch) return &g;
+void kwik_draw_sprite_tiled(int spr, int sub, double x, double y, double xs, double ys,
+                            unsigned int blend, double alpha) {
+    const KwikSprite* s;
+    int frame = frame_of(spr, sub, &s);
+    if (frame < 0) return;
+    LoadedImage& img = load_image(frame);
+    if (!img.ok || img.w <= 0 || img.h <= 0) return;
+    double tw = img.w * xs, th = img.h * ys;
+    if (tw <= 0.01 || th <= 0.01) return;
+    Camera& cam = g_cameras[g_view_camera[0]];
+    double vx1 = cam.x + cam.w, vy1 = cam.y + cam.h;
+    double sx = x - std::ceil((x - cam.x) / tw) * tw;
+    double sy = y - std::ceil((y - cam.y) / th) * th;
+    for (double py = sy; py < vy1; py += th)
+        for (double px = sx; px < vx1; px += tw)
+            render_draw_quad(img.tex, px, py, img.w, img.h, 0, 0, xs, ys, 0, 0, 0, 1, 1, blend,
+                             alpha);
+}
+
+void draw_self_instance(Instance* inst) {
+    if (!inst) return;
+    auto gv = [&](const char* n, double d) {
+        auto it = inst->vars.find(n);
+        return it == inst->vars.end() ? d : (double)it->second;
+    };
+    int spr = (int)gv("sprite_index", -1);
+    if (spr < 0) return;
+    kwik_draw_sprite_general(spr, (int)gv("image_index", 0), inst->x, inst->y,
+                             gv("image_xscale", 1), gv("image_yscale", 1), gv("image_angle", 0),
+                             (unsigned int)gv("image_blend", 16777215), gv("image_alpha", 1));
+}
+
+struct RtGlyph {
+    int ch;
+    int image;
+    float u0, v0, u1, v1;
+    double w, h;
+    double shift, offset;
+};
+
+struct RtFont {
+    std::vector<RtGlyph> glyphs;
+    double line_height = 16;
+};
+
+static std::vector<RtFont> g_rt_fonts;
+static std::vector<int> g_asset_font_map;
+static int g_cur_font = -1;
+static bool g_fonts_built = false;
+
+static void build_fonts() {
+    if (g_fonts_built) return;
+    g_fonts_built = true;
+    g_asset_font_map.resize(g_font_count, -1);
+    for (int f = 0; f < g_font_count; ++f) {
+        const KwikFont& kf = g_fonts[f];
+        RtFont rf;
+        LoadedImage& atlas = load_image(kf.atlas_image);
+        double maxh = 1;
+        for (int gi = 0; gi < kf.glyph_count; ++gi) {
+            const KwikGlyph& g = g_glyphs[kf.glyph_start + gi];
+            RtGlyph rg;
+            rg.ch = g.ch;
+            rg.image = kf.atlas_image;
+            if (atlas.ok && atlas.w > 0 && atlas.h > 0) {
+                rg.u0 = (float)g.x / atlas.w;
+                rg.v0 = (float)g.y / atlas.h;
+                rg.u1 = (float)(g.x + g.w) / atlas.w;
+                rg.v1 = (float)(g.y + g.h) / atlas.h;
+            } else {
+                rg.u0 = rg.v0 = 0;
+                rg.u1 = rg.v1 = 1;
+            }
+            rg.w = g.w;
+            rg.h = g.h;
+            rg.shift = g.shift;
+            rg.offset = g.offset;
+            if (g.h > maxh) maxh = g.h;
+            rf.glyphs.push_back(rg);
+        }
+        rf.line_height = kf.size > 0 ? kf.size : maxh;
+        g_asset_font_map[f] = (int)g_rt_fonts.size();
+        g_rt_fonts.push_back(std::move(rf));
     }
+}
+
+int kwik_font_for_asset(int font_asset) {
+    build_fonts();
+    if (font_asset < 0 || font_asset >= (int)g_asset_font_map.size()) return -1;
+    return g_asset_font_map[font_asset];
+}
+
+int kwik_font_add_sprite(int spr, const std::string& mapping, bool prop, int sep) {
+    build_fonts();
+    if (spr < 0 || spr >= g_sprite_count) return -1;
+    const KwikSprite& s = g_sprites[spr];
+    RtFont rf;
+    double maxh = 1;
+    for (size_t i = 0; i < mapping.size() && (int)i < s.frame_count; ++i) {
+        int frame = s.first_frame + (int)i;
+        LoadedImage& img = load_image(frame);
+        RtGlyph rg;
+        rg.ch = (unsigned char)mapping[i];
+        rg.image = frame;
+        rg.u0 = rg.v0 = 0;
+        rg.u1 = rg.v1 = 1;
+        rg.w = img.ok ? img.w : s.width;
+        rg.h = img.ok ? img.h : s.height;
+        rg.shift = (prop ? rg.w : (double)s.width) + sep;
+        rg.offset = 0;
+        if (rg.h > maxh) maxh = rg.h;
+        rf.glyphs.push_back(rg);
+    }
+    rf.line_height = maxh;
+    g_rt_fonts.push_back(std::move(rf));
+    return (int)g_rt_fonts.size() - 1;
+}
+
+void kwik_set_font_rt(int rt_font) {
+    build_fonts();
+    g_cur_font = (rt_font >= 0 && rt_font < (int)g_rt_fonts.size()) ? rt_font : -1;
+}
+
+int kwik_get_font_rt() { return g_cur_font; }
+
+static const RtGlyph* find_glyph(const RtFont& f, int ch) {
+    for (const RtGlyph& g : f.glyphs)
+        if (g.ch == ch) return &g;
     return nullptr;
 }
 
-static double line_width(const KwikFont& f, const std::string& line, size_t start, size_t end) {
+static double line_width(const RtFont& f, const std::string& text, size_t a, size_t b) {
     double w = 0;
-    for (size_t i = start; i < end; ++i) {
-        const KwikGlyph* g = find_glyph(f, (unsigned char)line[i]);
+    for (size_t i = a; i < b; ++i) {
+        const RtGlyph* g = find_glyph(f, (unsigned char)text[i]);
         if (g) w += g->shift;
     }
     return w;
 }
 
-bool kwik_draw_text_custom(double x, double y, const std::string& text) {
-    if (g_current_font < 0) return false;
-    const KwikFont& f = g_fonts[g_current_font];
-    LoadedImage& atlas = load_image(f.atlas_image);
-    if (!atlas.ok) return false;
-
-    std::vector<std::pair<size_t, size_t>> lines;
+static void split_lines(const std::string& text, std::vector<std::pair<size_t, size_t>>& lines) {
     size_t ls = 0;
     for (size_t i = 0; i <= text.size(); ++i) {
         if (i == text.size() || text[i] == '\n') {
@@ -144,43 +294,87 @@ bool kwik_draw_text_custom(double x, double y, const std::string& text) {
             ls = i + 1;
         }
     }
-
-    int halign = render_get_halign(), valign = render_get_valign();
-    double line_h = f.size > 0 ? f.size : 16;
-    double total_h = line_h * lines.size();
-    double base_y = y;
-    if (valign == 1) base_y -= total_h * 0.5;
-    else if (valign == 2) base_y -= total_h;
-
-    for (size_t li = 0; li < lines.size(); ++li) {
-        double penx = x;
-        double w = line_width(f, text, lines[li].first, lines[li].second);
-        if (halign == 1) penx -= w * 0.5;
-        else if (halign == 2) penx -= w;
-        double liney = base_y + li * line_h;
-        for (size_t i = lines[li].first; i < lines[li].second; ++i) {
-            const KwikGlyph* g = find_glyph(f, (unsigned char)text[i]);
-            if (!g) continue;
-            if (g->w > 0 && g->h > 0) {
-                float u0 = (float)g->x / atlas.w, v0 = (float)g->y / atlas.h;
-                float u1 = (float)(g->x + g->w) / atlas.w, v1 = (float)(g->y + g->h) / atlas.h;
-                render_draw_glyph(atlas.tex, penx + g->offset, liney, g->w, g->h, u0, v0, u1, v1);
-            }
-            penx += g->shift;
-        }
-    }
-    return true;
 }
 
-Value draw_self(Instance& self) {
-    int spr = (int)(double)self.var("sprite_index");
-    int sub = (int)(double)self.var("image_index");
-    double xs = self.var("image_xscale");
-    double ys = self.var("image_yscale");
-    double ang = self.var("image_angle");
-    double alpha = self.var("image_alpha");
-    draw_sprite_full(spr, sub, self.x, self.y, xs, ys, ang, alpha);
-    return Value();
+double kwik_string_width(const std::string& s) {
+    build_fonts();
+    if (g_cur_font < 0) return 0;
+    const RtFont& f = g_rt_fonts[g_cur_font];
+    std::vector<std::pair<size_t, size_t>> lines;
+    split_lines(s, lines);
+    double best = 0;
+    for (auto& ln : lines) best = std::max(best, line_width(f, s, ln.first, ln.second));
+    return best;
+}
+
+double kwik_string_height(const std::string& s) {
+    build_fonts();
+    if (g_cur_font < 0) return 0;
+    const RtFont& f = g_rt_fonts[g_cur_font];
+    std::vector<std::pair<size_t, size_t>> lines;
+    split_lines(s, lines);
+    return f.line_height * (double)lines.size();
+}
+
+void kwik_draw_text_rt(double x, double y, const std::string& text, double xs, double ys,
+                       double angle) {
+    build_fonts();
+    static int dbg_left = std::getenv("KWIK_DEBUG_TEXT") ? 40 : 0;
+    if (dbg_left > 0 && !text.empty()) {
+        --dbg_left;
+        int found = 0;
+        if (g_cur_font >= 0)
+            for (char c : text)
+                if (find_glyph(g_rt_fonts[g_cur_font], (unsigned char)c)) ++found;
+        std::fprintf(stderr, "[text] font=%d at(%.0f,%.0f) glyphs=%d/%zu \"%.40s\"\n", g_cur_font,
+                     x, y, found, text.size(), text.c_str());
+    }
+    if (g_cur_font < 0) return;
+    const RtFont& f = g_rt_fonts[g_cur_font];
+    std::vector<std::pair<size_t, size_t>> lines;
+    split_lines(text, lines);
+
+    int halign = render_get_halign(), valign = render_get_valign();
+    double line_h = f.line_height * ys;
+    double total_h = line_h * (double)lines.size();
+    double oy = 0;
+    if (valign == 1) oy -= total_h * 0.5;
+    else if (valign == 2) oy -= total_h;
+
+    double rad = angle * 3.14159265358979 / 180.0;
+    double ca = std::cos(rad), sa = std::sin(rad);
+    unsigned int col = render_get_color();
+    double alpha = render_get_alpha();
+
+    for (size_t li = 0; li < lines.size(); ++li) {
+        double ox = 0;
+        double w = line_width(f, text, lines[li].first, lines[li].second) * xs;
+        if (halign == 1) ox -= w * 0.5;
+        else if (halign == 2) ox -= w;
+        double liney = oy + (double)li * line_h;
+        double pen = ox;
+        for (size_t i = lines[li].first; i < lines[li].second; ++i) {
+            const RtGlyph* g = find_glyph(f, (unsigned char)text[i]);
+            if (!g) continue;
+            if (g->w > 0 && g->h > 0) {
+                LoadedImage& img = load_image(g->image);
+                if (img.ok) {
+                    double lx = pen + g->offset * xs;
+                    double ly = liney;
+                    if (angle == 0.0) {
+                        render_draw_glyph_colored(img.tex, x + lx, y + ly, g->w * xs, g->h * ys,
+                                                  g->u0, g->v0, g->u1, g->v1, col, alpha);
+                    } else {
+                        double gx = x + lx * ca + ly * sa;
+                        double gy = y - lx * sa + ly * ca;
+                        render_draw_quad(img.tex, gx, gy, g->w, g->h, 0, 0, xs, ys, angle, g->u0,
+                                         g->v0, g->u1, g->v1, col, alpha);
+                    }
+                }
+            }
+            pen += g->shift * xs;
+        }
+    }
 }
 
 }
