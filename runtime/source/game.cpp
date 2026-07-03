@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <random>
 #include <unistd.h>
 
@@ -20,6 +21,7 @@ Instance* g_dummy_instance = nullptr;
 int g_current_room = -1;
 int g_pending_room = -1;
 double g_room_speed_v = 30.0;
+static double g_default_fps = 30.0;
 bool g_game_end_requested = false;
 bool g_game_restart_requested = false;
 bool g_room_restart_requested = false;
@@ -31,6 +33,23 @@ const RoomDef* g_room_defs_rt = nullptr;
 int g_room_count_rt = 0;
 std::string g_game_dir;
 std::string g_assets_path;
+std::string g_save_dir;
+
+std::string kwik_save_path(const std::string& rel) {
+    if (rel.empty() || rel[0] == '/' || g_save_dir.empty()) return rel;
+    return g_save_dir + "/" + rel;
+}
+
+std::string kwik_resolve_read(const std::string& rel) {
+    if (rel.empty() || rel[0] == '/' || g_save_dir.empty()) return rel;
+    std::string in_save = g_save_dir + "/" + rel;
+    std::FILE* f = std::fopen(in_save.c_str(), "rb");
+    if (f) {
+        std::fclose(f);
+        return in_save;
+    }
+    return rel;
+}
 
 std::vector<Camera> g_cameras;
 int g_view_camera[8] = {0};
@@ -132,6 +151,11 @@ static void sync_from_polar(Instance* i) {
     i->m_vs = -std::sin(r) * i->m_speed;
 }
 
+int g_async_load_map = -1;
+static std::vector<std::pair<int, int>> g_async_queue;
+
+void kwik_queue_async(int kind, int map_id) { g_async_queue.push_back({kind, map_id}); }
+
 static int inst_sprite(Instance* inst) {
     auto it = inst->vars.find("sprite_index");
     return it == inst->vars.end() ? -1 : (int)(double)it->second;
@@ -142,21 +166,196 @@ static int inst_mask(Instance* inst) {
     return m >= 0 ? m : inst_sprite(inst);
 }
 
-bool inst_bbox(Instance* inst, double px, double py, double& l, double& t, double& r, double& b) {
+struct KBox {
+    double x = 0, y = 0;
+    double lx0 = 0, lx1 = 0, ly0 = 0, ly1 = 0;
+    double cs = 1, sn = 0;
+    bool rot = false;
+    bool valid = false;
+};
+
+static KBox make_box(Instance* inst, double px, double py) {
+    KBox b;
     int spr = inst_mask(inst);
-    if (spr < 0 || spr >= g_sprite_count) return false;
-    const KwikSprite& s = g_sprites[spr];
-    double xs = 1.0, ys = 1.0;
+    const KwikSprite* s = kwik_sprite_at(spr);
+    if (!s) return b;
+    double xs = 1.0, ys = 1.0, ang = 0.0;
     auto ix = inst->vars.find("image_xscale");
     auto iy = inst->vars.find("image_yscale");
+    auto ia = inst->vars.find("image_angle");
     if (ix != inst->vars.end()) xs = (double)ix->second;
     if (iy != inst->vars.end()) ys = (double)iy->second;
-    double x0 = px + (s.bbox_left - s.origin_x) * xs;
-    double x1 = px + (s.bbox_right + 1 - s.origin_x) * xs;
-    double y0 = py + (s.bbox_top - s.origin_y) * ys;
-    double y1 = py + (s.bbox_bottom + 1 - s.origin_y) * ys;
-    l = std::min(x0, x1); r = std::max(x0, x1);
-    t = std::min(y0, y1); b = std::max(y0, y1);
+    if (ia != inst->vars.end()) ang = (double)ia->second;
+    double x0 = (s->bbox_left - s->origin_x) * xs;
+    double x1 = (s->bbox_right + 1 - s->origin_x) * xs;
+    double y0 = (s->bbox_top - s->origin_y) * ys;
+    double y1 = (s->bbox_bottom + 1 - s->origin_y) * ys;
+    b.lx0 = std::min(x0, x1);
+    b.lx1 = std::max(x0, x1);
+    b.ly0 = std::min(y0, y1);
+    b.ly1 = std::max(y0, y1);
+    b.x = px;
+    b.y = py;
+    if (std::fabs(ang) > 0.0001) {
+        double rad = ang * M_PI / 180.0;
+        b.cs = std::cos(rad);
+        b.sn = std::sin(rad);
+        b.rot = true;
+    }
+    b.valid = true;
+    return b;
+}
+
+static void box_corners(const KBox& b, double cx[4], double cy[4]) {
+    double xs[4] = {b.lx0, b.lx1, b.lx1, b.lx0};
+    double ys[4] = {b.ly0, b.ly0, b.ly1, b.ly1};
+    for (int i = 0; i < 4; ++i) {
+        cx[i] = b.x + b.cs * xs[i] + b.sn * ys[i];
+        cy[i] = b.y - b.sn * xs[i] + b.cs * ys[i];
+    }
+}
+
+static bool boxes_hit(const KBox& a, const KBox& b) {
+    if (!a.valid || !b.valid) return false;
+    if (!a.rot && !b.rot) {
+        return a.x + a.lx0 < b.x + b.lx1 && a.x + a.lx1 > b.x + b.lx0 &&
+               a.y + a.ly0 < b.y + b.ly1 && a.y + a.ly1 > b.y + b.ly0;
+    }
+    double ax[4], ay[4], bx[4], by[4];
+    box_corners(a, ax, ay);
+    box_corners(b, bx, by);
+    const KBox* boxes[2] = {&a, &b};
+    for (int bi = 0; bi < 2; ++bi) {
+        double axes[2][2] = {{boxes[bi]->cs, -boxes[bi]->sn}, {boxes[bi]->sn, boxes[bi]->cs}};
+        for (int k = 0; k < 2; ++k) {
+            double amin = 1e30, amax = -1e30, bmin = 1e30, bmax = -1e30;
+            for (int i = 0; i < 4; ++i) {
+                double pa = ax[i] * axes[k][0] + ay[i] * axes[k][1];
+                double pb = bx[i] * axes[k][0] + by[i] * axes[k][1];
+                amin = std::min(amin, pa);
+                amax = std::max(amax, pa);
+                bmin = std::min(bmin, pb);
+                bmax = std::max(bmax, pb);
+            }
+            if (amax <= bmin || bmax <= amin) return false;
+        }
+    }
+    return true;
+}
+
+static bool point_in_box(const KBox& b, double px, double py) {
+    if (!b.valid) return false;
+    double dx = px - b.x, dy = py - b.y;
+    double lx = b.cs * dx - b.sn * dy;
+    double ly = b.sn * dx + b.cs * dy;
+    return lx >= b.lx0 && lx < b.lx1 && ly >= b.ly0 && ly < b.ly1;
+}
+
+static const MaskSet* inst_masks(Instance* inst) {
+    return kwik_sprite_masks(inst_mask(inst));
+}
+
+static bool point_in_instance(Instance* inst, double at_x, double at_y, double px, double py) {
+    int spr_idx = inst_mask(inst);
+    const KwikSprite* s = kwik_sprite_at(spr_idx);
+    if (!s) return false;
+    double xs = 1.0, ys = 1.0, ang = 0.0, img = 0.0;
+    auto ix = inst->vars.find("image_xscale");
+    auto iy = inst->vars.find("image_yscale");
+    auto ia = inst->vars.find("image_angle");
+    auto ii = inst->vars.find("image_index");
+    if (ix != inst->vars.end()) xs = (double)ix->second;
+    if (iy != inst->vars.end()) ys = (double)iy->second;
+    if (ia != inst->vars.end()) ang = (double)ia->second;
+    if (ii != inst->vars.end()) img = (double)ii->second;
+    if (std::fabs(xs) < 0.0001 || std::fabs(ys) < 0.0001) return false;
+
+    double dx = px - at_x;
+    double dy = py - at_y;
+    if (std::fabs(ang) > 0.0001) {
+        double rad = ang * M_PI / 180.0;
+        double cs = std::cos(rad), sn = std::sin(rad);
+        double rx = cs * dx - sn * dy;
+        double ry = sn * dx + cs * dy;
+        dx = rx;
+        dy = ry;
+    }
+    double local_x = dx / xs + s->origin_x;
+    double local_y = dy / ys + s->origin_y;
+    int lx = (int)local_x;
+    int ly = (int)local_y;
+    if (local_x < 0 || local_y < 0 || lx >= s->width || ly >= s->height) return false;
+
+    const MaskSet* ms = kwik_sprite_masks(spr_idx);
+    if (ms) {
+        int frame = ((int)img % ms->count + ms->count) % ms->count;
+        const unsigned char* mask = ms->data + (size_t)frame * ms->rowbytes * ms->h;
+        if (lx >= ms->w || ly >= ms->h) return false;
+        return (mask[ly * ms->rowbytes + (lx >> 3)] & (1 << (7 - (lx & 7)))) != 0;
+    }
+    return true;
+}
+
+static bool instances_hit(Instance* a, double ax, double ay, Instance* b) {
+    KBox ka = make_box(a, ax, ay);
+    KBox kb = make_box(b, b->x, b->y);
+    if (!ka.valid || !kb.valid) return false;
+    double al, at, ar, ab, bl, bt, br, bb;
+    {
+        double cx[4], cy[4];
+        box_corners(ka, cx, cy);
+        al = ar = cx[0];
+        at = ab = cy[0];
+        for (int i = 1; i < 4; ++i) {
+            al = std::min(al, cx[i]);
+            ar = std::max(ar, cx[i]);
+            at = std::min(at, cy[i]);
+            ab = std::max(ab, cy[i]);
+        }
+        box_corners(kb, cx, cy);
+        bl = br = cx[0];
+        bt = bb = cy[0];
+        for (int i = 1; i < 4; ++i) {
+            bl = std::min(bl, cx[i]);
+            br = std::max(br, cx[i]);
+            bt = std::min(bt, cy[i]);
+            bb = std::max(bb, cy[i]);
+        }
+    }
+    if (al >= br || bl >= ar || at >= bb || bt >= ab) return false;
+
+    bool precise_a = inst_masks(a) != nullptr;
+    bool precise_b = inst_masks(b) != nullptr;
+    if (!precise_a && !precise_b) return boxes_hit(ka, kb);
+
+    int sx = (int)std::floor(std::max(al, bl));
+    int ex = (int)std::ceil(std::min(ar, br));
+    int sy = (int)std::floor(std::max(at, bt));
+    int ey = (int)std::ceil(std::min(ab, bb));
+    for (int py = sy; py < ey; ++py) {
+        for (int px = sx; px < ex; ++px) {
+            double wx = px + 0.5, wy = py + 0.5;
+            if (!point_in_instance(a, ax, ay, wx, wy)) continue;
+            if (!point_in_instance(b, b->x, b->y, wx, wy)) continue;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool inst_bbox(Instance* inst, double px, double py, double& l, double& t, double& r, double& b) {
+    KBox box = make_box(inst, px, py);
+    if (!box.valid) return false;
+    double cx[4], cy[4];
+    box_corners(box, cx, cy);
+    l = r = cx[0];
+    t = b = cy[0];
+    for (int i = 1; i < 4; ++i) {
+        l = std::min(l, cx[i]);
+        r = std::max(r, cx[i]);
+        t = std::min(t, cy[i]);
+        b = std::max(b, cy[i]);
+    }
     return true;
 }
 
@@ -167,14 +366,10 @@ static bool boxes_overlap(double al, double at, double ar, double ab,
 
 Instance* collision_at(Instance* self, double px, double py, int who, bool) {
     if (!self) return nullptr;
-    double l, t, r, b;
-    if (!inst_bbox(self, px, py, l, t, r, b)) return nullptr;
     for (auto& sp : g_instances) {
         Instance* other = sp.get();
         if (other == self || !inst_matches(other, who)) continue;
-        double ol, ot, orr, ob;
-        if (!inst_bbox(other, other->x, other->y, ol, ot, orr, ob)) continue;
-        if (boxes_overlap(l, t, r, b, ol, ot, orr, ob)) return other;
+        if (instances_hit(self, px, py, other)) return other;
     }
     return nullptr;
 }
@@ -183,23 +378,31 @@ static Instance* collision_point_at(Instance* self, double px, double py, int wh
     for (auto& sp : g_instances) {
         Instance* other = sp.get();
         if (other == self || !inst_matches(other, who)) continue;
-        double ol, ot, orr, ob;
-        if (!inst_bbox(other, other->x, other->y, ol, ot, orr, ob)) continue;
-        if (px >= ol && px < orr && py >= ot && py < ob) return other;
+        if (inst_masks(other)) {
+            if (point_in_instance(other, other->x, other->y, px, py)) return other;
+        } else {
+            KBox b = make_box(other, other->x, other->y);
+            if (point_in_box(b, px, py)) return other;
+        }
     }
     return nullptr;
 }
 
 static Instance* collision_rect_at(Instance* self, double x1, double y1, double x2, double y2,
                                    int who) {
-    double l = std::min(x1, x2), r = std::max(x1, x2);
-    double t = std::min(y1, y2), b = std::max(y1, y2);
+    KBox a;
+    a.lx0 = std::min(x1, x2) ;
+    a.lx1 = std::max(x1, x2);
+    a.ly0 = std::min(y1, y2);
+    a.ly1 = std::max(y1, y2);
+    a.x = 0;
+    a.y = 0;
+    a.valid = true;
     for (auto& sp : g_instances) {
         Instance* other = sp.get();
         if (other == self || !inst_matches(other, who)) continue;
-        double ol, ot, orr, ob;
-        if (!inst_bbox(other, other->x, other->y, ol, ot, orr, ob)) continue;
-        if (boxes_overlap(l, t, r, b, ol, ot, orr, ob)) return other;
+        KBox b = make_box(other, other->x, other->y);
+        if (boxes_hit(a, b)) return other;
     }
     return nullptr;
 }
@@ -245,7 +448,8 @@ enum EvKind {
     EVK_CREATE, EVK_DESTROY, EVK_CLEANUP, EVK_STEP, EVK_STEP_BEGIN, EVK_STEP_END,
     EVK_DRAW, EVK_DRAW_GUI, EVK_DRAW_BEGIN, EVK_DRAW_END, EVK_DRAW_GUI_BEGIN, EVK_DRAW_GUI_END,
     EVK_DRAW_PRE, EVK_DRAW_POST, EVK_ALARM, EVK_ROOM_START, EVK_ROOM_END, EVK_ANIM_END,
-    EVK_GAME_START, EVK_USER, EVK_PRE_CREATE
+    EVK_GAME_START, EVK_USER, EVK_PRE_CREATE, EVK_DRAW_RESIZE, EVK_ASYNC_SAVE_LOAD,
+    EVK_ASYNC_SYSTEM, EVK_ASYNC_WEB
 };
 
 static ScriptFn find_event(int obj, int kind, int sub) {
@@ -274,6 +478,10 @@ static ScriptFn find_event(int obj, int kind, int sub) {
             case EVK_ROOM_END: fn = d.room_end; break;
             case EVK_ANIM_END: fn = d.anim_end; break;
             case EVK_GAME_START: fn = d.game_start; break;
+            case EVK_DRAW_RESIZE: fn = d.draw_resize; break;
+            case EVK_ASYNC_SAVE_LOAD: fn = d.async_save_load; break;
+            case EVK_ASYNC_SYSTEM: fn = d.async_system; break;
+            case EVK_ASYNC_WEB: fn = d.async_web; break;
             case EVK_USER: fn = (sub >= 0 && sub < 16) ? d.user[sub] : nullptr; break;
         }
         if (fn) return fn;
@@ -289,6 +497,26 @@ static void fire(Instance* inst, int kind, int sub) {
 }
 
 void kwik_fire_event(Instance* inst, int kind, int sub) { fire(inst, kind, sub); }
+
+static void dispatch_async() {
+    if (g_async_queue.empty()) return;
+    std::vector<std::pair<int, int>> queue = std::move(g_async_queue);
+    g_async_queue.clear();
+    for (auto& ev : queue) {
+        int evk = ev.first == ASYNC_SAVE_LOAD_EV ? EVK_ASYNC_SAVE_LOAD
+                  : ev.first == ASYNC_SYSTEM_EV ? EVK_ASYNC_SYSTEM
+                                                : EVK_ASYNC_WEB;
+        g_async_load_map = ev.second;
+        size_t n = g_instances.size();
+        for (size_t i = 0; i < n; ++i) {
+            Instance* inst = g_instances[i].get();
+            if (inst->dead || !inst->active) continue;
+            ScriptFn fn = find_event(inst->object_index, evk, 0);
+            if (fn) fn(inst, nullptr, 0);
+        }
+        g_async_load_map = -1;
+    }
+}
 
 double kwik_room_speed() { return g_room_speed_v; }
 int kwik_current_room() { return g_current_room; }
@@ -430,23 +658,23 @@ static Value scope_get_special(Instance* inst, const char* name, bool& handled) 
         auto iy = inst->vars.find("image_yscale");
         if (ix != inst->vars.end()) xs = (double)ix->second;
         if (iy != inst->vars.end()) ys = (double)iy->second;
-        if (spr >= 0 && spr < g_sprite_count) {
-            if (!std::strcmp(name, "sprite_width")) return Value(g_sprites[spr].width * xs);
-            return Value(g_sprites[spr].height * ys);
+        if (const KwikSprite* sd = kwik_sprite_at(spr)) {
+            if (!std::strcmp(name, "sprite_width")) return Value(sd->width * xs);
+            return Value(sd->height * ys);
         }
         return Value(0.0);
     }
     if (!std::strcmp(name, "sprite_xoffset") || !std::strcmp(name, "sprite_yoffset")) {
         int spr = inst_sprite(inst);
-        if (spr >= 0 && spr < g_sprite_count) {
-            if (!std::strcmp(name, "sprite_xoffset")) return Value((double)g_sprites[spr].origin_x);
-            return Value((double)g_sprites[spr].origin_y);
+        if (const KwikSprite* sd = kwik_sprite_at(spr)) {
+            if (!std::strcmp(name, "sprite_xoffset")) return Value((double)sd->origin_x);
+            return Value((double)sd->origin_y);
         }
         return Value(0.0);
     }
     if (!std::strcmp(name, "image_number")) {
         int spr = inst_sprite(inst);
-        if (spr >= 0 && spr < g_sprite_count) return Value((double)g_sprites[spr].frame_count);
+        if (const KwikSprite* sd = kwik_sprite_at(spr)) return Value((double)sd->frame_count);
         return Value(0.0);
     }
     handled = false;
@@ -744,12 +972,14 @@ Value kwik_builtin_get(Instance* self, const char* name) {
     }
     if (!std::strcmp(name, "working_directory")) return Value(g_game_dir + "/");
     if (!std::strcmp(name, "program_directory")) return Value(g_game_dir + "/");
-    if (!std::strcmp(name, "application_surface")) return Value(-1.0);
     if (!std::strcmp(name, "view_current")) return Value(0.0);
     if (!std::strcmp(name, "keyboard_string")) return Value("");
-    if (!std::strcmp(name, "game_save_id")) return Value(g_game_dir);
+    if (!std::strcmp(name, "game_save_id"))
+        return Value(g_save_dir.empty() ? g_game_dir + "/" : g_save_dir + "/");
     if (!std::strcmp(name, "argument_count")) return Value(0.0);
     if (!std::strcmp(name, "view_enabled")) return Value(1.0);
+    if (!std::strcmp(name, "async_load")) return Value((double)g_async_load_map);
+    if (!std::strcmp(name, "application_surface")) return Value(0.0);
     if (self && self->has(name)) return self->var(name);
     if (g_dummy_instance && g_dummy_instance->has(name)) return g_dummy_instance->var(name);
     return kwik_missing(self, (std::string("builtin var ") + name).c_str());
@@ -898,7 +1128,23 @@ GMLFN(instance_deactivate_object) {
 
 GMLFN(place_meeting) {
     if (argc < 3) return Value(0.0);
-    return Value(collision_at(self, (double)args[0], (double)args[1], (int)(double)args[2], false) != nullptr);
+    Instance* hit = collision_at(self, (double)args[0], (double)args[1], (int)(double)args[2], false);
+    static int dbg_left = std::getenv("KWIK_DEBUG_COLL") ? 300 : 0;
+    if (dbg_left > 0 && self && self->object_index >= 0 && self->object_index < g_object_count_rt &&
+        !std::strcmp(g_objects_rt[self->object_index].name, "obj_heart")) {
+        --dbg_left;
+        std::fprintf(stderr, "[coll] heart at(%.1f,%.1f) test(%.1f,%.1f) obj=%d -> %s",
+                     self->x, self->y, (double)args[0], (double)args[1], (int)(double)args[2],
+                     hit ? "HIT" : "no");
+        if (hit) {
+            KBox hb = make_box(hit, hit->x, hit->y);
+            std::fprintf(stderr, " #%d %s pos(%.1f,%.1f) lbox(%.1f..%.1f, %.1f..%.1f) rot=%d",
+                         hit->id, g_objects_rt[hit->object_index].name, hit->x, hit->y, hb.lx0,
+                         hb.lx1, hb.ly0, hb.ly1, (int)hb.rot);
+        }
+        std::fprintf(stderr, "\n");
+    }
+    return Value(hit != nullptr);
 }
 
 GMLFN(place_free) {
@@ -1147,8 +1393,10 @@ GMLFN(asset_get_index) {
     std::string n = (std::string)args[0];
     for (int i = 0; i < g_object_count_rt; ++i)
         if (n == g_objects_rt[i].name) return Value((double)i);
-    for (int i = 0; i < g_sprite_count; ++i)
-        if (g_sprites[i].name && n == g_sprites[i].name) return Value((double)i);
+    for (int i = 0; i < kwik_sprite_total(); ++i) {
+        const KwikSprite* sd = kwik_sprite_at(i);
+        if (sd && sd->name && n == sd->name) return Value((double)i);
+    }
     for (int i = 0; i < g_sound_count; ++i)
         if (g_sound_table[i].name && n == g_sound_table[i].name) return Value((double)i);
     for (int i = 0; i < g_room_count_rt; ++i)
@@ -1316,8 +1564,9 @@ static void run_alarms(Instance* inst) {
 
 static void run_animation(Instance* inst) {
     int spr = inst_sprite(inst);
-    if (spr < 0 || spr >= g_sprite_count) return;
-    const KwikSprite& s = g_sprites[spr];
+    const KwikSprite* sdef = kwik_sprite_at(spr);
+    if (!sdef) return;
+    const KwikSprite& s = *sdef;
     if (s.frame_count <= 0) return;
     double imgspd = 1.0;
     auto it = inst->vars.find("image_speed");
@@ -1344,25 +1593,25 @@ static void run_animation(Instance* inst) {
 
 static void run_collisions() {
     size_t n = g_instances.size();
+    std::vector<int> handled;
     for (size_t ai = 0; ai < n; ++ai) {
         Instance* a = g_instances[ai].get();
         if (a->dead || !a->active || a->object_index < 0) continue;
         int obj = a->object_index;
         int guard = 0;
+        handled.clear();
         while (obj >= 0 && obj < g_object_count_rt && guard++ < 128) {
             const ObjectDef& od = g_objects_rt[obj];
             for (int c = 0; c < od.collision_count; ++c) {
                 int target = od.collisions[c].other_object;
+                if (std::find(handled.begin(), handled.end(), target) != handled.end()) continue;
+                handled.push_back(target);
                 ScriptFn fn = od.collisions[c].fn;
-                double al, at, ar, ab;
-                if (!inst_bbox(a, a->x, a->y, al, at, ar, ab)) break;
                 size_t m = g_instances.size();
                 for (size_t bi = 0; bi < m; ++bi) {
                     Instance* b = g_instances[bi].get();
                     if (b == a || !inst_matches(b, target)) continue;
-                    double bl, bt, br, bb;
-                    if (!inst_bbox(b, b->x, b->y, bl, bt, br, bb)) continue;
-                    if (boxes_overlap(al, at, ar, ab, bl, bt, br, bb)) {
+                    if (instances_hit(a, a->x, a->y, b)) {
                         Instance* saved_other = g_other_ptr;
                         g_other_ptr = b;
                         fn(a, nullptr, 0);
@@ -1438,13 +1687,18 @@ static void load_room(int index, bool clear_persistent) {
 
     g_current_room = index;
     g_pending_room = -1;
-    g_room_speed_v = room.speed > 0 ? room.speed : 30;
+    g_room_speed_v = room.speed > 0 ? room.speed : g_default_fps;
 
     Camera& cam = g_cameras[g_view_camera[0]];
     cam.x = room.view_x;
     cam.y = room.view_y;
     cam.w = room.view_w > 0 ? room.view_w : room.width;
     cam.h = room.view_h > 0 ? room.view_h : room.height;
+    cam.border_x = room.view_border_x;
+    cam.border_y = room.view_border_y;
+    cam.speed_x = room.view_speed_x;
+    cam.speed_y = room.view_speed_y;
+    cam.target = room.view_object;
 
     render_set_room(room.width, room.height, room.bg_color);
 
@@ -1494,6 +1748,29 @@ static void load_room(int index, bool clear_persistent) {
         }
     }
     g_first_room_loaded = true;
+    {
+        const char* sg = std::getenv("KWIK_SETGLOBALS");
+        if (sg && *sg) {
+            std::string spec = sg;
+            size_t pos = 0;
+            while (pos < spec.size()) {
+                size_t comma = spec.find(',', pos);
+                if (comma == std::string::npos) comma = spec.size();
+                std::string pair = spec.substr(pos, comma - pos);
+                pos = comma + 1;
+                size_t eq = pair.find('=');
+                if (eq == std::string::npos) continue;
+                std::string key = pair.substr(0, eq);
+                std::string val = pair.substr(eq + 1);
+                char* endp = nullptr;
+                double d = std::strtod(val.c_str(), &endp);
+                if (endp && *endp == 0 && !val.empty())
+                    global_var(key) = Value(d);
+                else
+                    global_var(key) = Value(val);
+            }
+        }
+    }
     sweep_dead();
 }
 
@@ -1505,18 +1782,20 @@ static void draw_world() {
         double depth;
         Instance* inst;
         const RoomBg* bg;
+        const RoomTile* tile;
     };
     std::vector<DrawItem> items;
     if (g_current_room >= 0) {
         const RoomDef& cur = g_room_defs_rt[g_current_room];
         for (int i = 0; i < cur.background_count; ++i)
-            if (cur.backgrounds[i].sprite_index >= 0)
-                items.push_back({cur.backgrounds[i].depth, nullptr, &cur.backgrounds[i]});
+            items.push_back({cur.backgrounds[i].depth, nullptr, &cur.backgrounds[i], nullptr});
+        for (int i = 0; i < cur.tile_count; ++i)
+            items.push_back({cur.tiles[i].depth, nullptr, nullptr, &cur.tiles[i]});
     }
     for (auto& sp : g_instances) {
         Instance* inst = sp.get();
         if (inst->dead || !inst->active || !inst->visible) continue;
-        items.push_back({inst->depth, inst, nullptr});
+        items.push_back({inst->depth, inst, nullptr, nullptr});
     }
     std::stable_sort(items.begin(), items.end(),
                      [](const DrawItem& a, const DrawItem& b) { return a.depth > b.depth; });
@@ -1536,12 +1815,32 @@ static void draw_world() {
 
     for (const DrawItem& it : items) {
         if (it.bg) {
-            if (it.bg->htiled || it.bg->vtiled)
-                kwik_draw_sprite_tiled(it.bg->sprite_index, 0, it.bg->x, it.bg->y, 1, 1,
-                                       0xFFFFFF, 1.0);
-            else
-                kwik_draw_sprite_general(it.bg->sprite_index, 0, it.bg->x, it.bg->y, 1, 1, 0,
-                                         0xFFFFFF, 1.0);
+            const RoomBg& bg = *it.bg;
+            unsigned int blend = bg.color & 0xFFFFFF;
+            double alpha = ((bg.color >> 24) & 0xFF) / 255.0;
+            if (bg.sprite_index < 0) {
+                if (alpha > 0.0) {
+                    double sa = render_get_alpha();
+                    render_set_alpha(alpha);
+                    render_draw_rectangle_color(cam.x - 32, cam.y - 32, cam.x + cam.w + 32,
+                                                cam.y + cam.h + 32, blend, blend, blend, blend,
+                                                false);
+                    render_set_alpha(sa);
+                }
+            } else if (bg.stretch) {
+                kwik_draw_sprite_stretched(bg.sprite_index, 0, 0, 0, room_width_cur(),
+                                           room_height_cur(), blend, alpha);
+            } else if (bg.htiled || bg.vtiled) {
+                kwik_draw_sprite_tiled(bg.sprite_index, 0, bg.x, bg.y, 1, 1, blend, alpha);
+            } else {
+                kwik_draw_sprite_general(bg.sprite_index, 0, bg.x, bg.y, 1, 1, 0, blend, alpha);
+            }
+            continue;
+        }
+        if (it.tile) {
+            const RoomTile& t = *it.tile;
+            kwik_draw_sprite_part(t.sprite, 0, t.src_x, t.src_y, t.w, t.h, t.x, t.y, t.scale_x,
+                                  t.scale_y, t.color & 0xFFFFFF, ((t.color >> 24) & 0xFF) / 255.0);
             continue;
         }
         Instance* inst = it.inst;
@@ -1633,6 +1932,39 @@ static void run_step_phase() {
         run_animation(inst);
     }
 
+    dispatch_async();
+
+    if (g_frame_counter == 20) {
+        const char* warp = std::getenv("KWIK_START_ROOM");
+        if (warp && *warp) {
+            int idx = -1;
+            if (warp[0] >= '0' && warp[0] <= '9') {
+                idx = std::atoi(warp);
+            } else {
+                for (int i = 0; i < g_room_count_rt; ++i)
+                    if (!std::strcmp(g_room_defs_rt[i].name, warp)) idx = i;
+            }
+            if (idx >= 0 && idx < g_room_count_rt) {
+                std::fprintf(stderr, "[kwik] warping to room %d\n", idx);
+                g_pending_room = idx;
+            }
+        }
+    }
+
+    static int last_ww = -1, last_wh = -1;
+    int ww = render_window_width(), wh = render_window_height();
+    if (last_ww >= 0 && (ww != last_ww || wh != last_wh)) {
+        n = g_instances.size();
+        for (size_t i = 0; i < n; ++i) {
+            Instance* inst = g_instances[i].get();
+            if (inst->dead || !inst->active) continue;
+            ScriptFn fn = find_event(inst->object_index, EVK_DRAW_RESIZE, 0);
+            if (fn) fn(inst, nullptr, 0);
+        }
+    }
+    last_ww = ww;
+    last_wh = wh;
+
     update_camera_follow();
     sweep_dead();
     ++g_frame_counter;
@@ -1665,16 +1997,49 @@ int run_game(const GameTables& tables) {
     if (!g_game_dir.empty() && chdir(g_game_dir.c_str()) != 0)
         std::fprintf(stderr, "[kwik] warning: could not chdir to %s\n", g_game_dir.c_str());
 
+    {
+        std::string save_id = tables.save_id && *tables.save_id ? tables.save_id : "kwik_game";
+        std::string clean;
+        for (char c : save_id)
+            clean.push_back((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                                    (c >= '0' && c <= '9') || c == '_' || c == '-' || c == ' '
+                                ? c
+                                : '_');
+        const char* xdg = std::getenv("XDG_DATA_HOME");
+        std::string root;
+        if (xdg && *xdg) {
+            root = xdg;
+        } else {
+            const char* home = std::getenv("HOME");
+            root = std::string(home ? home : ".") + "/.local/share";
+        }
+        g_save_dir = root + "/kwik/saves/" + clean;
+        std::error_code ec;
+        std::filesystem::create_directories(g_save_dir, ec);
+        if (ec) {
+            std::fprintf(stderr, "[kwik] could not create save dir %s\n", g_save_dir.c_str());
+            g_save_dir.clear();
+        } else if (std::getenv("KWIK_DEBUG")) {
+            std::fprintf(stderr, "[kwik] save dir: %s\n", g_save_dir.c_str());
+        }
+    }
+
     gml_random_seed((unsigned)std::random_device{}());
 
     Camera c0;
     c0.in_use = true;
     g_cameras.assign(1, c0);
 
+    if (tables.game_fps > 0) {
+        g_default_fps = tables.game_fps;
+        g_room_speed_v = tables.game_fps;
+    }
+
     const RoomDef& first = tables.rooms[0];
-    if (!render_init(tables.game_name && *tables.game_name ? tables.game_name : first.name,
-                     first.view_w > 0 ? first.view_w : first.width,
-                     first.view_h > 0 ? first.view_h : first.height, first.bg_color))
+    int win_w = tables.window_w > 0 ? tables.window_w : (first.view_w > 0 ? first.view_w : first.width);
+    int win_h = tables.window_h > 0 ? tables.window_h : (first.view_h > 0 ? first.view_h : first.height);
+    if (!render_init(tables.game_name && *tables.game_name ? tables.game_name : first.name, win_w,
+                     win_h, first.bg_color))
         return 1;
 
 restart_game:
@@ -1700,15 +2065,20 @@ restart_game:
 
     double step_time = 1.0 / g_room_speed_v;
     double accumulator = 0.0;
+    double last_t = now_ms() / 1000.0;
     while (!render_should_close() && !g_game_end_requested) {
-        step_time = 1.0 / std::max(1.0, g_room_speed_v);
-        accumulator += render_delta_time();
+        double t = now_ms() / 1000.0;
+        accumulator += t - last_t;
+        last_t = t;
         if (accumulator > 0.2) accumulator = 0.2;
+        step_time = 1.0 / std::max(1.0, g_room_speed_v);
 
         int guard = 0;
+        bool stepped = false;
         while (accumulator >= step_time && guard++ < 4) {
             accumulator -= step_time;
             run_step_phase();
+            stepped = true;
             kwik_audio_update();
             if (g_game_restart_requested) goto restart_game;
             if (g_game_end_requested) break;
@@ -1720,9 +2090,16 @@ restart_game:
             step_time = 1.0 / std::max(1.0, g_room_speed_v);
         }
 
-        render_begin_frame();
-        draw_world();
-        render_end_frame();
+        if (stepped) {
+            render_begin_frame();
+            draw_world();
+            render_end_frame();
+        } else {
+            render_idle();
+            double wait_s = step_time - accumulator;
+            if (wait_s > 0.004) wait_s = 0.004;
+            if (wait_s > 0) usleep((useconds_t)(wait_s * 1e6));
+        }
     }
 
     kwik_audio_shutdown();

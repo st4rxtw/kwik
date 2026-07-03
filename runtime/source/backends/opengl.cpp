@@ -33,6 +33,56 @@ static bool g_mouse_prev[3] = {false};
 static double g_last_time = 0.0;
 static double g_dt = 0.0;
 
+static GLuint g_fbo = 0;
+static GLuint g_fbo_tex = 0;
+static int g_fbo_w = 0;
+static int g_fbo_h = 0;
+
+static bool init_app_surface(int w, int h) {
+    if (!glGenFramebuffers) return false;
+    glGenFramebuffers(1, &g_fbo);
+    glGenTextures(1, &g_fbo_tex);
+    glBindTexture(GL_TEXTURE_2D, g_fbo_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_fbo_tex, 0);
+    bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (!ok) {
+        glDeleteFramebuffers(1, &g_fbo);
+        glDeleteTextures(1, &g_fbo_tex);
+        g_fbo = 0;
+        g_fbo_tex = 0;
+        return false;
+    }
+    g_fbo_w = w;
+    g_fbo_h = h;
+    return true;
+}
+
+bool render_app_surface_available() { return g_fbo != 0; }
+unsigned int render_app_texture() { return g_fbo_tex; }
+int render_app_width() { return g_fbo_w > 0 ? g_fbo_w : g_gui_w; }
+int render_app_height() { return g_fbo_h > 0 ? g_fbo_h : g_gui_h; }
+
+bool render_app_snapshot(int x, int y, int w, int h, unsigned char* rgba_out) {
+    if (!g_fbo) return false;
+    glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+    glReadPixels(x, g_fbo_h - y - h, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba_out);
+    glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+    for (int row = 0; row < h / 2; ++row) {
+        for (int col = 0; col < w * 4; ++col) {
+            unsigned char tmp = rgba_out[row * w * 4 + col];
+            rgba_out[row * w * 4 + col] = rgba_out[(h - 1 - row) * w * 4 + col];
+            rgba_out[(h - 1 - row) * w * 4 + col] = tmp;
+        }
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+    return true;
+}
+
 static bool key_state(int vk) {
     if (!g_window) return false;
     switch (vk) {
@@ -102,6 +152,8 @@ bool render_init(const char* title, int width, int height, unsigned int bg_color
     glEnable(GL_TEXTURE_2D);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    if (!init_app_surface(width, height))
+        std::fprintf(stderr, "kwik: application surface FBO unavailable\n");
     return true;
 }
 
@@ -110,9 +162,14 @@ bool render_should_close() {
 }
 
 void render_begin_frame() {
-    int fbw = g_win_w, fbh = g_win_h;
-    glfwGetFramebufferSize(g_window, &fbw, &fbh);
-    glViewport(0, 0, fbw, fbh);
+    if (g_fbo) {
+        glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+        glViewport(0, 0, g_fbo_w, g_fbo_h);
+    } else {
+        int fbw = g_win_w, fbh = g_win_h;
+        glfwGetFramebufferSize(g_window, &fbw, &fbh);
+        glViewport(0, 0, fbw, fbh);
+    }
 
     double vw = g_view_w > 0 ? g_view_w : g_room_w;
     double vh = g_view_h > 0 ? g_view_h : g_room_h;
@@ -154,6 +211,30 @@ double render_delta_time() { return g_dt; }
 double render_time_ms() { return glfwGetTime() * 1000.0; }
 
 void render_end_frame() {
+    if (g_fbo) {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        int fbw = g_win_w, fbh = g_win_h;
+        glfwGetFramebufferSize(g_window, &fbw, &fbh);
+        glViewport(0, 0, fbw, fbh);
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(0.0, 1.0, 1.0, 0.0, -1.0, 1.0);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        glClearColor(0.f, 0.f, 0.f, 1.f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glDisable(GL_BLEND);
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, g_fbo_tex);
+        glColor4f(1.f, 1.f, 1.f, 1.f);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0, 1); glVertex2f(0, 0);
+        glTexCoord2f(1, 1); glVertex2f(1, 0);
+        glTexCoord2f(1, 0); glVertex2f(1, 1);
+        glTexCoord2f(0, 0); glVertex2f(0, 1);
+        glEnd();
+        glEnable(GL_BLEND);
+    }
     glfwSwapBuffers(g_window);
     double now = glfwGetTime();
     g_dt = g_last_time > 0.0 ? now - g_last_time : 0.0;
@@ -170,6 +251,8 @@ void render_end_frame() {
     for (int i = 0; i < 3; ++i)
         g_mouse_now[i] = glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_LEFT + i) == GLFW_PRESS;
 }
+
+void render_idle() { glfwPollEvents(); }
 
 bool render_key_down(int vk) {
     if (vk == 0) {

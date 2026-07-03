@@ -19,6 +19,11 @@ static bool autoz_enabled() {
 }
 static bool autoz_down(int vk) {
     if (!autoz_enabled()) return false;
+    if (vk >= 37 && vk <= 40) {
+        int dir = (int)((g_frame_counter / 90) % 4);
+        static const int order[4] = {39, 40, 37, 38};
+        return vk == order[dir];
+    }
     if (vk != 90 && vk != 13 && vk != 1) return false;
     return (g_frame_counter % 16) < 8;
 }

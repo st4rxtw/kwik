@@ -141,7 +141,18 @@ GMLFN(draw_sprite_tiled_ext) {
     return Value();
 }
 
-GMLFN(draw_surface_ext) { (void)args; (void)argc; return kwik_missing(self, "draw_surface_ext"); }
+GMLFN(draw_surface_ext) {
+    (void)self;
+    if (argc < 8 || !render_app_surface_available()) return Value();
+    double x = A(args, argc, 1), y = A(args, argc, 2);
+    double xs = A(args, argc, 3, 1), ys = A(args, argc, 4, 1);
+    double rot = A(args, argc, 5);
+    unsigned int col = C(args, argc, 6);
+    double alpha = A(args, argc, 7, 1);
+    render_draw_quad(render_app_texture(), x, y, render_app_width(), render_app_height(), 0, 0,
+                     xs, ys, rot, 0.f, 1.f, 1.f, 0.f, col, alpha);
+    return Value();
+}
 
 GMLFN(draw_rectangle) {
     (void)self;
@@ -310,8 +321,8 @@ GMLFN(gpu_set_blendmode) {
 GMLFN(gpu_set_fog) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(gpu_set_texfilter) { (void)self; (void)args; (void)argc; return Value(); }
 
-GMLFN(surface_get_width) { (void)self; (void)args; (void)argc; return Value((double)render_gui_width()); }
-GMLFN(surface_get_height) { (void)self; (void)args; (void)argc; return Value((double)render_gui_height()); }
+GMLFN(surface_get_width) { (void)self; (void)args; (void)argc; return Value((double)render_app_width()); }
+GMLFN(surface_get_height) { (void)self; (void)args; (void)argc; return Value((double)render_app_height()); }
 GMLFN(texture_is_ready) { (void)self; (void)args; (void)argc; return Value(1.0); }
 GMLFN(texture_prefetch) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(texturegroup_get_textures) {
@@ -330,42 +341,69 @@ GMLFN(vertex_format_end) { (void)self; (void)args; (void)argc; return Value(-1.0
 
 GMLFN(sprite_exists) {
     (void)self;
-    int s = (int)A(args, argc, 0, -1);
-    return Value(s >= 0 && s < g_sprite_count);
+    return Value(kwik_sprite_at((int)A(args, argc, 0, -1)) != nullptr);
 }
 GMLFN(sprite_get_width) {
     (void)self;
-    int s = (int)A(args, argc, 0, -1);
-    return Value(s >= 0 && s < g_sprite_count ? (double)g_sprites[s].width : 0.0);
+    const KwikSprite* s = kwik_sprite_at((int)A(args, argc, 0, -1));
+    return Value(s ? (double)s->width : 0.0);
 }
 GMLFN(sprite_get_height) {
     (void)self;
-    int s = (int)A(args, argc, 0, -1);
-    return Value(s >= 0 && s < g_sprite_count ? (double)g_sprites[s].height : 0.0);
+    const KwikSprite* s = kwik_sprite_at((int)A(args, argc, 0, -1));
+    return Value(s ? (double)s->height : 0.0);
 }
 GMLFN(sprite_get_number) {
     (void)self;
-    int s = (int)A(args, argc, 0, -1);
-    return Value(s >= 0 && s < g_sprite_count ? (double)g_sprites[s].frame_count : 0.0);
+    const KwikSprite* s = kwik_sprite_at((int)A(args, argc, 0, -1));
+    return Value(s ? (double)s->frame_count : 0.0);
 }
 GMLFN(sprite_get_name) {
     (void)self;
-    int s = (int)A(args, argc, 0, -1);
-    return Value(s >= 0 && s < g_sprite_count && g_sprites[s].name ? g_sprites[s].name : "<undefined>");
+    const KwikSprite* s = kwik_sprite_at((int)A(args, argc, 0, -1));
+    return Value(s && s->name ? s->name : "<undefined>");
 }
 GMLFN(sprite_get_xoffset) {
     (void)self;
-    int s = (int)A(args, argc, 0, -1);
-    return Value(s >= 0 && s < g_sprite_count ? (double)g_sprites[s].origin_x : 0.0);
+    const KwikSprite* s = kwik_sprite_at((int)A(args, argc, 0, -1));
+    return Value(s ? (double)s->origin_x : 0.0);
 }
 GMLFN(sprite_get_yoffset) {
     (void)self;
-    int s = (int)A(args, argc, 0, -1);
-    return Value(s >= 0 && s < g_sprite_count ? (double)g_sprites[s].origin_y : 0.0);
+    const KwikSprite* s = kwik_sprite_at((int)A(args, argc, 0, -1));
+    return Value(s ? (double)s->origin_y : 0.0);
 }
 GMLFN(sprite_create_from_surface) {
-    (void)args; (void)argc;
-    return kwik_missing(self, "sprite_create_from_surface");
+    (void)self;
+    if (argc < 5 || !render_app_surface_available()) return Value(-1.0);
+    int x = (int)A(args, argc, 1), y = (int)A(args, argc, 2);
+    int w = (int)A(args, argc, 3), h = (int)A(args, argc, 4);
+    int xorig = (int)A(args, argc, 7), yorig = (int)A(args, argc, 8);
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > render_app_width()) w = render_app_width() - x;
+    if (y + h > render_app_height()) h = render_app_height() - y;
+    if (w <= 0 || h <= 0) return Value(-1.0);
+    std::vector<unsigned char> pixels((size_t)w * h * 4);
+    if (!render_app_snapshot(x, y, w, h, pixels.data())) return Value(-1.0);
+    for (size_t i = 3; i < pixels.size(); i += 4) pixels[i] = 255;
+    unsigned int tex = render_upload_texture(pixels.data(), w, h);
+    int img = kwik_register_dynamic_image(tex, w, h);
+    KwikSprite s{};
+    s.first_frame = img;
+    s.frame_count = 1;
+    s.origin_x = xorig;
+    s.origin_y = yorig;
+    s.speed = 1;
+    s.speed_type = 1;
+    s.bbox_left = 0;
+    s.bbox_top = 0;
+    s.bbox_right = w - 1;
+    s.bbox_bottom = h - 1;
+    s.width = w;
+    s.height = h;
+    s.name = "dyn_sprite";
+    return Value((double)kwik_register_dynamic_sprite(s));
 }
 GMLFN(sprite_delete) { (void)self; (void)args; (void)argc; return Value(1.0); }
 

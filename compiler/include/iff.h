@@ -56,6 +56,22 @@ struct RoomBackground {
     int32_t depth = 0;
     int32_t htiled = 0;
     int32_t vtiled = 0;
+    int32_t stretch = 0;
+    uint32_t color = 0xFFFFFFFF;
+};
+
+struct RoomTile {
+    int32_t x;
+    int32_t y;
+    int32_t sprite;
+    int32_t src_x;
+    int32_t src_y;
+    int32_t w;
+    int32_t h;
+    int32_t depth;
+    double scale_x = 1.0;
+    double scale_y = 1.0;
+    uint32_t color = 0xFFFFFFFF;
 };
 
 struct Room {
@@ -70,8 +86,14 @@ struct Room {
     int32_t view_y = 0;
     int32_t view_w = 0;
     int32_t view_h = 0;
+    int32_t view_border_x = 32;
+    int32_t view_border_y = 32;
+    int32_t view_speed_x = -1;
+    int32_t view_speed_y = -1;
+    int32_t view_object = -1;
     std::vector<RoomInstance> instances;
     std::vector<RoomBackground> backgrounds;
+    std::vector<RoomTile> tiles;
 };
 
 class GameData {
@@ -94,6 +116,11 @@ public:
     const std::vector<GameObject>& objects() const { return objects_; }
     const std::vector<Room>& rooms() const { return rooms_; }
     const std::vector<uint32_t>& global_init_ids() const { return global_init_; }
+    int window_w() const { return window_w_; }
+    int window_h() const { return window_h_; }
+    int game_fps() const { return game_fps_; }
+    const std::string& game_name() const { return game_name_; }
+    const std::string& display_name() const { return display_name_; }
 
     std::string function_at_call(uint32_t call_addr) const;
     VarRef var_at(uint32_t push_addr) const;
@@ -112,6 +139,7 @@ private:
     void parse_objects();
     void parse_rooms();
     void parse_glob();
+    void parse_gen8();
 
     std::vector<uint8_t> data_;
     std::unordered_map<std::string, Chunk> chunks_;
@@ -123,6 +151,11 @@ private:
     std::vector<Room> rooms_;
     std::vector<uint32_t> global_init_;
     std::string source_path_;
+    int window_w_ = 640;
+    int window_h_ = 480;
+    int game_fps_ = 30;
+    std::string game_name_ = "kwik_game";
+    std::string display_name_;
 };
 
 }

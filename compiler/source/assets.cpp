@@ -163,7 +163,13 @@ static std::vector<uint8_t> build_image_entry(int w, int h, int hot_x, int hot_y
     return e;
 }
 
+struct MaskPayload {
+    int sprite;
+    std::vector<uint8_t> data;
+};
+
 bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtraction& out) {
+    std::vector<MaskPayload> mask_payloads;
     std::map<int, Page> pages;
     const Chunk* txtr = gd.chunk("TXTR");
     if (txtr) {
@@ -193,6 +199,8 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
             info.first_frame = images.size();
             info.frame_count = 0;
 
+            info.sep_masks = gd.i32(sp + 44);
+
             uint32_t tex_list = 0;
             info.speed = 1.0;
             info.speed_type = 1;
@@ -213,6 +221,31 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
 
             uint32_t nframes = gd.u32(tex_list);
             if (nframes > 4096) nframes = 0;
+
+            if (info.sep_masks == 1 && info.width > 0 && info.height > 0 && nframes > 0) {
+                uint32_t mask_pos = tex_list + 4 + nframes * 4;
+                uint32_t mcount = gd.u32(mask_pos);
+                uint32_t rowbytes = (uint32_t)(info.width + 7) / 8;
+                uint32_t per_mask = rowbytes * (uint32_t)info.height;
+                if (mcount > 0 && mcount <= 4096 &&
+                    (size_t)mask_pos + 4 + (size_t)mcount * per_mask <= gd.bytes().size()) {
+                    MaskPayload mp;
+                    mp.sprite = (int)i;
+                    auto& d = mp.data;
+                    auto w32m = [&](uint32_t v) {
+                        d.push_back(v);
+                        d.push_back(v >> 8);
+                        d.push_back(v >> 16);
+                        d.push_back(v >> 24);
+                    };
+                    w32m(mcount);
+                    w32m((uint32_t)info.width);
+                    w32m((uint32_t)info.height);
+                    const uint8_t* src = &gd.bytes()[mask_pos + 4];
+                    d.insert(d.end(), src, src + (size_t)mcount * per_mask);
+                    mask_payloads.push_back(std::move(mp));
+                }
+            }
             for (uint32_t fr = 0; fr < nframes; ++fr) {
                 uint32_t tpag = gd.u32(tex_list + 4 + fr * 4);
                 int srcX = (int16_t)gd.u16(tpag + 0), srcY = (int16_t)gd.u16(tpag + 2);
@@ -382,6 +415,21 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
                 si.blob = audio_id;
             out.sounds.push_back(si);
         }
+    }
+
+    for (auto& mp : mask_payloads) {
+        std::vector<uint8_t> e;
+        auto w32 = [&](uint32_t v) {
+            e.push_back(v);
+            e.push_back(v >> 8);
+            e.push_back(v >> 16);
+            e.push_back(v >> 24);
+        };
+        w32(4);
+        w32((uint32_t)mp.data.size());
+        e.insert(e.end(), mp.data.begin(), mp.data.end());
+        out.sprites[mp.sprite].mask_blob = (int)sounds.size();
+        sounds.push_back(std::move(e));
     }
 
     out.image_count = images.size();

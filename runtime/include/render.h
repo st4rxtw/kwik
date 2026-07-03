@@ -7,6 +7,7 @@ bool render_should_close();
 void render_begin_frame();
 void render_begin_gui();
 void render_end_frame();
+void render_idle();
 void render_shutdown();
 
 void render_set_view(double x, double y, double w, double h);
@@ -46,6 +47,11 @@ int render_get_valign();
 void render_set_blendmode(int mode);
 
 unsigned int render_upload_texture(const unsigned char* rgba, int w, int h);
+bool render_app_surface_available();
+unsigned int render_app_texture();
+int render_app_width();
+int render_app_height();
+bool render_app_snapshot(int x, int y, int w, int h, unsigned char* rgba_out);
 void render_draw_quad(unsigned int tex, double x, double y, double dw, double dh,
                       double origin_x, double origin_y, double xscale, double yscale,
                       double angle_deg, float u0, float v0, float u1, float v1,

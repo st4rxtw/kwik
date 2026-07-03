@@ -147,8 +147,18 @@ static Voice* start_voice(int what, bool loop) {
     if (what >= kStreamBase && what < kHandleBase) {
         const std::string* path = kwik_stream_path(what);
         std::vector<unsigned char> bytes;
-        if (path && read_file_bytes(*path, bytes))
-            ok = init_voice_pcm(v, bytes.data(), (unsigned)bytes.size(), 0);
+        if (path) {
+            if (!read_file_bytes(*path, bytes)) {
+                size_t slash = path->find_last_of('/');
+                std::string base = slash == std::string::npos ? *path : path->substr(slash + 1);
+                if (!read_file_bytes("mus/" + base, bytes))
+                    if (!read_file_bytes("../mus/" + base, bytes)) read_file_bytes(base, bytes);
+            }
+            if (!bytes.empty())
+                ok = init_voice_pcm(v, bytes.data(), (unsigned)bytes.size(), 0);
+            else
+                std::fprintf(stderr, "[audio] stream not found: %s\n", path->c_str());
+        }
         v->stream = what;
     } else if (what >= 0 && what < g_sound_count) {
         const KwikSound& s = g_sound_table[what];

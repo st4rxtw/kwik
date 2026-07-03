@@ -82,6 +82,8 @@ struct ObjectDef {
     ScriptFn draw_gui_begin = nullptr, draw_gui_end = nullptr, draw_pre = nullptr, draw_post = nullptr;
     ScriptFn alarm[12] = {};
     ScriptFn room_start = nullptr, room_end = nullptr, anim_end = nullptr, game_start = nullptr;
+    ScriptFn draw_resize = nullptr;
+    ScriptFn async_save_load = nullptr, async_system = nullptr, async_web = nullptr;
     ScriptFn user[16] = {};
     const CollisionHandler* collisions = nullptr;
     int collision_count = 0;
@@ -96,6 +98,8 @@ struct KwikSprite {
     int speed_type;
     int bbox_left, bbox_top, bbox_right, bbox_bottom;
     int width, height;
+    int sep_masks;
+    int mask_blob;
     const char* name;
 };
 
@@ -136,7 +140,17 @@ struct RoomBg {
     int sprite_index;
     int x, y;
     double depth;
-    int htiled, vtiled;
+    int htiled, vtiled, stretch;
+    unsigned int color;
+};
+
+struct RoomTile {
+    int x, y;
+    int sprite;
+    int src_x, src_y, w, h;
+    double depth;
+    double scale_x, scale_y;
+    unsigned int color;
 };
 
 struct RoomDef {
@@ -144,6 +158,9 @@ struct RoomDef {
     int width, height;
     unsigned int bg_color;
     int view_x, view_y, view_w, view_h;
+    int view_border_x, view_border_y;
+    int view_speed_x, view_speed_y;
+    int view_object;
     int speed;
     int persistent;
     ScriptFn creation_code;
@@ -151,6 +168,8 @@ struct RoomDef {
     int instance_count;
     const RoomBg* backgrounds;
     int background_count;
+    const RoomTile* tiles;
+    int tile_count;
 };
 
 struct ScriptEntry {
@@ -170,6 +189,10 @@ struct GameTables {
     const char* game_dir;
     const char* assets_path;
     const char* game_name;
+    const char* save_id;
+    int window_w;
+    int window_h;
+    int game_fps;
 };
 
 extern const KwikSprite* g_sprites;

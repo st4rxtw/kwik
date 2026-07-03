@@ -838,6 +838,7 @@ struct ObjectSlots {
     std::string draw_pre, draw_post;
     std::string alarm[12];
     std::string room_start, room_end, anim_end, game_start;
+    std::string draw_resize, async_save_load, async_system, async_web;
     std::string user[16];
     std::vector<std::pair<std::string, std::string>> collisions;
 };
@@ -896,11 +897,15 @@ static void assign_event(const GameData& gd, const std::string& code_name,
     else if (event == "Draw" && sub == 75) s.draw_gui_end = fn;
     else if (event == "Draw" && sub == 76) s.draw_pre = fn;
     else if (event == "Draw" && sub == 77) s.draw_post = fn;
+    else if (event == "Draw" && sub == 65) s.draw_resize = fn;
     else if (event == "Alarm" && sub >= 0 && sub < 12) s.alarm[sub] = fn;
     else if (event == "Other" && sub == 2) s.game_start = fn;
     else if (event == "Other" && sub == 4) s.room_start = fn;
     else if (event == "Other" && sub == 5) s.room_end = fn;
     else if (event == "Other" && sub == 7) s.anim_end = fn;
+    else if (event == "Other" && sub == 70) s.async_web = fn;
+    else if (event == "Other" && sub == 72) s.async_save_load = fn;
+    else if (event == "Other" && sub == 75) s.async_system = fn;
     else if (event == "Other" && sub >= 10 && sub <= 25) s.user[sub - 10] = fn;
     else
         std::fprintf(stderr, "[lift] unhandled event %s_%d on %s\n", event.c_str(), sub,
@@ -964,6 +969,10 @@ static void emit_object_table(std::ostream& os, const GameData& gd) {
         set(os, "room_end", s.room_end);
         set(os, "anim_end", s.anim_end);
         set(os, "game_start", s.game_start);
+        set(os, "draw_resize", s.draw_resize);
+        set(os, "async_save_load", s.async_save_load);
+        set(os, "async_system", s.async_system);
+        set(os, "async_web", s.async_web);
         for (int a = 0; a < 12; ++a)
             if (!s.alarm[a].empty()) os << " d.alarm[" << a << "] = " << s.alarm[a] << ";";
         for (int u = 0; u < 16; ++u)
@@ -996,18 +1005,29 @@ static void emit_room_data(std::ostream& os, const GameData& gd) {
         os << "static const RoomBg g_bgs_" << i << "[] = {\n";
         for (const auto& bg : rooms[i].backgrounds)
             os << "    { " << bg.sprite_index << ", " << bg.x << ", " << bg.y << ", " << bg.depth
-               << ", " << bg.htiled << ", " << bg.vtiled << " },\n";
-        os << "    { -1, 0, 0, 0, 0, 0 },\n";
+               << ", " << bg.htiled << ", " << bg.vtiled << ", " << bg.stretch << ", " << bg.color
+               << "u },\n";
+        os << "    { -1, 0, 0, 0, 0, 0, 0, 0u },\n";
+        os << "};\n";
+        os << "static const RoomTile g_tiles_" << i << "[] = {\n";
+        for (const auto& t : rooms[i].tiles)
+            os << "    { " << t.x << ", " << t.y << ", " << t.sprite << ", " << t.src_x << ", "
+               << t.src_y << ", " << t.w << ", " << t.h << ", " << t.depth << ", " << t.scale_x
+               << ", " << t.scale_y << ", " << t.color << "u },\n";
+        os << "    { 0, 0, -1, 0, 0, 0, 0, 0, 1, 1, 0u },\n";
         os << "};\n";
     }
     os << "\nconst RoomDef g_rooms[] = {\n";
     for (size_t i = 0; i < rooms.size(); ++i)
         os << "    { " << quote(rooms[i].name) << ", " << rooms[i].width << ", " << rooms[i].height
            << ", " << rooms[i].bg_color << "u, " << rooms[i].view_x << ", " << rooms[i].view_y
-           << ", " << rooms[i].view_w << ", " << rooms[i].view_h << ", " << rooms[i].speed << ", "
-           << rooms[i].persistent << ", " << code_fn_or_null(gd, rooms[i].creation_code)
+           << ", " << rooms[i].view_w << ", " << rooms[i].view_h << ", " << rooms[i].view_border_x
+           << ", " << rooms[i].view_border_y << ", " << rooms[i].view_speed_x << ", "
+           << rooms[i].view_speed_y << ", " << rooms[i].view_object << ", " << rooms[i].speed
+           << ", " << rooms[i].persistent << ", " << code_fn_or_null(gd, rooms[i].creation_code)
            << ", g_instances_" << i << ", " << rooms[i].instances.size() << ", g_bgs_" << i << ", "
-           << rooms[i].backgrounds.size() << " },\n";
+           << rooms[i].backgrounds.size() << ", g_tiles_" << i << ", " << rooms[i].tiles.size()
+           << " },\n";
     os << "};\n";
     os << "const int g_room_count = " << rooms.size() << ";\n\n";
 }
@@ -1094,8 +1114,8 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
             data << "    { " << s.first_frame << ", " << s.frame_count << ", " << s.origin_x
                  << ", " << s.origin_y << ", " << s.speed << ", " << s.speed_type << ", "
                  << s.bbox_left << ", " << s.bbox_top << ", " << s.bbox_right << ", "
-                 << s.bbox_bottom << ", " << s.width << ", " << s.height << ", "
-                 << quote(s.name) << " },\n";
+                 << s.bbox_bottom << ", " << s.width << ", " << s.height << ", " << s.sep_masks
+                 << ", " << s.mask_blob << ", " << quote(s.name) << " },\n";
         data << "};\n";
         data << "const KwikSprite* g_sprites = g_sprites_data;\n";
     } else {
@@ -1181,7 +1201,11 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
         std::string assets = (fsx::absolute(root) / "Assets.dat").string();
         mainf << "    t.assets_path = " << quote(assets) << ";\n";
     }
-    mainf << "    t.game_name = \"kwik game\";\n";
+    mainf << "    t.game_name = " << quote(gd.display_name()) << ";\n";
+    mainf << "    t.save_id = " << quote(gd.game_name()) << ";\n";
+    mainf << "    t.window_w = " << gd.window_w() << ";\n";
+    mainf << "    t.window_h = " << gd.window_h() << ";\n";
+    mainf << "    t.game_fps = " << gd.game_fps() << ";\n";
     mainf << "    return gml::run_game(t);\n";
     mainf << "}\n";
     mainf.close();

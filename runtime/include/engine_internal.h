@@ -41,4 +41,26 @@ double now_ms();
 int kwik_stream_register(const std::string& path);
 const std::string* kwik_stream_path(int id);
 
+enum AsyncKind { ASYNC_SAVE_LOAD_EV = 0, ASYNC_SYSTEM_EV = 1, ASYNC_WEB_EV = 2 };
+void kwik_queue_async(int kind, int map_id);
+extern int g_async_load_map;
+
+const KwikSprite* kwik_sprite_at(int idx);
+int kwik_sprite_total();
+int kwik_register_dynamic_sprite(const KwikSprite& s);
+int kwik_register_dynamic_image(unsigned int tex, int w, int h);
+
+struct MaskSet {
+    int count = 0;
+    int w = 0;
+    int h = 0;
+    int rowbytes = 0;
+    const unsigned char* data = nullptr;
+};
+const MaskSet* kwik_sprite_masks(int spr);
+
+extern std::string g_save_dir;
+std::string kwik_save_path(const std::string& rel);
+std::string kwik_resolve_read(const std::string& rel);
+
 }

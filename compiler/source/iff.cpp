@@ -26,7 +26,35 @@ bool GameData::load(const std::string& path) {
     parse_objects();
     parse_rooms();
     parse_glob();
+    parse_gen8();
     return true;
+}
+
+void GameData::parse_gen8() {
+    const Chunk* c = chunk("GEN8");
+    if (!c) return;
+    int w = i32(c->offset + 60), h = i32(c->offset + 64);
+    if (w > 0 && w <= 8192 && h > 0 && h <= 8192) {
+        window_w_ = w;
+        window_h_ = h;
+    }
+    auto plausible = [&](uint32_t off) {
+        std::string s = string_at_offset(u32(c->offset + off));
+        if (s.empty() || s.size() > 80) return std::string();
+        for (char ch : s)
+            if ((unsigned char)ch < 32) return std::string();
+        return s;
+    };
+    std::string nm = plausible(40);
+    if (!nm.empty()) game_name_ = nm;
+    display_name_ = plausible(100);
+    if (display_name_.empty()) display_name_ = game_name_;
+    if (c->size >= 24) {
+        uint32_t raw = u32(c->offset + c->size - 24);
+        float f;
+        std::memcpy(&f, &raw, 4);
+        if (f >= 1.0f && f <= 1000.0f) game_fps_ = (int)f;
+    }
 }
 
 void GameData::parse_glob() {
@@ -209,6 +237,11 @@ void GameData::parse_rooms() {
                 r.view_y = i32(v0 + 8);
                 int32_t vw = i32(v0 + 12), vh = i32(v0 + 16);
                 if (vw > 0 && vh > 0) { r.view_w = vw; r.view_h = vh; }
+                r.view_border_x = i32(v0 + 36);
+                r.view_border_y = i32(v0 + 40);
+                r.view_speed_x = i32(v0 + 44);
+                r.view_speed_y = i32(v0 + 48);
+                r.view_object = i32(v0 + 52);
             }
         }
         uint32_t inst_list = u32(ptr + 48);
@@ -236,11 +269,11 @@ void GameData::parse_rooms() {
         const Chunk* sc = chunk("SPRT");
         int sprite_count = sc ? static_cast<int>(u32(sc->offset)) : 0;
         uint32_t layers = 0;
-        for (uint32_t o = 56; o <= 100; o += 4) {
+        for (uint32_t o : {88u, 84u, 80u, 92u, 56u, 60u, 64u}) {
             uint32_t lp = u32(ptr + o);
             if (lp <= c->offset || lp >= c->offset + c->size) continue;
             uint32_t n = u32(lp);
-            if (n < 1 || n > 64) continue;
+            if (n < 1 || n > 128) continue;
             uint32_t e0 = u32(lp + 4);
             if (e0 <= c->offset || e0 >= c->offset + c->size) continue;
             if (u32(e0 + 8) <= 7 && !string_at_offset(u32(e0)).empty()) { layers = lp; break; }
@@ -251,35 +284,54 @@ void GameData::parse_rooms() {
                 uint32_t lp = u32(layers + 4 + k * 4);
                 uint32_t ltype = u32(lp + 8);
                 int32_t depth = i32(lp + 12);
+                int32_t visible = i32(lp + 32);
+                if (!visible) continue;
                 if (ltype == 1) {
                     int32_t xoff = i32(lp + 16);
                     int32_t yoff = i32(lp + 20);
                     int32_t sprite = i32(lp + 56);
-                    if (sprite < 0 || sprite >= sprite_count) continue;
-                    RoomBackground bg{sprite, xoff, yoff, depth, 0, 0};
-                    uint32_t ht = u32(lp + 60), vt = u32(lp + 64);
+                    RoomBackground bg{-1, xoff, yoff, depth, 0, 0, 0, 0xFFFFFFFF};
+                    bg.color = u32(lp + 72);
+                    if (sprite >= 0 && sprite < sprite_count) bg.sprite_index = sprite;
+                    uint32_t ht = u32(lp + 60), vt = u32(lp + 64), st = u32(lp + 68);
                     if (ht <= 1) bg.htiled = (int32_t)ht;
                     if (vt <= 1) bg.vtiled = (int32_t)vt;
-                    r.backgrounds.push_back(bg);
+                    if (st <= 1) bg.stretch = (int32_t)st;
+                    if (bg.sprite_index >= 0 || (bg.color & 0xFF000000) != 0)
+                        r.backgrounds.push_back(bg);
                 } else if (ltype == 2) {
-                    for (uint32_t off = 36; off <= 64; off += 4) {
-                        uint32_t n = u32(lp + off);
-                        if (n == 0 || n > r.instances.size()) continue;
-                        bool ok = true;
-                        for (uint32_t j = 0; j < n && ok; ++j) {
-                            uint32_t id = u32(lp + off + 4 + j * 4);
-                            bool found = false;
-                            for (const auto& ins : r.instances)
-                                if (static_cast<uint32_t>(ins.id) == id) { found = true; break; }
-                            if (!found) ok = false;
-                        }
-                        if (!ok) continue;
-                        for (uint32_t j = 0; j < n; ++j) {
-                            uint32_t id = u32(lp + off + 4 + j * 4);
-                            for (auto& ins : r.instances)
-                                if (static_cast<uint32_t>(ins.id) == id) ins.depth = depth;
-                        }
-                        break;
+                    uint32_t n = u32(lp + 48);
+                    if (n > r.instances.size() * 4 + 16) continue;
+                    for (uint32_t j = 0; j < n; ++j) {
+                        uint32_t id = u32(lp + 52 + j * 4);
+                        for (auto& ins : r.instances)
+                            if (static_cast<uint32_t>(ins.id) == id) ins.depth = depth;
+                    }
+                } else if (ltype == 3) {
+                    uint32_t tl = u32(lp + 48);
+                    if (tl <= c->offset || tl >= c->offset + c->size) continue;
+                    uint32_t tn = u32(tl);
+                    if (tn > 100000) continue;
+                    for (uint32_t ti = 0; ti < tn; ++ti) {
+                        uint32_t tp = u32(tl + 4 + ti * 4);
+                        RoomTile t;
+                        t.x = i32(tp);
+                        t.y = i32(tp + 4);
+                        t.sprite = i32(tp + 8);
+                        t.src_x = i32(tp + 12);
+                        t.src_y = i32(tp + 16);
+                        t.w = i32(tp + 20);
+                        t.h = i32(tp + 24);
+                        t.depth = i32(tp + 28);
+                        float fsx, fsy;
+                        uint32_t usx = u32(tp + 36), usy = u32(tp + 40);
+                        std::memcpy(&fsx, &usx, 4);
+                        std::memcpy(&fsy, &usy, 4);
+                        t.scale_x = fsx;
+                        t.scale_y = fsy;
+                        t.color = u32(tp + 44);
+                        if (t.sprite >= 0 && t.sprite < sprite_count && t.w > 0 && t.h > 0)
+                            r.tiles.push_back(t);
                     }
                 }
             }

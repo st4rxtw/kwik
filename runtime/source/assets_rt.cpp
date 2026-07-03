@@ -66,10 +66,41 @@ const unsigned char* kwik_sound_blob(int blob_index, unsigned int& size, int& ty
     return &g_assets[off + 8];
 }
 
+static std::vector<KwikSprite> g_dyn_sprites;
+static std::vector<std::string> g_dyn_sprite_names;
+
+const KwikSprite* kwik_sprite_at(int idx) {
+    if (idx >= 0 && idx < g_sprite_count) return &g_sprites[idx];
+    int d = idx - g_sprite_count;
+    if (d >= 0 && d < (int)g_dyn_sprites.size()) return &g_dyn_sprites[d];
+    return nullptr;
+}
+
+int kwik_sprite_total() { return g_sprite_count + (int)g_dyn_sprites.size(); }
+
+int kwik_register_dynamic_sprite(const KwikSprite& s) {
+    g_dyn_sprites.push_back(s);
+    g_dyn_sprite_names.push_back(s.name ? s.name : "dyn_sprite");
+    g_dyn_sprites.back().name = g_dyn_sprite_names.back().c_str();
+    return g_sprite_count + (int)g_dyn_sprites.size() - 1;
+}
+
+int kwik_register_dynamic_image(unsigned int tex, int w, int h) {
+    ensure_assets();
+    LoadedImage img;
+    img.tex = tex;
+    img.w = w;
+    img.h = h;
+    img.tried = true;
+    img.ok = tex != 0;
+    g_images.push_back(img);
+    return (int)g_images.size() - 1;
+}
+
 static LoadedImage& load_image(int index) {
     ensure_assets();
     static LoadedImage dummy;
-    if (index < 0 || index >= g_image_count) return dummy;
+    if (index < 0 || index >= (int)g_images.size()) return dummy;
     LoadedImage& img = g_images[index];
     if (img.tried) return img;
     img.tried = true;
@@ -90,18 +121,49 @@ static LoadedImage& load_image(int index) {
     return img;
 }
 
+const MaskSet* kwik_sprite_masks(int spr) {
+    static std::unordered_map<int, MaskSet> cache;
+    auto it = cache.find(spr);
+    if (it != cache.end()) return it->second.count > 0 ? &it->second : nullptr;
+    MaskSet ms;
+    const KwikSprite* s = kwik_sprite_at(spr);
+    if (s && s->sep_masks == 1 && s->mask_blob >= 0) {
+        unsigned int size = 0;
+        int type = 0;
+        const unsigned char* d = kwik_sound_blob(s->mask_blob, size, type);
+        if (d && type == 4 && size >= 12) {
+            auto r32 = [&](int o) {
+                return (unsigned)d[o] | ((unsigned)d[o + 1] << 8) | ((unsigned)d[o + 2] << 16) |
+                       ((unsigned)d[o + 3] << 24);
+            };
+            ms.count = (int)r32(0);
+            ms.w = (int)r32(4);
+            ms.h = (int)r32(8);
+            ms.rowbytes = (ms.w + 7) / 8;
+            if (ms.count > 0 && ms.w > 0 && ms.h > 0 &&
+                12 + (size_t)ms.count * ms.rowbytes * ms.h <= size)
+                ms.data = d + 12;
+            else
+                ms.count = 0;
+        }
+    }
+    auto& slot = cache[spr];
+    slot = ms;
+    return slot.count > 0 ? &slot : nullptr;
+}
+
 static int frame_of(int spr, int sub, const KwikSprite** out) {
-    if (spr < 0 || spr >= g_sprite_count) return -1;
-    const KwikSprite& s = g_sprites[spr];
-    if (s.frame_count <= 0) return -1;
-    *out = &s;
-    return s.first_frame + ((sub % s.frame_count) + s.frame_count) % s.frame_count;
+    const KwikSprite* s = kwik_sprite_at(spr);
+    if (!s || s->frame_count <= 0) return -1;
+    *out = s;
+    return s->first_frame + ((sub % s->frame_count) + s->frame_count) % s->frame_count;
 }
 
 bool kwik_sprite_size(int spr, int& w, int& h) {
-    if (spr < 0 || spr >= g_sprite_count) return false;
-    w = g_sprites[spr].width;
-    h = g_sprites[spr].height;
+    const KwikSprite* s = kwik_sprite_at(spr);
+    if (!s) return false;
+    w = s->width;
+    h = s->height;
     return true;
 }
 
@@ -238,8 +300,9 @@ int kwik_font_for_asset(int font_asset) {
 
 int kwik_font_add_sprite(int spr, const std::string& mapping, bool prop, int sep) {
     build_fonts();
-    if (spr < 0 || spr >= g_sprite_count) return -1;
-    const KwikSprite& s = g_sprites[spr];
+    const KwikSprite* sp = kwik_sprite_at(spr);
+    if (!sp) return -1;
+    const KwikSprite& s = *sp;
     RtFont rf;
     double maxh = 1;
     for (size_t i = 0; i < mapping.size() && (int)i < s.frame_count; ++i) {

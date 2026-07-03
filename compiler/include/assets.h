@@ -22,6 +22,8 @@ struct SpriteInfo {
     int bbox_bottom;
     double speed;
     int speed_type;
+    int sep_masks = 0;
+    int mask_blob = -1;
 };
 
 struct GlyphInfo {

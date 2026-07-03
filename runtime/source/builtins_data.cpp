@@ -1,4 +1,5 @@
 #include "gml_runtime.h"
+#include "engine_internal.h"
 
 #include <cstdio>
 #include <cstring>
@@ -479,12 +480,12 @@ static void ini_parse(const std::string& text) {
 
 GMLFN(ini_open) {
     (void)self;
-    g_ini_file = S(args, argc, 0);
+    g_ini_file = kwik_save_path(S(args, argc, 0));
     g_ini.clear();
     g_ini_open = true;
     g_ini_dirty = false;
     g_ini_from_string = false;
-    std::FILE* f = std::fopen(g_ini_file.c_str(), "rb");
+    std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
     if (f) {
         std::string text;
         char buf[4096];
@@ -568,21 +569,21 @@ GMLFN(ini_write_string) {
 
 GMLFN(file_exists) {
     (void)self;
-    std::FILE* f = std::fopen(S(args, argc, 0).c_str(), "rb");
+    std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
     if (f) { std::fclose(f); return Value(1.0); }
     return Value(0.0);
 }
 
 GMLFN(file_delete) {
     (void)self;
-    return Value(std::remove(S(args, argc, 0).c_str()) == 0);
+    return Value(std::remove(kwik_resolve_read(S(args, argc, 0)).c_str()) == 0);
 }
 
 GMLFN(file_copy) {
     (void)self;
-    std::FILE* in = std::fopen(S(args, argc, 0).c_str(), "rb");
+    std::FILE* in = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
     if (!in) return Value(0.0);
-    std::FILE* out = std::fopen(S(args, argc, 1).c_str(), "wb");
+    std::FILE* out = std::fopen(kwik_save_path(S(args, argc, 1)).c_str(), "wb");
     if (!out) { std::fclose(in); return Value(0.0); }
     char buf[8192];
     size_t n;
@@ -601,14 +602,14 @@ static std::vector<TextFile> g_text_files;
 
 GMLFN(file_text_open_read) {
     (void)self;
-    std::FILE* f = std::fopen(S(args, argc, 0).c_str(), "rb");
+    std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
     if (!f) return Value(-1.0);
     g_text_files.push_back({f, false, true});
     return Value((double)(g_text_files.size() - 1));
 }
 GMLFN(file_text_open_write) {
     (void)self;
-    std::FILE* f = std::fopen(S(args, argc, 0).c_str(), "wb");
+    std::FILE* f = std::fopen(kwik_save_path(S(args, argc, 0)).c_str(), "wb");
     if (!f) return Value(-1.0);
     g_text_files.push_back({f, true, true});
     return Value((double)(g_text_files.size() - 1));
@@ -735,7 +736,7 @@ GMLFN(buffer_get_size) {
 }
 GMLFN(buffer_load) {
     (void)self;
-    std::FILE* f = std::fopen(S(args, argc, 0).c_str(), "rb");
+    std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
     if (!f) return Value(-1.0);
     Buffer b;
     b.alive = true;
@@ -834,10 +835,86 @@ GMLFN(buffer_write) {
     }
     return Value();
 }
-GMLFN(buffer_load_async) { (void)args; (void)argc; return kwik_missing(self, "buffer_load_async"); }
-GMLFN(buffer_save_async) { (void)args; (void)argc; return kwik_missing(self, "buffer_save_async"); }
-GMLFN(buffer_async_group_begin) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(buffer_async_group_end) { (void)self; (void)args; (void)argc; return Value(-1.0); }
+static int g_next_async_id = 5000;
+static bool g_async_group_active = false;
+static bool g_async_group_ok = true;
+
+static void queue_save_load_event(int id, bool ok) {
+    g_maps.emplace_back();
+    int map = (int)g_maps.size() - 1;
+    g_maps[map].data[key_of(Value("id"))] = Value((double)id);
+    g_maps[map].data[key_of(Value("status"))] = Value(ok ? 1.0 : 0.0);
+    kwik_queue_async(ASYNC_SAVE_LOAD_EV, map);
+}
+
+GMLFN(buffer_save_async) {
+    (void)self;
+    Buffer* b = argc > 0 ? buf_of(args[0]) : nullptr;
+    bool ok = false;
+    if (b && argc > 1) {
+        size_t off = argc > 2 ? (size_t)(double)args[2] : 0;
+        size_t sz = argc > 3 && (double)args[3] >= 0 ? (size_t)(double)args[3]
+                                                     : b->data.size();
+        if (off > b->data.size()) off = b->data.size();
+        if (off + sz > b->data.size()) sz = b->data.size() - off;
+        std::FILE* f = std::fopen(kwik_save_path(S(args, argc, 1)).c_str(), "wb");
+        if (f) {
+            std::fwrite(b->data.data() + off, 1, sz, f);
+            std::fclose(f);
+            ok = true;
+        }
+    }
+    int id = g_next_async_id++;
+    if (g_async_group_active)
+        g_async_group_ok = g_async_group_ok && ok;
+    else
+        queue_save_load_event(id, ok);
+    return Value((double)id);
+}
+
+GMLFN(buffer_load_async) {
+    (void)self;
+    Buffer* b = argc > 0 ? buf_of(args[0]) : nullptr;
+    bool ok = false;
+    if (b && argc > 1) {
+        std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 1)).c_str(), "rb");
+        if (f) {
+            size_t off = argc > 2 ? (size_t)(double)args[2] : 0;
+            std::vector<unsigned char> bytes;
+            char tmp[8192];
+            size_t n;
+            while ((n = std::fread(tmp, 1, sizeof(tmp), f)) > 0)
+                bytes.insert(bytes.end(), tmp, tmp + n);
+            std::fclose(f);
+            if (b->data.size() < off + bytes.size()) b->data.resize(off + bytes.size());
+            std::memcpy(b->data.data() + off, bytes.data(), bytes.size());
+            b->pos = 0;
+            ok = true;
+        }
+    }
+    int id = g_next_async_id++;
+    if (g_async_group_active)
+        g_async_group_ok = g_async_group_ok && ok;
+    else
+        queue_save_load_event(id, ok);
+    return Value((double)id);
+}
+
+GMLFN(buffer_async_group_begin) {
+    (void)self; (void)args; (void)argc;
+    g_async_group_active = true;
+    g_async_group_ok = true;
+    return Value();
+}
+GMLFN(buffer_async_group_end) {
+    (void)self; (void)args; (void)argc;
+    int id = g_next_async_id++;
+    if (g_async_group_active) {
+        queue_save_load_event(id, g_async_group_ok);
+        g_async_group_active = false;
+    }
+    return Value((double)id);
+}
 GMLFN(buffer_async_group_option) { (void)self; (void)args; (void)argc; return Value(); }
 
 }
