@@ -24,15 +24,27 @@
 
 ## DELTARUNE CHAPTER 3
 
-* A lot of unhandled events + compile errors
+```
+[lift] unhandled event Other_40 on obj_particle_generic
+```
+
+mp_grid_path is unimplemented
 
 ## DELTARUNE CHAPTER 4
 
-* A lot of unhandled events + compile errors
+```
+[lift] unhandled event Other_73 on obj_mike_controller
+[lift] unhandled event Other_73 on obj_microphone_test
+[lift] unhandled event Other_3 on obj_microphone_test
+```
+
+surface_resize is unimplemented
 
 ## DELTARUNE CHAPTER 5
 
-* A lot of unhandled events + compile errors
+Required events are handled.
+
+layer_sprite_get_angle is unimplemented
 
 
 ## DELTATALE
