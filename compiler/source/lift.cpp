@@ -46,7 +46,6 @@ static std::string quote(const std::string& s) {
 static std::string builtin_call_name(const std::string& raw) {
     if (raw == "typeof") return "typeof_fn";
     if (raw == "bool") return "bool_fn";
-    if (raw == "event_inherited") return "event_inherited_fn";
     if (raw == "ds_list_delete") return "ds_list_delete_fn";
     return sanitize(raw);
 }
@@ -609,6 +608,10 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                     *out << "    " << S(base) << " = " << S(d() - 1) << ";\n";
             } else if (fn == "@@NullObject@@") {
                 if (out) *out << "    " << S(base) << " = Value(-4.0);\n";
+            } else if (fn == "@@try_hook@@" || fn == "@@try_unhook@@" ||
+                       fn == "@@throw@@" || fn == "@@finish_catch@@" ||
+                       fn == "@@finish_finally@@") {
+                if (out) *out << "    " << S(base) << " = Value();\n";
             } else if (fn == "@@NewGMLArray@@") {
                 emit_args("kwik_new_array(", ")");
             } else if (fn == "@@NewGMLObject@@") {
@@ -855,8 +858,13 @@ struct ObjectSlots {
     std::string alarm[12];
     std::string room_start, room_end, anim_end, game_start;
     std::string draw_resize, async_save_load, async_system, async_web;
+    std::string outside_room, path_ended;
     std::string user[16];
     std::vector<std::pair<std::string, std::string>> collisions;
+    std::vector<std::pair<int, std::string>> keypress;
+    std::vector<std::pair<int, std::string>> keyrelease;
+    std::vector<std::pair<int, std::string>> keyboard;
+    std::vector<std::pair<int, std::string>> mouse;
 };
 
 static int obj_index_for(const GameData& gd, const std::string& code_name, std::string* suffix_out) {
@@ -919,10 +927,16 @@ static void assign_event(const GameData& gd, const std::string& code_name,
     else if (event == "Other" && sub == 4) s.room_start = fn;
     else if (event == "Other" && sub == 5) s.room_end = fn;
     else if (event == "Other" && sub == 7) s.anim_end = fn;
+    else if (event == "Other" && sub == 0) s.outside_room = fn;
+    else if (event == "Other" && sub == 8) s.path_ended = fn;
     else if (event == "Other" && sub == 70) s.async_web = fn;
     else if (event == "Other" && sub == 72) s.async_save_load = fn;
     else if (event == "Other" && sub == 75) s.async_system = fn;
     else if (event == "Other" && sub >= 10 && sub <= 25) s.user[sub - 10] = fn;
+    else if (event == "KeyPress") s.keypress.emplace_back(sub, fn);
+    else if (event == "KeyRelease") s.keyrelease.emplace_back(sub, fn);
+    else if (event == "Keyboard") s.keyboard.emplace_back(sub, fn);
+    else if (event == "Mouse") s.mouse.emplace_back(sub, fn);
     else
         std::fprintf(stderr, "[lift] unhandled event %s_%d on %s\n", event.c_str(), sub,
                      gd.objects()[best].name.c_str());
@@ -946,11 +960,23 @@ static void emit_object_table(std::ostream& os, const GameData& gd) {
     };
 
     for (size_t i = 0; i < gd.objects().size(); ++i) {
-        if (slots[i].collisions.empty()) continue;
-        os << "static const CollisionHandler g_coll_" << i << "[] = {\n";
-        for (const auto& c : slots[i].collisions)
-            os << "    { " << obj_by_name(c.first) << ", " << c.second << " },\n";
-        os << "};\n";
+        if (!slots[i].collisions.empty()) {
+            os << "static const CollisionHandler g_coll_" << i << "[] = {\n";
+            for (const auto& c : slots[i].collisions)
+                os << "    { " << obj_by_name(c.first) << ", " << c.second << " },\n";
+            os << "};\n";
+        }
+        auto emit_keys = [&](const char* tag,
+                             const std::vector<std::pair<int, std::string>>& list) {
+            if (list.empty()) return;
+            os << "static const KeyHandler g_" << tag << "_" << i << "[] = {\n";
+            for (const auto& k : list) os << "    { " << k.first << ", " << k.second << " },\n";
+            os << "};\n";
+        };
+        emit_keys("kp", slots[i].keypress);
+        emit_keys("kr", slots[i].keyrelease);
+        emit_keys("kb", slots[i].keyboard);
+        emit_keys("ms", slots[i].mouse);
     }
 
     os << "ObjectDef g_objects[" << gd.objects().size() << "];\n";
@@ -989,6 +1015,8 @@ static void emit_object_table(std::ostream& os, const GameData& gd) {
         set(os, "async_save_load", s.async_save_load);
         set(os, "async_system", s.async_system);
         set(os, "async_web", s.async_web);
+        set(os, "outside_room", s.outside_room);
+        set(os, "path_ended", s.path_ended);
         for (int a = 0; a < 12; ++a)
             if (!s.alarm[a].empty()) os << " d.alarm[" << a << "] = " << s.alarm[a] << ";";
         for (int u = 0; u < 16; ++u)
@@ -996,6 +1024,17 @@ static void emit_object_table(std::ostream& os, const GameData& gd) {
         if (!s.collisions.empty())
             os << " d.collisions = g_coll_" << i << "; d.collision_count = "
                << s.collisions.size() << ";";
+        if (!s.keypress.empty())
+            os << " d.keypress = g_kp_" << i << "; d.keypress_count = " << s.keypress.size()
+               << ";";
+        if (!s.keyrelease.empty())
+            os << " d.keyrelease = g_kr_" << i << "; d.keyrelease_count = "
+               << s.keyrelease.size() << ";";
+        if (!s.keyboard.empty())
+            os << " d.keyboard = g_kb_" << i << "; d.keyboard_count = " << s.keyboard.size()
+               << ";";
+        if (!s.mouse.empty())
+            os << " d.mouse = g_ms_" << i << "; d.mouse_count = " << s.mouse.size() << ";";
         os << " }\n";
     }
     os << "}\n\n";

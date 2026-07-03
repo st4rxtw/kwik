@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 namespace gml {
 
@@ -67,6 +68,186 @@ bool render_app_surface_available() { return g_fbo != 0; }
 unsigned int render_app_texture() { return g_fbo_tex; }
 int render_app_width() { return g_fbo_w > 0 ? g_fbo_w : g_gui_w; }
 int render_app_height() { return g_fbo_h > 0 ? g_fbo_h : g_gui_h; }
+
+struct RtSurface {
+    GLuint fbo = 0;
+    GLuint tex = 0;
+    int w = 0, h = 0;
+    bool alive = false;
+};
+static std::vector<RtSurface> g_surfaces;
+static std::vector<int> g_target_stack;
+
+int render_surface_create(int w, int h) {
+    if (!glGenFramebuffers || w <= 0 || h <= 0) return -1;
+    RtSurface sf;
+    glGenFramebuffers(1, &sf.fbo);
+    glGenTextures(1, &sf.tex);
+    glBindTexture(GL_TEXTURE_2D, sf.tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    GLint prev = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
+    glBindFramebuffer(GL_FRAMEBUFFER, sf.fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sf.tex, 0);
+    bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    if (ok) {
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev);
+    if (!ok) {
+        glDeleteFramebuffers(1, &sf.fbo);
+        glDeleteTextures(1, &sf.tex);
+        return -1;
+    }
+    sf.w = w;
+    sf.h = h;
+    sf.alive = true;
+    for (size_t i = 0; i < g_surfaces.size(); ++i)
+        if (!g_surfaces[i].alive) {
+            g_surfaces[i] = sf;
+            return (int)i + 1;
+        }
+    g_surfaces.push_back(sf);
+    return (int)g_surfaces.size();
+}
+
+static RtSurface* surf_of(int id) {
+    int i = id - 1;
+    if (i < 0 || (size_t)i >= g_surfaces.size() || !g_surfaces[i].alive) return nullptr;
+    return &g_surfaces[i];
+}
+
+bool render_surface_exists(int id) {
+    if (id == 0) return g_fbo != 0;
+    return surf_of(id) != nullptr;
+}
+
+void render_surface_free(int id) {
+    RtSurface* sf = surf_of(id);
+    if (!sf) return;
+    glDeleteFramebuffers(1, &sf->fbo);
+    glDeleteTextures(1, &sf->tex);
+    sf->alive = false;
+}
+
+unsigned int render_surface_texture(int id) {
+    if (id == 0) return g_fbo_tex;
+    RtSurface* sf = surf_of(id);
+    return sf ? sf->tex : 0;
+}
+
+int render_surface_width(int id) {
+    if (id == 0) return render_app_width();
+    RtSurface* sf = surf_of(id);
+    return sf ? sf->w : 0;
+}
+
+int render_surface_height(int id) {
+    if (id == 0) return render_app_height();
+    RtSurface* sf = surf_of(id);
+    return sf ? sf->h : 0;
+}
+
+bool render_surface_set_target(int id) {
+    RtSurface* sf = surf_of(id);
+    if (!sf && id != 0) return false;
+    g_target_stack.push_back(id);
+    GLuint fbo = id == 0 ? g_fbo : sf->fbo;
+    int w = id == 0 ? g_fbo_w : sf->w;
+    int h = id == 0 ? g_fbo_h : sf->h;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glViewport(0, 0, w, h);
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0.0, w, h, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    return true;
+}
+
+void render_surface_reset_target() {
+    if (g_target_stack.empty()) return;
+    g_target_stack.pop_back();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    int prev = g_target_stack.empty() ? 0 : g_target_stack.back();
+    if (prev == 0) {
+        glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+        glViewport(0, 0, g_fbo_w, g_fbo_h);
+    } else {
+        RtSurface* sf = surf_of(prev);
+        if (sf) {
+            glBindFramebuffer(GL_FRAMEBUFFER, sf->fbo);
+            glViewport(0, 0, sf->w, sf->h);
+        }
+    }
+}
+
+bool render_surface_getpixel(int id, int x, int y, unsigned char* rgba_out) {
+    RtSurface* sf = surf_of(id);
+    GLuint fbo = id == 0 ? g_fbo : (sf ? sf->fbo : 0);
+    int h = id == 0 ? g_fbo_h : (sf ? sf->h : 0);
+    if (!fbo && id != 0) return false;
+    GLint prev = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glReadPixels(x, h - 1 - y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba_out);
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev);
+    return true;
+}
+
+void render_surface_clear(unsigned int bgr, double alpha) {
+    glClearColor((bgr & 0xFF) / 255.0f, ((bgr >> 8) & 0xFF) / 255.0f,
+                 ((bgr >> 16) & 0xFF) / 255.0f, (float)alpha);
+    glClear(GL_COLOR_BUFFER_BIT);
+}
+
+static int g_prim_kind = 0;
+static unsigned int g_prim_tex = 0;
+
+void render_primitive_begin(int kind, unsigned int tex) {
+    g_prim_kind = kind;
+    g_prim_tex = tex;
+    if (tex) {
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, tex);
+    } else {
+        glDisable(GL_TEXTURE_2D);
+    }
+    GLenum mode = GL_TRIANGLES;
+    switch (kind) {
+        case 1: mode = GL_POINTS; break;
+        case 2: mode = GL_LINES; break;
+        case 3: mode = GL_LINE_STRIP; break;
+        case 4: mode = GL_TRIANGLES; break;
+        case 5: mode = GL_TRIANGLE_STRIP; break;
+        case 6: mode = GL_TRIANGLE_FAN; break;
+        default: mode = GL_TRIANGLES; break;
+    }
+    glBegin(mode);
+}
+
+void render_primitive_vertex(double x, double y, double u, double v, unsigned int color,
+                             double alpha, bool textured) {
+    glColor4f((color & 0xFF) / 255.0f, ((color >> 8) & 0xFF) / 255.0f,
+              ((color >> 16) & 0xFF) / 255.0f, (float)alpha);
+    if (textured) glTexCoord2f((float)u, (float)v);
+    glVertex2f((float)x, (float)y);
+}
+
+void render_primitive_end() {
+    glEnd();
+    glEnable(GL_TEXTURE_2D);
+}
+
+static double g_wheel_accum = 0.0;
+static double g_wheel_frame = 0.0;
 
 bool render_app_snapshot(int x, int y, int w, int h, unsigned char* rgba_out) {
     if (!g_fbo) return false;
@@ -131,6 +312,7 @@ bool render_init(const char* title, int width, int height, unsigned int bg_color
         return false;
     }
 
+    glfwSetScrollCallback(g_window, [](GLFWwindow*, double, double dy) { g_wheel_accum += dy; });
     glfwMakeContextCurrent(g_window);
     glfwSwapInterval(1);
 
@@ -163,6 +345,7 @@ bool render_should_close() {
 }
 
 void render_begin_frame() {
+    g_target_stack.clear();
     if (g_fbo) {
         glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
         glViewport(0, 0, g_fbo_w, g_fbo_h);
@@ -267,7 +450,11 @@ void render_end_frame() {
     g_keys_now[0] = false;
     for (int i = 0; i < 3; ++i)
         g_mouse_now[i] = glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_LEFT + i) == GLFW_PRESS;
+    g_wheel_frame = g_wheel_accum;
+    g_wheel_accum = 0.0;
 }
+
+double render_wheel_delta() { return g_wheel_frame; }
 
 void render_idle() { glfwPollEvents(); }
 

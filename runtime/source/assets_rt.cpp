@@ -69,11 +69,41 @@ const unsigned char* kwik_sound_blob(int blob_index, unsigned int& size, int& ty
 static std::vector<KwikSprite> g_dyn_sprites;
 static std::vector<std::string> g_dyn_sprite_names;
 
+static std::unordered_map<int, KwikSprite> g_sprite_overrides;
+
 const KwikSprite* kwik_sprite_at(int idx) {
+    auto ov = g_sprite_overrides.find(idx);
+    if (ov != g_sprite_overrides.end()) return &ov->second;
     if (idx >= 0 && idx < g_sprite_count) return &g_sprites[idx];
     int d = idx - g_sprite_count;
     if (d >= 0 && d < (int)g_dyn_sprites.size()) return &g_dyn_sprites[d];
     return nullptr;
+}
+
+static KwikSprite* sprite_mutable(int idx) {
+    int d = idx - g_sprite_count;
+    if (d >= 0 && d < (int)g_dyn_sprites.size()) return &g_dyn_sprites[d];
+    const KwikSprite* s = kwik_sprite_at(idx);
+    if (!s) return nullptr;
+    auto it = g_sprite_overrides.find(idx);
+    if (it == g_sprite_overrides.end()) it = g_sprite_overrides.insert({idx, *s}).first;
+    return &it->second;
+}
+
+void kwik_sprite_override_bbox(int spr, int l, int t, int r, int b) {
+    KwikSprite* s = sprite_mutable(spr);
+    if (!s) return;
+    s->bbox_left = l;
+    s->bbox_top = t;
+    s->bbox_right = r;
+    s->bbox_bottom = b;
+}
+
+void kwik_sprite_override_offset(int spr, int ox, int oy) {
+    KwikSprite* s = sprite_mutable(spr);
+    if (!s) return;
+    s->origin_x = ox;
+    s->origin_y = oy;
 }
 
 int kwik_sprite_total() { return g_sprite_count + (int)g_dyn_sprites.size(); }
@@ -150,6 +180,54 @@ const MaskSet* kwik_sprite_masks(int spr) {
     auto& slot = cache[spr];
     slot = ms;
     return slot.count > 0 ? &slot : nullptr;
+}
+
+int kwik_sprite_frame_image(int spr, int sub) {
+    const KwikSprite* s = kwik_sprite_at(spr);
+    if (!s || s->frame_count <= 0) return -1;
+    return s->first_frame + ((sub % s->frame_count) + s->frame_count) % s->frame_count;
+}
+
+unsigned int kwik_image_texture(int image, int& w, int& h) {
+    LoadedImage& img = load_image(image);
+    w = img.w;
+    h = img.h;
+    return img.ok ? img.tex : 0;
+}
+
+int kwik_sprite_add_file(const std::string& path, int imgnum, int xorig, int yorig) {
+    (void)imgnum;
+    std::FILE* f = std::fopen(kwik_resolve_read(path).c_str(), "rb");
+    if (!f) return -1;
+    std::vector<unsigned char> bytes;
+    char tmp[8192];
+    size_t n;
+    while ((n = std::fread(tmp, 1, sizeof(tmp), f)) > 0) bytes.insert(bytes.end(), tmp, tmp + n);
+    std::fclose(f);
+    int w, h, ch;
+    unsigned char* pixels =
+        stbi_load_from_memory(bytes.data(), (int)bytes.size(), &w, &h, &ch, 4);
+    if (!pixels) return -1;
+    unsigned int tex = render_upload_texture(pixels, w, h);
+    stbi_image_free(pixels);
+    int img = kwik_register_dynamic_image(tex, w, h);
+    KwikSprite s{};
+    s.first_frame = img;
+    s.frame_count = 1;
+    s.origin_x = xorig;
+    s.origin_y = yorig;
+    s.speed = 1;
+    s.speed_type = 1;
+    s.bbox_left = 0;
+    s.bbox_top = 0;
+    s.bbox_right = w - 1;
+    s.bbox_bottom = h - 1;
+    s.width = w;
+    s.height = h;
+    s.sep_masks = 0;
+    s.mask_blob = -1;
+    s.name = "dyn_sprite";
+    return kwik_register_dynamic_sprite(s);
 }
 
 static int frame_of(int spr, int sub, const KwikSprite** out) {
@@ -377,6 +455,50 @@ double kwik_string_height(const std::string& s) {
     std::vector<std::pair<size_t, size_t>> lines;
     split_lines(s, lines);
     return f.line_height * (double)lines.size();
+}
+
+void kwik_draw_text_ext_rt(double x, double y, const std::string& text, double sep, double wrapw,
+                           double xs, double ys, double angle) {
+    build_fonts();
+    if (g_cur_font < 0) return;
+    const RtFont& f = g_rt_fonts[g_cur_font];
+    std::string wrapped;
+    if (wrapw > 0) {
+        double linew = 0;
+        size_t last_space = std::string::npos;
+        double width_at_space = 0;
+        for (size_t i = 0; i < text.size(); ++i) {
+            char c = text[i];
+            wrapped.push_back(c);
+            if (c == '\n') {
+                linew = 0;
+                last_space = std::string::npos;
+                continue;
+            }
+            const RtGlyph* g = find_glyph(f, (unsigned char)c);
+            double adv = g ? g->shift : 0;
+            if (c == ' ') {
+                last_space = wrapped.size() - 1;
+                width_at_space = linew;
+            }
+            linew += adv;
+            if (linew > wrapw && last_space != std::string::npos) {
+                wrapped[last_space] = '\n';
+                linew -= width_at_space + (g && text[last_space] ? 0 : 0);
+                linew = linew - width_at_space;
+                last_space = std::string::npos;
+            }
+        }
+    } else {
+        wrapped = text;
+    }
+    double saved = -1;
+    if (sep > 0) {
+        saved = g_rt_fonts[g_cur_font].line_height;
+        g_rt_fonts[g_cur_font].line_height = sep;
+    }
+    kwik_draw_text_rt(x, y, wrapped, xs, ys, angle);
+    if (saved >= 0) g_rt_fonts[g_cur_font].line_height = saved;
 }
 
 void kwik_draw_text_rt(double x, double y, const std::string& text, double xs, double ys,

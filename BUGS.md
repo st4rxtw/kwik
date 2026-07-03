@@ -15,7 +15,12 @@
 
 ## DELTARUNE CHAPTER 2
 
-* A lot of unhandled events + compile errors
+1. Your house doesn't show when you exit it, only the door does
+2. When you enter the dark world for the first time, everything is just pure black. (BG loading issue I'd assume)
+3. After getting the board game pieces and reentering the dark world the bg disappears for castle town
+4. The door to enter the castle is gone
+5. BG missing in the castle
+6. Trying to leave the school takes you back to the classroom
 
 ## DELTARUNE CHAPTER 3
 
@@ -32,4 +37,4 @@
 
 ## DELTATALE
 
-* None
+* Two Kris'

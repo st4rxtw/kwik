@@ -179,6 +179,33 @@ GMLFN(ds_list_delete_fn) {
     }
     return Value();
 }
+GMLFN(ds_list_find_index) {
+    (void)self;
+    DsList* l = argc > 1 ? list_of(args[0]) : nullptr;
+    if (!l) return Value(-1.0);
+    for (size_t i = 0; i < l->data.size(); ++i)
+        if (gml_truthy(gml_eq(l->data[i], args[1]))) return Value((double)i);
+    return Value(-1.0);
+}
+GMLFN(ds_list_shuffle) {
+    (void)self;
+    DsList* l = argc > 0 ? list_of(args[0]) : nullptr;
+    if (l) {
+        for (size_t i = l->data.size(); i > 1; --i) {
+            size_t j = (size_t)(gml_random01() * i);
+            if (j >= i) j = i - 1;
+            std::swap(l->data[i - 1], l->data[j]);
+        }
+    }
+    return Value();
+}
+GMLFN(ds_map_clear) {
+    (void)self;
+    DsMap* m = argc > 0 ? map_of(args[0]) : nullptr;
+    if (m) m->data.clear();
+    return Value();
+}
+GMLFN(ds_map_add_list) { return ds_map_set(self, args, argc); }
 GMLFN(ds_list_read) { (void)args; (void)argc; return kwik_missing(self, "ds_list_read"); }
 GMLFN(ds_list_write) { (void)args; (void)argc; return kwik_missing(self, "ds_list_write"); }
 GMLFN(ds_exists) {
@@ -916,5 +943,69 @@ GMLFN(buffer_async_group_end) {
     return Value((double)id);
 }
 GMLFN(buffer_async_group_option) { (void)self; (void)args; (void)argc; return Value(); }
+
+static void md5_compute(const unsigned char* data, size_t len, unsigned char out[16]) {
+    static const unsigned int K[64] = {
+        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613,
+        0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193,
+        0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d,
+        0x02441453, 0xd8a1e681, 0xe7d3fbc8, 0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
+        0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122,
+        0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
+        0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665, 0xf4292244,
+        0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb,
+        0xeb86d391};
+    static const int R[64] = {7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+                              5, 9,  14, 20, 5, 9,  14, 20, 5, 9,  14, 20, 5, 9,  14, 20,
+                              4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+                              6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21};
+    unsigned int h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe, h3 = 0x10325476;
+    size_t padded = ((len + 8) / 64 + 1) * 64;
+    std::vector<unsigned char> msg(padded, 0);
+    std::memcpy(msg.data(), data, len);
+    msg[len] = 0x80;
+    unsigned long long bits = (unsigned long long)len * 8;
+    for (int i = 0; i < 8; ++i) msg[padded - 8 + i] = (unsigned char)(bits >> (8 * i));
+    for (size_t off = 0; off < padded; off += 64) {
+        unsigned int w[16];
+        for (int i = 0; i < 16; ++i)
+            w[i] = (unsigned)msg[off + i * 4] | ((unsigned)msg[off + i * 4 + 1] << 8) |
+                   ((unsigned)msg[off + i * 4 + 2] << 16) | ((unsigned)msg[off + i * 4 + 3] << 24);
+        unsigned int a = h0, b = h1, c = h2, d = h3;
+        for (int i = 0; i < 64; ++i) {
+            unsigned int f, g;
+            if (i < 16) { f = (b & c) | (~b & d); g = i; }
+            else if (i < 32) { f = (d & b) | (~d & c); g = (5 * i + 1) % 16; }
+            else if (i < 48) { f = b ^ c ^ d; g = (3 * i + 5) % 16; }
+            else { f = c ^ (b | ~d); g = (7 * i) % 16; }
+            unsigned int tmp = d;
+            d = c;
+            c = b;
+            unsigned int x = a + f + K[i] + w[g];
+            b = b + ((x << R[i]) | (x >> (32 - R[i])));
+            a = tmp;
+        }
+        h0 += a; h1 += b; h2 += c; h3 += d;
+    }
+    unsigned int hs[4] = {h0, h1, h2, h3};
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j) out[i * 4 + j] = (unsigned char)(hs[i] >> (8 * j));
+}
+
+GMLFN(buffer_md5) {
+    (void)self;
+    Buffer* b = argc > 0 ? buf_of(args[0]) : nullptr;
+    if (!b) return Value("");
+    size_t off = argc > 1 ? (size_t)(double)args[1] : 0;
+    size_t sz = argc > 2 && (double)args[2] >= 0 ? (size_t)(double)args[2] : b->data.size();
+    if (off > b->data.size()) off = b->data.size();
+    if (off + sz > b->data.size()) sz = b->data.size() - off;
+    unsigned char digest[16];
+    md5_compute(b->data.data() + off, sz, digest);
+    char hex[33];
+    for (int i = 0; i < 16; ++i) std::snprintf(hex + i * 2, 3, "%02x", digest[i]);
+    return Value(std::string(hex, 32));
+}
 
 }

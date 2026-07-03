@@ -11,6 +11,7 @@ add_library(kwik_runtime STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/source/builtins_data.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/builtins_draw.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/builtins_misc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/builtins_ch2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/backends/opengl.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/assets_rt.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/source/audio.cpp

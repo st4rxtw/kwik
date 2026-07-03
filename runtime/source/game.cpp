@@ -469,10 +469,10 @@ enum EvKind {
     EVK_DRAW, EVK_DRAW_GUI, EVK_DRAW_BEGIN, EVK_DRAW_END, EVK_DRAW_GUI_BEGIN, EVK_DRAW_GUI_END,
     EVK_DRAW_PRE, EVK_DRAW_POST, EVK_ALARM, EVK_ROOM_START, EVK_ROOM_END, EVK_ANIM_END,
     EVK_GAME_START, EVK_USER, EVK_PRE_CREATE, EVK_DRAW_RESIZE, EVK_ASYNC_SAVE_LOAD,
-    EVK_ASYNC_SYSTEM, EVK_ASYNC_WEB
+    EVK_ASYNC_SYSTEM, EVK_ASYNC_WEB, EVK_OUTSIDE_ROOM, EVK_PATH_ENDED
 };
 
-static ScriptFn find_event(int obj, int kind, int sub) {
+static ScriptFn find_event(int obj, int kind, int sub, int* owner_out = nullptr) {
     int guard = 0;
     while (obj >= 0 && obj < g_object_count_rt && guard++ < 128) {
         const ObjectDef& d = g_objects_rt[obj];
@@ -502,12 +502,30 @@ static ScriptFn find_event(int obj, int kind, int sub) {
             case EVK_ASYNC_SAVE_LOAD: fn = d.async_save_load; break;
             case EVK_ASYNC_SYSTEM: fn = d.async_system; break;
             case EVK_ASYNC_WEB: fn = d.async_web; break;
+            case EVK_OUTSIDE_ROOM: fn = d.outside_room; break;
+            case EVK_PATH_ENDED: fn = d.path_ended; break;
             case EVK_USER: fn = (sub >= 0 && sub < 16) ? d.user[sub] : nullptr; break;
         }
-        if (fn) return fn;
+        if (fn) {
+            if (owner_out) *owner_out = obj;
+            return fn;
+        }
         obj = d.parent_index;
     }
     return nullptr;
+}
+
+struct EvCtx {
+    int kind;
+    int sub;
+    int owner;
+};
+static std::vector<EvCtx> g_ev_stack;
+
+static void call_event(Instance* inst, int kind, int sub, ScriptFn fn, int owner) {
+    g_ev_stack.push_back({kind, sub, owner});
+    fn(inst, nullptr, 0);
+    g_ev_stack.pop_back();
 }
 
 static void fire(Instance* inst, int kind, int sub) {
@@ -524,11 +542,25 @@ static void fire(Instance* inst, int kind, int sub) {
                      inst->id, trace, kind, sub, gv("active"), gv("frame"), gv("maxframe"),
                      gv("target"), gv("sprite_index"), gv("image_index"), gv("image_speed"));
     }
-    ScriptFn fn = find_event(inst->object_index, kind, sub);
-    if (fn) fn(inst, nullptr, 0);
+    int owner = -1;
+    ScriptFn fn = find_event(inst->object_index, kind, sub, &owner);
+    if (fn) call_event(inst, kind, sub, fn, owner);
 }
 
 void kwik_fire_event(Instance* inst, int kind, int sub) { fire(inst, kind, sub); }
+
+GMLFN(event_inherited) {
+    (void)args; (void)argc;
+    if (!self || g_ev_stack.empty()) return Value();
+    EvCtx ctx = g_ev_stack.back();
+    if (ctx.owner < 0 || ctx.owner >= g_object_count_rt) return Value();
+    int parent = g_objects_rt[ctx.owner].parent_index;
+    if (parent < 0) return Value();
+    int owner = -1;
+    ScriptFn fn = find_event(parent, ctx.kind, ctx.sub, &owner);
+    if (fn) call_event(self, ctx.kind, ctx.sub, fn, owner);
+    return Value();
+}
 
 static void dispatch_async() {
     if (g_async_queue.empty()) return;
@@ -543,8 +575,7 @@ static void dispatch_async() {
         for (size_t i = 0; i < n; ++i) {
             Instance* inst = g_instances[i].get();
             if (inst->dead || !inst->active) continue;
-            ScriptFn fn = find_event(inst->object_index, evk, 0);
-            if (fn) fn(inst, nullptr, 0);
+            fire(inst, evk, 0);
         }
         g_async_load_map = -1;
     }
@@ -1241,6 +1272,22 @@ GMLFN(collision_rectangle) {
     return Value(hit ? (double)hit->id : -4.0);
 }
 
+GMLFN(collision_circle) {
+    if (argc < 4) return Value(-4.0);
+    double cx = (double)args[0], cy = (double)args[1], r = (double)args[2];
+    int who = (int)(double)args[3];
+    for (auto& sp : g_instances) {
+        Instance* other = sp.get();
+        if (other == self || !inst_matches(other, who)) continue;
+        double l, t, rr, b;
+        if (!inst_bbox(other, other->x, other->y, l, t, rr, b)) continue;
+        double px = cx < l ? l : (cx > rr ? rr : cx);
+        double py = cy < t ? t : (cy > b ? b : cy);
+        if ((px - cx) * (px - cx) + (py - cy) * (py - cy) <= r * r) return Value((double)other->id);
+    }
+    return Value(-4.0);
+}
+
 GMLFN(distance_to_object) {
     if (argc < 1 || !self) return Value(1e10);
     int who = (int)(double)args[0];
@@ -1552,8 +1599,188 @@ GMLFN(view_set_surface_id) { (void)self; (void)args; (void)argc; return Value();
 
 GMLFN(event_inherited_fn) { (void)self; (void)args; (void)argc; return Value(); }
 
-GMLFN(path_start) { (void)self; (void)args; (void)argc; return kwik_missing(self, "path_start"); }
-GMLFN(path_end) { (void)self; (void)args; (void)argc; return Value(); }
+struct RtPath {
+    std::vector<std::pair<double, double>> pts;
+    bool closed = false;
+};
+static std::vector<RtPath> g_paths;
+
+RtPath* kwik_path_by_id(int id) {
+    int i = id - 1;
+    if (i < 0 || (size_t)i >= g_paths.size()) return nullptr;
+    return &g_paths[i];
+}
+
+int kwik_path_new() {
+    g_paths.emplace_back();
+    return (int)g_paths.size();
+}
+
+static void path_point_at(const RtPath& p, double pos, double& ox, double& oy) {
+    if (p.pts.empty()) {
+        ox = oy = 0;
+        return;
+    }
+    if (p.pts.size() == 1 || pos <= 0) {
+        ox = p.pts[0].first;
+        oy = p.pts[0].second;
+        return;
+    }
+    size_t segs = p.pts.size() - (p.closed ? 0 : 1);
+    std::vector<double> lens(segs);
+    double total = 0;
+    for (size_t i = 0; i < segs; ++i) {
+        auto& a = p.pts[i];
+        auto& b = p.pts[(i + 1) % p.pts.size()];
+        lens[i] = std::hypot(b.first - a.first, b.second - a.second);
+        total += lens[i];
+    }
+    if (total <= 0) {
+        ox = p.pts[0].first;
+        oy = p.pts[0].second;
+        return;
+    }
+    double want = pos * total;
+    if (want >= total) {
+        auto& e = p.closed ? p.pts[0] : p.pts.back();
+        ox = e.first;
+        oy = e.second;
+        return;
+    }
+    for (size_t i = 0; i < segs; ++i) {
+        if (want <= lens[i] || i == segs - 1) {
+            double f = lens[i] > 0 ? want / lens[i] : 0;
+            if (f > 1) f = 1;
+            auto& a = p.pts[i];
+            auto& b = p.pts[(i + 1) % p.pts.size()];
+            ox = a.first + (b.first - a.first) * f;
+            oy = a.second + (b.second - a.second) * f;
+            return;
+        }
+        want -= lens[i];
+    }
+    ox = p.pts.back().first;
+    oy = p.pts.back().second;
+}
+
+double kwik_path_length(int id) {
+    RtPath* p = kwik_path_by_id(id);
+    if (!p || p->pts.size() < 2) return 0;
+    double total = 0;
+    size_t segs = p->pts.size() - (p->closed ? 0 : 1);
+    for (size_t i = 0; i < segs; ++i) {
+        auto& a = p->pts[i];
+        auto& b = p->pts[(i + 1) % p->pts.size()];
+        total += std::hypot(b.first - a.first, b.second - a.second);
+    }
+    return total;
+}
+
+void kwik_path_xy(int id, double pos, double& ox, double& oy) {
+    RtPath* p = kwik_path_by_id(id);
+    if (!p) {
+        ox = oy = 0;
+        return;
+    }
+    path_point_at(*p, pos, ox, oy);
+}
+
+bool kwik_path_closed(int id) {
+    RtPath* p = kwik_path_by_id(id);
+    return p && p->closed;
+}
+
+void kwik_path_add_point(int id, double x, double y) {
+    RtPath* p = kwik_path_by_id(id);
+    if (p) p->pts.push_back({x, y});
+}
+
+void kwik_path_set_closed(int id, bool closed) {
+    RtPath* p = kwik_path_by_id(id);
+    if (p) p->closed = closed;
+}
+
+void kwik_path_clear(int id) {
+    RtPath* p = kwik_path_by_id(id);
+    if (p) p->pts.clear();
+}
+
+bool kwik_path_exists(int id) { return kwik_path_by_id(id) != nullptr; }
+
+GMLFN(path_start) {
+    if (!self || argc < 3) return Value();
+    int path = (int)(double)args[0];
+    RtPath* p = kwik_path_by_id(path);
+    if (!p || p->pts.empty()) return Value();
+    double speed = (double)args[1];
+    int endaction = (int)(double)args[2];
+    bool absolute = argc > 3 && gml_truthy(args[3]);
+    double ox = 0, oy = 0;
+    if (!absolute) {
+        ox = self->x - p->pts[0].first;
+        oy = self->y - p->pts[0].second;
+    }
+    self->var("__kwik_path") = Value((double)path);
+    self->var("path_position") = Value(0.0);
+    self->var("path_speed") = Value(speed);
+    self->var("__kwik_path_end") = Value((double)endaction);
+    self->var("__kwik_path_ox") = Value(ox);
+    self->var("__kwik_path_oy") = Value(oy);
+    double px, py;
+    kwik_path_xy(path, 0, px, py);
+    self->x = px + ox;
+    self->y = py + oy;
+    return Value();
+}
+
+GMLFN(path_end) {
+    (void)args; (void)argc;
+    if (self) {
+        self->vars.erase("__kwik_path");
+        self->vars.erase("__kwik_path_end");
+    }
+    return Value();
+}
+
+static void step_path(Instance* inst) {
+    auto it = inst->vars.find("__kwik_path");
+    if (it == inst->vars.end()) return;
+    int path = (int)(double)it->second;
+    double len = kwik_path_length(path);
+    if (len <= 0) return;
+    double pos = (double)inst->var("path_position");
+    double speed = (double)inst->var("path_speed");
+    pos += speed / len;
+    bool ended = pos >= 1.0;
+    if (ended) {
+        int endaction = (int)(double)inst->var("__kwik_path_end");
+        switch (endaction) {
+            case 1: pos -= 1.0; break;
+            case 2: pos -= 1.0; break;
+            case 3:
+                pos = 1.0 - (pos - 1.0);
+                inst->var("path_speed") = Value(-speed);
+                break;
+            default:
+                pos = 1.0;
+                break;
+        }
+    }
+    if (pos < 0) pos = 0;
+    inst->var("path_position") = Value(pos);
+    double px, py;
+    kwik_path_xy(path, pos, px, py);
+    inst->x = px + (double)inst->var("__kwik_path_ox");
+    inst->y = py + (double)inst->var("__kwik_path_oy");
+    if (ended) {
+        int endaction = (int)(double)inst->var("__kwik_path_end");
+        if (endaction == 0) {
+            inst->vars.erase("__kwik_path");
+            inst->vars.erase("__kwik_path_end");
+        }
+        fire(inst, EVK_PATH_ENDED, 0);
+    }
+}
 
 static void step_motion(Instance* inst) {
     inst->xprevious = inst->x;
@@ -1651,7 +1878,7 @@ static void run_collisions() {
                     if (instances_hit(a, a->x, a->y, b)) {
                         Instance* saved_other = g_other_ptr;
                         g_other_ptr = b;
-                        fn(a, nullptr, 0);
+                        call_event(a, EVK_STEP, 0, fn, obj);
                         g_other_ptr = saved_other;
                         if (a->dead) break;
                     }
@@ -1876,14 +2103,12 @@ static void draw_world() {
     for (auto& sp : g_instances) {
         Instance* inst = sp.get();
         if (inst->dead || !inst->active || !inst->visible) continue;
-        ScriptFn fn = find_event(inst->object_index, EVK_DRAW_PRE, 0);
-        if (fn) fn(inst, nullptr, 0);
+        fire(inst, EVK_DRAW_PRE, 0);
     }
     for (auto& sp : g_instances) {
         Instance* inst = sp.get();
         if (inst->dead || !inst->active || !inst->visible) continue;
-        ScriptFn fn = find_event(inst->object_index, EVK_DRAW_BEGIN, 0);
-        if (fn) fn(inst, nullptr, 0);
+        fire(inst, EVK_DRAW_BEGIN, 0);
     }
 
     for (const DrawItem& it : items) {
@@ -1921,22 +2146,21 @@ static void draw_world() {
         }
         Instance* inst = it.inst;
         if (inst->dead) continue;
-        ScriptFn fn = find_event(inst->object_index, EVK_DRAW, 0);
-        if (fn) fn(inst, nullptr, 0);
+        int owner = -1;
+        ScriptFn fn = find_event(inst->object_index, EVK_DRAW, 0, &owner);
+        if (fn) call_event(inst, EVK_DRAW, 0, fn, owner);
         else draw_self_instance(inst);
     }
 
     for (auto& sp : g_instances) {
         Instance* inst = sp.get();
         if (inst->dead || !inst->active || !inst->visible) continue;
-        ScriptFn fn = find_event(inst->object_index, EVK_DRAW_END, 0);
-        if (fn) fn(inst, nullptr, 0);
+        fire(inst, EVK_DRAW_END, 0);
     }
     for (auto& sp : g_instances) {
         Instance* inst = sp.get();
         if (inst->dead || !inst->active || !inst->visible) continue;
-        ScriptFn fn = find_event(inst->object_index, EVK_DRAW_POST, 0);
-        if (fn) fn(inst, nullptr, 0);
+        fire(inst, EVK_DRAW_POST, 0);
     }
 
     render_begin_gui();
@@ -1955,8 +2179,7 @@ static void draw_world() {
         });
         for (const DrawItem& it : gitems) {
             if (it.inst->dead) continue;
-            ScriptFn fn = find_event(it.inst->object_index, kind, 0);
-            if (fn) fn(it.inst, nullptr, 0);
+            fire(it.inst, kind, 0);
         }
     }
 }
@@ -1968,8 +2191,7 @@ static void run_step_phase() {
     for (size_t i = 0; i < n; ++i) {
         Instance* inst = g_instances[i].get();
         if (inst->dead || !inst->active) continue;
-        ScriptFn fn = find_event(inst->object_index, EVK_STEP_BEGIN, 0);
-        if (fn) fn(inst, nullptr, 0);
+        fire(inst, EVK_STEP_BEGIN, 0);
     }
 
     n = g_instances.size();
@@ -1979,12 +2201,61 @@ static void run_step_phase() {
         run_alarms(inst);
     }
 
+    {
+        double wheel = render_wheel_delta();
+        double mx = 0, my = 0;
+        {
+            Camera& c = g_cameras[g_view_camera[0]];
+            mx = c.x + render_mouse_x() * c.w / std::max(1, render_gui_width());
+            my = c.y + render_mouse_y() * c.h / std::max(1, render_gui_height());
+        }
+        n = g_instances.size();
+        for (size_t i = 0; i < n; ++i) {
+            Instance* inst = g_instances[i].get();
+            if (inst->dead || !inst->active) continue;
+            int obj = inst->object_index;
+            int guard = 0;
+            while (obj >= 0 && obj < g_object_count_rt && guard++ < 128) {
+                const ObjectDef& od = g_objects_rt[obj];
+                for (int k = 0; k < od.keypress_count; ++k)
+                    if (render_key_pressed(od.keypress[k].key))
+                        call_event(inst, EVK_STEP, 0, od.keypress[k].fn, obj);
+                if (inst->dead) break;
+                for (int k = 0; k < od.keyrelease_count; ++k)
+                    if (render_key_released(od.keyrelease[k].key))
+                        call_event(inst, EVK_STEP, 0, od.keyrelease[k].fn, obj);
+                if (inst->dead) break;
+                for (int k = 0; k < od.keyboard_count; ++k)
+                    if (render_key_down(od.keyboard[k].key))
+                        call_event(inst, EVK_STEP, 0, od.keyboard[k].fn, obj);
+                if (inst->dead) break;
+                if (od.mouse_count > 0) {
+                    double l, t, r, b;
+                    bool over = inst_bbox(inst, inst->x, inst->y, l, t, r, b) && mx >= l &&
+                                mx < r && my >= t && my < b;
+                    for (int k = 0; k < od.mouse_count; ++k) {
+                        int sub = od.mouse[k].key;
+                        bool go = false;
+                        if (sub == 60) go = wheel > 0;
+                        else if (sub == 61) go = wheel < 0;
+                        else if (sub == 0) go = over && render_mouse_down(0);
+                        else if (sub == 1) go = over && render_mouse_down(1);
+                        else if (sub == 4) go = over && render_mouse_pressed(0);
+                        else if (sub == 5) go = over && render_mouse_pressed(1);
+                        if (go) call_event(inst, EVK_STEP, 0, od.mouse[k].fn, obj);
+                    }
+                }
+                if (inst->dead) break;
+                obj = od.parent_index;
+            }
+        }
+    }
+
     n = g_instances.size();
     for (size_t i = 0; i < n; ++i) {
         Instance* inst = g_instances[i].get();
         if (inst->dead || !inst->active) continue;
-        ScriptFn fn = find_event(inst->object_index, EVK_STEP, 0);
-        if (fn) fn(inst, nullptr, 0);
+        fire(inst, EVK_STEP, 0);
     }
 
     n = g_instances.size();
@@ -1992,6 +2263,21 @@ static void run_step_phase() {
         Instance* inst = g_instances[i].get();
         if (inst->dead || !inst->active) continue;
         step_motion(inst);
+        step_path(inst);
+    }
+
+    n = g_instances.size();
+    for (size_t i = 0; i < n; ++i) {
+        Instance* inst = g_instances[i].get();
+        if (inst->dead || !inst->active) continue;
+        if (!find_event(inst->object_index, EVK_OUTSIDE_ROOM, 0)) continue;
+        double l, t, r, b;
+        if (!inst_bbox(inst, inst->x, inst->y, l, t, r, b)) {
+            l = r = inst->x;
+            t = b = inst->y;
+        }
+        if (r < 0 || l > room_width_cur() || b < 0 || t > room_height_cur())
+            fire(inst, EVK_OUTSIDE_ROOM, 0);
     }
 
     run_collisions();
@@ -2000,8 +2286,7 @@ static void run_step_phase() {
     for (size_t i = 0; i < n; ++i) {
         Instance* inst = g_instances[i].get();
         if (inst->dead || !inst->active) continue;
-        ScriptFn fn = find_event(inst->object_index, EVK_STEP_END, 0);
-        if (fn) fn(inst, nullptr, 0);
+        fire(inst, EVK_STEP_END, 0);
     }
 
     n = g_instances.size();
@@ -2037,8 +2322,7 @@ static void run_step_phase() {
         for (size_t i = 0; i < n; ++i) {
             Instance* inst = g_instances[i].get();
             if (inst->dead || !inst->active) continue;
-            ScriptFn fn = find_event(inst->object_index, EVK_DRAW_RESIZE, 0);
-            if (fn) fn(inst, nullptr, 0);
+            fire(inst, EVK_DRAW_RESIZE, 0);
         }
     }
     last_ww = ww;

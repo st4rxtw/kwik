@@ -54,6 +54,23 @@ unsigned int render_app_texture();
 int render_app_width();
 int render_app_height();
 bool render_app_snapshot(int x, int y, int w, int h, unsigned char* rgba_out);
+
+int render_surface_create(int w, int h);
+bool render_surface_exists(int id);
+void render_surface_free(int id);
+bool render_surface_set_target(int id);
+void render_surface_reset_target();
+unsigned int render_surface_texture(int id);
+int render_surface_width(int id);
+int render_surface_height(int id);
+bool render_surface_getpixel(int id, int x, int y, unsigned char* rgba_out);
+void render_surface_clear(unsigned int bgr, double alpha);
+
+void render_primitive_begin(int kind, unsigned int tex);
+void render_primitive_vertex(double x, double y, double u, double v, unsigned int color,
+                             double alpha, bool textured);
+void render_primitive_end();
+double render_wheel_delta();
 void render_draw_quad(unsigned int tex, double x, double y, double dw, double dh,
                       double origin_x, double origin_y, double xscale, double yscale,
                       double angle_deg, float u0, float v0, float u1, float v1,

@@ -84,4 +84,25 @@ extern std::string g_save_dir;
 std::string kwik_save_path(const std::string& rel);
 std::string kwik_resolve_read(const std::string& rel);
 
+struct RtPath;
+RtPath* kwik_path_by_id(int id);
+int kwik_path_new();
+void kwik_path_xy(int id, double pos, double& ox, double& oy);
+double kwik_path_length(int id);
+bool kwik_path_closed(int id);
+void kwik_path_add_point(int id, double x, double y);
+void kwik_path_set_closed(int id, bool closed);
+void kwik_path_clear(int id);
+bool kwik_path_exists(int id);
+
+int kwik_sprite_frame_image(int spr, int sub);
+void kwik_sprite_override_bbox(int spr, int l, int t, int r, int b);
+void kwik_sprite_override_offset(int spr, int ox, int oy);
+int kwik_sprite_add_file(const std::string& path, int imgnum, int xorig, int yorig);
+double kwik_sound_length_seconds(int what);
+double kwik_voice_gain(int what);
+double kwik_voice_pitch(int what);
+bool kwik_voice_paused(int what);
+unsigned int kwik_image_texture(int image, int& w, int& h);
+
 }

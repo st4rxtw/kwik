@@ -400,6 +400,47 @@ GMLFN(audio_group_is_loaded) { (void)self; (void)args; (void)argc; return Value(
 GMLFN(audio_group_load) { (void)self; (void)args; (void)argc; return Value(1.0); }
 GMLFN(audio_group_set_gain) { (void)self; (void)args; (void)argc; return Value(); }
 
+double kwik_voice_gain(int what) {
+    double g = 1.0;
+    for_matching(what, [&](Voice* v) { g = v->gain; });
+    return g;
+}
+
+double kwik_voice_pitch(int what) {
+    double p = 1.0;
+    for_matching(what, [&](Voice* v) { p = ma_sound_get_pitch(&v->snd); });
+    return p;
+}
+
+bool kwik_voice_paused(int what) {
+    bool paused = false;
+    for_matching(what, [&](Voice* v) { paused = v->paused; });
+    return paused;
+}
+
+double kwik_sound_length_seconds(int what) {
+    double len = 0.0;
+    bool got = false;
+    for_matching(what, [&](Voice* v) {
+        float sec = 0;
+        if (ma_sound_get_length_in_seconds(&v->snd, &sec) == MA_SUCCESS) {
+            len = sec;
+            got = true;
+        }
+    });
+    if (got) return len;
+    if (what >= 0 && what < g_sound_count && ensure_engine()) {
+        Voice* v = start_voice(what, false);
+        if (v) {
+            ma_sound_stop(&v->snd);
+            float sec = 0;
+            if (ma_sound_get_length_in_seconds(&v->snd, &sec) == MA_SUCCESS) len = sec;
+            free_voice(v);
+        }
+    }
+    return len;
+}
+
 void kwik_audio_update() {
     for (size_t i = 0; i < g_voices.size(); ++i) {
         Voice* v = g_voices[i];

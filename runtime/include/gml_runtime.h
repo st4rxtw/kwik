@@ -68,6 +68,11 @@ struct CollisionHandler {
     ScriptFn fn;
 };
 
+struct KeyHandler {
+    int key;
+    ScriptFn fn;
+};
+
 struct ObjectDef {
     const char* name = "";
     int sprite_index = -1;
@@ -84,9 +89,18 @@ struct ObjectDef {
     ScriptFn room_start = nullptr, room_end = nullptr, anim_end = nullptr, game_start = nullptr;
     ScriptFn draw_resize = nullptr;
     ScriptFn async_save_load = nullptr, async_system = nullptr, async_web = nullptr;
+    ScriptFn outside_room = nullptr, path_ended = nullptr;
     ScriptFn user[16] = {};
     const CollisionHandler* collisions = nullptr;
     int collision_count = 0;
+    const KeyHandler* keypress = nullptr;
+    int keypress_count = 0;
+    const KeyHandler* keyrelease = nullptr;
+    int keyrelease_count = 0;
+    const KeyHandler* keyboard = nullptr;
+    int keyboard_count = 0;
+    const KeyHandler* mouse = nullptr;
+    int mouse_count = 0;
 };
 
 struct KwikSprite {
@@ -296,6 +310,8 @@ int kwik_get_font_rt();
 double kwik_string_width(const std::string& s);
 double kwik_string_height(const std::string& s);
 void kwik_draw_text_rt(double x, double y, const std::string& text, double xs, double ys, double angle);
+void kwik_draw_text_ext_rt(double x, double y, const std::string& text, double sep, double wrapw,
+                           double xs, double ys, double angle);
 void kwik_draw_sprite_general(int spr, int sub, double x, double y, double xs, double ys,
                               double angle, unsigned int blend, double alpha);
 void kwik_draw_sprite_part(int spr, int sub, double left, double top, double w, double h,
@@ -362,7 +378,7 @@ GMLFN(instance_create_layer); GMLFN(instance_destroy); GMLFN(instance_activate_a
 GMLFN(instance_activate_object); GMLFN(instance_deactivate_all); GMLFN(instance_deactivate_object);
 GMLFN(place_meeting); GMLFN(place_free); GMLFN(position_meeting); GMLFN(instance_place);
 GMLFN(instance_position); GMLFN(instance_nearest); GMLFN(collision_line); GMLFN(collision_point);
-GMLFN(collision_rectangle); GMLFN(distance_to_object); GMLFN(distance_to_point);
+GMLFN(collision_rectangle); GMLFN(collision_circle); GMLFN(distance_to_object); GMLFN(distance_to_point);
 GMLFN(point_in_rectangle); GMLFN(move_towards_point); GMLFN(motion_set); GMLFN(motion_add);
 
 GMLFN(event_user); GMLFN(event_perform); GMLFN(event_inherited_fn);
@@ -451,6 +467,46 @@ GMLFN(audio_sound_get_track_position); GMLFN(audio_sound_pitch);
 GMLFN(audio_sound_set_track_position); GMLFN(audio_stop_all); GMLFN(audio_stop_sound);
 
 GMLFN(show_debug_message); GMLFN(show_error); GMLFN(show_message);
+GMLFN(lerp); GMLFN(median); GMLFN(degtorad); GMLFN(radtodeg); GMLFN(randomise);
+GMLFN(game_get_speed); GMLFN(array_get); GMLFN(array_length_2d); GMLFN(array_height_2d);
+GMLFN(make_colour_rgb); GMLFN(make_colour_hsv); GMLFN(merge_colour);
+GMLFN(variable_global_set); GMLFN(variable_instance_get); GMLFN(variable_instance_set);
+GMLFN(variable_instance_get_names); GMLFN(event_inherited); GMLFN(get_string);
+GMLFN(clipboard_set_text); GMLFN(keyboard_check_direct); GMLFN(buffer_md5);
+GMLFN(buffer_get_surface); GMLFN(screen_save);
+GMLFN(draw_clear); GMLFN(draw_clear_alpha); GMLFN(draw_get_font); GMLFN(draw_get_halign);
+GMLFN(draw_get_valign); GMLFN(draw_healthbar); GMLFN(draw_primitive_begin);
+GMLFN(draw_primitive_begin_texture); GMLFN(draw_primitive_end); GMLFN(draw_vertex);
+GMLFN(draw_vertex_texture_color); GMLFN(draw_sprite_general); GMLFN(draw_sprite_pos);
+GMLFN(draw_sprite_stretched_ext); GMLFN(draw_sprite_tiled); GMLFN(draw_surface);
+GMLFN(draw_text_ext); GMLFN(draw_text_ext_transformed); GMLFN(draw_tilemap);
+GMLFN(surface_create); GMLFN(surface_exists); GMLFN(surface_free); GMLFN(surface_set_target);
+GMLFN(surface_reset_target); GMLFN(surface_get_texture); GMLFN(surface_getpixel_ext);
+GMLFN(shader_set); GMLFN(shader_reset); GMLFN(shader_get_uniform);
+GMLFN(shader_set_uniform_f); GMLFN(shader_get_sampler_index); GMLFN(texture_set_stage);
+GMLFN(texture_get_texel_width); GMLFN(texture_get_texel_height);
+GMLFN(gpu_set_alphatestenable); GMLFN(gpu_set_alphatestref); GMLFN(gpu_set_blendmode_ext);
+GMLFN(gpu_set_colorwriteenable);
+GMLFN(ds_list_find_index); GMLFN(ds_list_shuffle); GMLFN(ds_map_add_list); GMLFN(ds_map_clear);
+GMLFN(ds_priority_add); GMLFN(ds_priority_clear); GMLFN(ds_priority_copy);
+GMLFN(ds_priority_create); GMLFN(ds_priority_delete_min); GMLFN(ds_priority_empty);
+GMLFN(ds_queue_create);
+GMLFN(path_add); GMLFN(path_add_point); GMLFN(path_delete); GMLFN(path_exists);
+GMLFN(path_get_x); GMLFN(path_get_y); GMLFN(path_set_closed); GMLFN(path_set_kind);
+GMLFN(path_set_precision);
+GMLFN(sprite_add); GMLFN(sprite_duplicate); GMLFN(sprite_get_bbox_left);
+GMLFN(sprite_get_bbox_right); GMLFN(sprite_get_bbox_top); GMLFN(sprite_get_bbox_bottom);
+GMLFN(sprite_get_texture); GMLFN(sprite_get_uvs); GMLFN(sprite_set_bbox);
+GMLFN(sprite_set_offset);
+GMLFN(audio_is_paused); GMLFN(audio_sound_get_gain); GMLFN(audio_sound_get_pitch);
+GMLFN(audio_sound_length);
+GMLFN(layer_exists); GMLFN(layer_get_id); GMLFN(layer_get_id_at_depth);
+GMLFN(layer_background_get_id); GMLFN(layer_script_begin); GMLFN(layer_script_end);
+GMLFN(layer_sprite_change); GMLFN(layer_sprite_get_id); GMLFN(layer_sprite_get_index);
+GMLFN(layer_sprite_get_speed); GMLFN(layer_sprite_get_x); GMLFN(layer_sprite_get_xscale);
+GMLFN(layer_sprite_get_y); GMLFN(layer_sprite_get_yscale); GMLFN(layer_sprite_speed);
+GMLFN(layer_sprite_x); GMLFN(layer_sprite_y); GMLFN(layer_tilemap_get_id);
+GMLFN(tilemap_get_x); GMLFN(tilemap_x); GMLFN(vertex_format_add_texcoord);
 GMLFN(date_current_datetime); GMLFN(current_time_fn); GMLFN(get_timer);
 GMLFN(environment_get_variable); GMLFN(os_get_info); GMLFN(os_get_language); GMLFN(os_is_paused);
 GMLFN(parameter_count); GMLFN(parameter_string);
