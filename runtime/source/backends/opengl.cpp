@@ -211,38 +211,47 @@ void render_set_view(double x, double y, double w, double h) {
 double render_delta_time() { return g_dt; }
 double render_time_ms() { return glfwGetTime() * 1000.0; }
 
+static void blit_fbo_to_window() {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    int fbw = g_win_w, fbh = g_win_h;
+    glfwGetFramebufferSize(g_window, &fbw, &fbh);
+    glViewport(0, 0, fbw, fbh);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0.0, 1.0, 1.0, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glClearColor(0.f, 0.f, 0.f, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    double scale = std::min((double)fbw / g_fbo_w, (double)fbh / g_fbo_h);
+    double dw = g_fbo_w * scale / fbw;
+    double dh = g_fbo_h * scale / fbh;
+    float x0 = (float)((1.0 - dw) * 0.5);
+    float y0 = (float)((1.0 - dh) * 0.5);
+    float x1 = x0 + (float)dw;
+    float y1 = y0 + (float)dh;
+    glDisable(GL_BLEND);
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, g_fbo_tex);
+    glColor4f(1.f, 1.f, 1.f, 1.f);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 1); glVertex2f(x0, y0);
+    glTexCoord2f(1, 1); glVertex2f(x1, y0);
+    glTexCoord2f(1, 0); glVertex2f(x1, y1);
+    glTexCoord2f(0, 0); glVertex2f(x0, y1);
+    glEnd();
+    glEnable(GL_BLEND);
+}
+
+void render_present_last() {
+    if (!g_window) return;
+    if (g_fbo) blit_fbo_to_window();
+    glfwSwapBuffers(g_window);
+    glfwPollEvents();
+}
+
 void render_end_frame() {
-    if (g_fbo) {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        int fbw = g_win_w, fbh = g_win_h;
-        glfwGetFramebufferSize(g_window, &fbw, &fbh);
-        glViewport(0, 0, fbw, fbh);
-        glMatrixMode(GL_PROJECTION);
-        glLoadIdentity();
-        glOrtho(0.0, 1.0, 1.0, 0.0, -1.0, 1.0);
-        glMatrixMode(GL_MODELVIEW);
-        glLoadIdentity();
-        glClearColor(0.f, 0.f, 0.f, 1.f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        double scale = std::min((double)fbw / g_fbo_w, (double)fbh / g_fbo_h);
-        double dw = g_fbo_w * scale / fbw;
-        double dh = g_fbo_h * scale / fbh;
-        float x0 = (float)((1.0 - dw) * 0.5);
-        float y0 = (float)((1.0 - dh) * 0.5);
-        float x1 = x0 + (float)dw;
-        float y1 = y0 + (float)dh;
-        glDisable(GL_BLEND);
-        glEnable(GL_TEXTURE_2D);
-        glBindTexture(GL_TEXTURE_2D, g_fbo_tex);
-        glColor4f(1.f, 1.f, 1.f, 1.f);
-        glBegin(GL_QUADS);
-        glTexCoord2f(0, 1); glVertex2f(x0, y0);
-        glTexCoord2f(1, 1); glVertex2f(x1, y0);
-        glTexCoord2f(1, 0); glVertex2f(x1, y1);
-        glTexCoord2f(0, 0); glVertex2f(x0, y1);
-        glEnd();
-        glEnable(GL_BLEND);
-    }
+    if (g_fbo) blit_fbo_to_window();
     glfwSwapBuffers(g_window);
     double now = glfwGetTime();
     g_dt = g_last_time > 0.0 ? now - g_last_time : 0.0;
@@ -261,6 +270,10 @@ void render_end_frame() {
 }
 
 void render_idle() { glfwPollEvents(); }
+
+bool render_has_focus() {
+    return g_window && glfwGetWindowAttrib(g_window, GLFW_FOCUSED) == GLFW_TRUE;
+}
 
 bool render_key_down(int vk) {
     if (vk == 0) {

@@ -8,6 +8,8 @@ void render_begin_frame();
 void render_begin_gui();
 void render_end_frame();
 void render_idle();
+void render_present_last();
+bool render_has_focus();
 void render_shutdown();
 
 void render_set_view(double x, double y, double w, double h);

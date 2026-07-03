@@ -434,42 +434,234 @@ GMLFN(display_get_height) { (void)self; (void)args; (void)argc; return Value((do
 GMLFN(display_get_gui_width) { (void)self; (void)args; (void)argc; return Value((double)render_gui_width()); }
 GMLFN(display_get_gui_height) { (void)self; (void)args; (void)argc; return Value((double)render_gui_height()); }
 
-GMLFN(layer_background_alpha) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_background_blend) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_background_change) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_background_create) { (void)self; (void)args; (void)argc; return Value(-1.0); }
-GMLFN(layer_background_exists) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(layer_background_get_alpha) { (void)self; (void)args; (void)argc; return Value(1.0); }
-GMLFN(layer_background_get_blend) { (void)self; (void)args; (void)argc; return Value(16777215.0); }
-GMLFN(layer_background_get_htiled) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(layer_background_get_index) { (void)self; (void)args; (void)argc; return Value(-1.0); }
-GMLFN(layer_background_get_sprite) { (void)self; (void)args; (void)argc; return Value(-1.0); }
-GMLFN(layer_background_get_stretch) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(layer_background_get_vtiled) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(layer_background_get_xscale) { (void)self; (void)args; (void)argc; return Value(1.0); }
-GMLFN(layer_background_get_yscale) { (void)self; (void)args; (void)argc; return Value(1.0); }
-GMLFN(layer_background_htiled) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_background_stretch) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_background_visible) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_background_vtiled) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_background_xscale) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_background_yscale) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_create) { (void)self; (void)args; (void)argc; return Value(-1.0); }
-GMLFN(layer_depth) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_destroy) { (void)self; (void)args; (void)argc; return Value(); }
+static RtLayer* L(const Value* args, int argc, int i) {
+    if (i >= argc) return nullptr;
+    return kwik_layer_by_id((int)(double)args[i]);
+}
+
+GMLFN(layer_get_all) {
+    (void)self; (void)args; (void)argc;
+    Value out = kwik_new_array(nullptr, 0);
+    for (auto& l : g_rt_layers) out.arr->items.push_back(Value((double)l.id));
+    return out;
+}
+GMLFN(layer_get_name) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? l->name : "");
+}
+GMLFN(layer_get_depth) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? l->depth : 0.0);
+}
+GMLFN(layer_depth) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->depth = (double)args[1];
+    return Value();
+}
+GMLFN(layer_get_x) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? l->x : 0.0);
+}
+GMLFN(layer_get_y) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? l->y : 0.0);
+}
+GMLFN(layer_x) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->x = (double)args[1];
+    return Value();
+}
+GMLFN(layer_y) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->y = (double)args[1];
+    return Value();
+}
+GMLFN(layer_get_hspeed) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? l->hspeed : 0.0);
+}
+GMLFN(layer_get_vspeed) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? l->vspeed : 0.0);
+}
+GMLFN(layer_hspeed) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->hspeed = (double)args[1];
+    return Value();
+}
+GMLFN(layer_vspeed) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->vspeed = (double)args[1];
+    return Value();
+}
+GMLFN(layer_get_visible) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? l->visible : 0.0);
+}
+GMLFN(layer_set_visible) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->visible = gml_truthy(args[1]);
+    return Value();
+}
+GMLFN(layer_create) {
+    (void)self;
+    double depth = A(args, argc, 0);
+    std::string name = argc > 1 ? (std::string)args[1] : "";
+    return Value((double)kwik_layer_create(depth, name));
+}
+GMLFN(layer_destroy) {
+    (void)self;
+    if (argc < 1) return Value();
+    int id = (int)A(args, argc, 0);
+    for (size_t i = 0; i < g_rt_layers.size(); ++i)
+        if (g_rt_layers[i].id == id) {
+            g_rt_layers.erase(g_rt_layers.begin() + i);
+            break;
+        }
+    return Value();
+}
 GMLFN(layer_force_draw_depth) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_get_all) { (void)self; (void)args; (void)argc; return kwik_new_array(nullptr, 0); }
-GMLFN(layer_get_all_elements) { (void)self; (void)args; (void)argc; return kwik_new_array(nullptr, 0); }
-GMLFN(layer_get_depth) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(layer_get_element_type) { (void)self; (void)args; (void)argc; return Value(-1.0); }
-GMLFN(layer_get_hspeed) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(layer_get_name) { (void)self; (void)args; (void)argc; return Value("<none>"); }
-GMLFN(layer_get_visible) { (void)self; (void)args; (void)argc; return Value(1.0); }
-GMLFN(layer_get_vspeed) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(layer_get_x) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(layer_get_y) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(layer_hspeed) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_set_visible) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(layer_get_all_elements) {
+    (void)self;
+    Value out = kwik_new_array(nullptr, 0);
+    RtLayer* l = L(args, argc, 0);
+    if (l && l->type == 1) out.arr->items.push_back(Value((double)l->id));
+    return out;
+}
+GMLFN(layer_get_element_type) {
+    (void)self;
+    if (argc < 1) return Value(-1.0);
+    RtLayer* l = kwik_layer_by_id((int)(double)args[0]);
+    return Value(l && l->type == 1 ? 1.0 : -1.0);
+}
+GMLFN(layer_background_get_index) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? (double)l->id : -1.0);
+}
+GMLFN(layer_background_create) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (!l) return Value(-1.0);
+    l->type = 1;
+    l->sprite = argc > 1 ? (int)(double)args[1] : -1;
+    l->color = 0xFFFFFFFF;
+    return Value((double)l->id);
+}
+GMLFN(layer_background_exists) {
+    (void)self;
+    if (argc < 2) return Value(0.0);
+    RtLayer* l = L(args, argc, 0);
+    return Value(l && l->id == (int)(double)args[1] && l->type == 1);
+}
+GMLFN(layer_background_get_sprite) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? (double)l->sprite : -1.0);
+}
+GMLFN(layer_background_change) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->sprite = (int)(double)args[1];
+    return Value();
+}
+GMLFN(layer_background_visible) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->el_visible = gml_truthy(args[1]);
+    return Value();
+}
+GMLFN(layer_background_get_alpha) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? l->alpha : 1.0);
+}
+GMLFN(layer_background_alpha) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->alpha = (double)args[1];
+    return Value();
+}
+GMLFN(layer_background_get_blend) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? (double)(l->color & 0xFFFFFF) : 16777215.0);
+}
+GMLFN(layer_background_blend) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1)
+        l->color = (l->color & 0xFF000000) | ((unsigned int)(double)args[1] & 0xFFFFFF);
+    return Value();
+}
+GMLFN(layer_background_get_htiled) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? (double)l->htiled : 0.0);
+}
+GMLFN(layer_background_htiled) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->htiled = gml_truthy(args[1]) ? 1 : 0;
+    return Value();
+}
+GMLFN(layer_background_get_vtiled) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? (double)l->vtiled : 0.0);
+}
+GMLFN(layer_background_vtiled) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->vtiled = gml_truthy(args[1]) ? 1 : 0;
+    return Value();
+}
+GMLFN(layer_background_get_stretch) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? (double)l->stretch : 0.0);
+}
+GMLFN(layer_background_stretch) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->stretch = gml_truthy(args[1]) ? 1 : 0;
+    return Value();
+}
+GMLFN(layer_background_get_xscale) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? l->xscale : 1.0);
+}
+GMLFN(layer_background_xscale) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->xscale = (double)args[1];
+    return Value();
+}
+GMLFN(layer_background_get_yscale) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    return Value(l ? l->yscale : 1.0);
+}
+GMLFN(layer_background_yscale) {
+    (void)self;
+    RtLayer* l = L(args, argc, 0);
+    if (l && argc > 1) l->yscale = (double)args[1];
+    return Value();
+}
 GMLFN(layer_sprite_destroy) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(layer_sprite_get_sprite) { (void)self; (void)args; (void)argc; return Value(-1.0); }
 GMLFN(layer_tile_alpha) { (void)self; (void)args; (void)argc; return Value(); }
@@ -478,8 +670,5 @@ GMLFN(layer_tile_get_y) { (void)self; (void)args; (void)argc; return Value(0.0);
 GMLFN(layer_tile_visible) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(layer_tile_x) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(layer_tile_y) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_vspeed) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_x) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_y) { (void)self; (void)args; (void)argc; return Value(); }
 
 }

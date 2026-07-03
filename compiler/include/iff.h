@@ -49,15 +49,21 @@ struct RoomInstance {
     int32_t creation_code = -1;
 };
 
-struct RoomBackground {
-    int32_t sprite_index;
-    int32_t x;
-    int32_t y;
+struct RoomLayerRec {
+    std::string name;
+    int32_t id = 0;
+    int32_t type = 0;
     int32_t depth = 0;
+    int32_t x = 0;
+    int32_t y = 0;
+    int32_t visible = 1;
+    int32_t sprite = -1;
     int32_t htiled = 0;
     int32_t vtiled = 0;
     int32_t stretch = 0;
     uint32_t color = 0xFFFFFFFF;
+    int32_t tile_first = 0;
+    int32_t tile_count = 0;
 };
 
 struct RoomTile {
@@ -92,7 +98,7 @@ struct Room {
     int32_t view_speed_y = -1;
     int32_t view_object = -1;
     std::vector<RoomInstance> instances;
-    std::vector<RoomBackground> backgrounds;
+    std::vector<RoomLayerRec> layers;
     std::vector<RoomTile> tiles;
 };
 

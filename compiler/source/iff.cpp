@@ -282,57 +282,66 @@ void GameData::parse_rooms() {
             uint32_t lc = u32(layers);
             for (uint32_t k = 0; k < lc; ++k) {
                 uint32_t lp = u32(layers + 4 + k * 4);
-                uint32_t ltype = u32(lp + 8);
-                int32_t depth = i32(lp + 12);
-                int32_t visible = i32(lp + 32);
-                if (!visible) continue;
-                if (ltype == 1) {
-                    int32_t xoff = i32(lp + 16);
-                    int32_t yoff = i32(lp + 20);
+                RoomLayerRec rl;
+                rl.name = string_at_offset(u32(lp));
+                rl.id = i32(lp + 4);
+                rl.type = (int32_t)u32(lp + 8);
+                rl.depth = i32(lp + 12);
+                rl.x = i32(lp + 16);
+                rl.y = i32(lp + 20);
+                rl.visible = i32(lp + 32) ? 1 : 0;
+                if (rl.type == 1) {
                     int32_t sprite = i32(lp + 56);
-                    RoomBackground bg{-1, xoff, yoff, depth, 0, 0, 0, 0xFFFFFFFF};
-                    bg.color = u32(lp + 72);
-                    if (sprite >= 0 && sprite < sprite_count) bg.sprite_index = sprite;
+                    rl.color = u32(lp + 72);
+                    if (sprite >= 0 && sprite < sprite_count) rl.sprite = sprite;
                     uint32_t ht = u32(lp + 60), vt = u32(lp + 64), st = u32(lp + 68);
-                    if (ht <= 1) bg.htiled = (int32_t)ht;
-                    if (vt <= 1) bg.vtiled = (int32_t)vt;
-                    if (st <= 1) bg.stretch = (int32_t)st;
-                    if (bg.sprite_index >= 0 || (bg.color & 0xFF000000) != 0)
-                        r.backgrounds.push_back(bg);
-                } else if (ltype == 2) {
+                    if (ht <= 1) rl.htiled = (int32_t)ht;
+                    if (vt <= 1) rl.vtiled = (int32_t)vt;
+                    if (st <= 1) rl.stretch = (int32_t)st;
+                    r.layers.push_back(rl);
+                } else if (rl.type == 2) {
                     uint32_t n = u32(lp + 48);
-                    if (n > r.instances.size() * 4 + 16) continue;
-                    for (uint32_t j = 0; j < n; ++j) {
-                        uint32_t id = u32(lp + 52 + j * 4);
-                        for (auto& ins : r.instances)
-                            if (static_cast<uint32_t>(ins.id) == id) ins.depth = depth;
+                    if (n <= r.instances.size() * 4 + 16) {
+                        for (uint32_t j = 0; j < n; ++j) {
+                            uint32_t id = u32(lp + 52 + j * 4);
+                            for (auto& ins : r.instances)
+                                if (static_cast<uint32_t>(ins.id) == id) ins.depth = rl.depth;
+                        }
                     }
-                } else if (ltype == 3) {
+                    r.layers.push_back(rl);
+                } else if (rl.type == 3) {
                     uint32_t tl = u32(lp + 48);
-                    if (tl <= c->offset || tl >= c->offset + c->size) continue;
-                    uint32_t tn = u32(tl);
-                    if (tn > 100000) continue;
-                    for (uint32_t ti = 0; ti < tn; ++ti) {
-                        uint32_t tp = u32(tl + 4 + ti * 4);
-                        RoomTile t;
-                        t.x = i32(tp);
-                        t.y = i32(tp + 4);
-                        t.sprite = i32(tp + 8);
-                        t.src_x = i32(tp + 12);
-                        t.src_y = i32(tp + 16);
-                        t.w = i32(tp + 20);
-                        t.h = i32(tp + 24);
-                        t.depth = i32(tp + 28);
-                        float fsx, fsy;
-                        uint32_t usx = u32(tp + 36), usy = u32(tp + 40);
-                        std::memcpy(&fsx, &usx, 4);
-                        std::memcpy(&fsy, &usy, 4);
-                        t.scale_x = fsx;
-                        t.scale_y = fsy;
-                        t.color = u32(tp + 44);
-                        if (t.sprite >= 0 && t.sprite < sprite_count && t.w > 0 && t.h > 0)
-                            r.tiles.push_back(t);
+                    rl.tile_first = (int32_t)r.tiles.size();
+                    if (tl > c->offset && tl < c->offset + c->size) {
+                        uint32_t tn = u32(tl);
+                        if (tn <= 100000) {
+                            for (uint32_t ti = 0; ti < tn; ++ti) {
+                                uint32_t tp = u32(tl + 4 + ti * 4);
+                                RoomTile t;
+                                t.x = i32(tp);
+                                t.y = i32(tp + 4);
+                                t.sprite = i32(tp + 8);
+                                t.src_x = i32(tp + 12);
+                                t.src_y = i32(tp + 16);
+                                t.w = i32(tp + 20);
+                                t.h = i32(tp + 24);
+                                t.depth = i32(tp + 28);
+                                float fsx, fsy;
+                                uint32_t usx = u32(tp + 36), usy = u32(tp + 40);
+                                std::memcpy(&fsx, &usx, 4);
+                                std::memcpy(&fsy, &usy, 4);
+                                t.scale_x = fsx;
+                                t.scale_y = fsy;
+                                t.color = u32(tp + 44);
+                                if (t.sprite >= 0 && t.sprite < sprite_count && t.w > 0 && t.h > 0)
+                                    r.tiles.push_back(t);
+                            }
+                        }
                     }
+                    rl.tile_count = (int32_t)r.tiles.size() - rl.tile_first;
+                    r.layers.push_back(rl);
+                } else {
+                    r.layers.push_back(rl);
                 }
             }
         }

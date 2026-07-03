@@ -52,6 +52,26 @@ std::string kwik_resolve_read(const std::string& rel) {
 }
 
 std::vector<Camera> g_cameras;
+std::vector<RtLayer> g_rt_layers;
+static int g_next_layer_id = 1000000;
+
+RtLayer* kwik_layer_by_id(int id) {
+    for (auto& l : g_rt_layers)
+        if (l.id == id) return &l;
+    return nullptr;
+}
+
+int kwik_layer_create(double depth, const std::string& name) {
+    RtLayer l;
+    l.id = g_next_layer_id++;
+    l.name = name;
+    l.depth = depth;
+    l.type = 1;
+    l.sprite = -1;
+    l.color = 0;
+    g_rt_layers.push_back(l);
+    return l.id;
+}
 int g_view_camera[8] = {0};
 int g_view_visible[8] = {1, 0, 0, 0, 0, 0, 0, 0};
 
@@ -492,6 +512,18 @@ static ScriptFn find_event(int obj, int kind, int sub) {
 
 static void fire(Instance* inst, int kind, int sub) {
     if (!inst || inst->dead) return;
+    static const char* trace = std::getenv("KWIK_TRACE_OBJ");
+    if (trace && inst->object_index >= 0 && inst->object_index < g_object_count_rt &&
+        !std::strcmp(g_objects_rt[inst->object_index].name, trace)) {
+        auto gv = [&](const char* n) -> double {
+            auto it = inst->vars.find(n);
+            return it == inst->vars.end() ? -999 : (double)it->second;
+        };
+        std::fprintf(stderr,
+                     "[trace] #%d %s ev=%d sub=%d active=%g frame=%g maxframe=%g target=%g spr=%g imgidx=%g imgspd=%g\n",
+                     inst->id, trace, kind, sub, gv("active"), gv("frame"), gv("maxframe"),
+                     gv("target"), gv("sprite_index"), gv("image_index"), gv("image_speed"));
+    }
     ScriptFn fn = find_event(inst->object_index, kind, sub);
     if (fn) fn(inst, nullptr, 0);
 }
@@ -904,6 +936,7 @@ void kwik_env_push(Instance* self, const Value& target) {
             if (t && t->active && !t->dead) f.list.push_back(t);
         } else if (w >= 0 || w == -3) {
             f.list = kwik_instances_matching(self, w >= 0 ? w : -3);
+            if (f.list.size() > 2) std::reverse(f.list.begin(), f.list.end());
         }
     }
     g_other_ptr = self;
@@ -1579,16 +1612,15 @@ static void run_animation(Instance* inst) {
     auto ii = inst->vars.find("image_index");
     if (ii != inst->vars.end()) idx = (double)ii->second;
     idx += adv;
+    bool wrapped = false;
     if (idx >= s.frame_count) {
-        fire(inst, EVK_ANIM_END, 0);
-        ii = inst->vars.find("image_index");
-        idx = ii != inst->vars.end() ? (double)ii->second : idx;
-        if (idx >= s.frame_count)
-            idx = std::fmod(idx, (double)s.frame_count);
+        wrapped = true;
+        idx = std::fmod(idx, (double)s.frame_count);
     } else if (idx < 0) {
         idx = std::fmod(idx, (double)s.frame_count) + s.frame_count;
     }
     inst->var("image_index") = Value(idx);
+    if (wrapped) fire(inst, EVK_ANIM_END, 0);
 }
 
 static void run_collisions() {
@@ -1702,6 +1734,27 @@ static void load_room(int index, bool clear_persistent) {
 
     render_set_room(room.width, room.height, room.bg_color);
 
+    g_rt_layers.clear();
+    for (int i = 0; i < room.layer_count; ++i) {
+        const RoomLayerDef& ld = room.layers[i];
+        RtLayer l;
+        l.name = ld.name;
+        l.id = ld.id;
+        l.type = ld.type;
+        l.depth = ld.depth;
+        l.x = ld.x;
+        l.y = ld.y;
+        l.visible = ld.visible != 0;
+        l.sprite = ld.sprite;
+        l.htiled = ld.htiled;
+        l.vtiled = ld.vtiled;
+        l.stretch = ld.stretch;
+        l.color = ld.color;
+        l.tile_first = ld.tile_first;
+        l.tile_count = ld.tile_count;
+        g_rt_layers.push_back(l);
+    }
+
     std::vector<Instance*> created;
     for (int i = 0; i < room.instance_count; ++i) {
         const InstanceInit& init = room.instances[i];
@@ -1780,25 +1833,40 @@ static void draw_world() {
 
     struct DrawItem {
         double depth;
+        int type;
+        long long order;
         Instance* inst;
-        const RoomBg* bg;
+        const RtLayer* layer;
         const RoomTile* tile;
+        double tile_ox, tile_oy;
     };
     std::vector<DrawItem> items;
-    if (g_current_room >= 0) {
-        const RoomDef& cur = g_room_defs_rt[g_current_room];
-        for (int i = 0; i < cur.background_count; ++i)
-            items.push_back({cur.backgrounds[i].depth, nullptr, &cur.backgrounds[i], nullptr});
-        for (int i = 0; i < cur.tile_count; ++i)
-            items.push_back({cur.tiles[i].depth, nullptr, nullptr, &cur.tiles[i]});
+    const RoomDef* cur = g_current_room >= 0 ? &g_room_defs_rt[g_current_room] : nullptr;
+    for (const RtLayer& l : g_rt_layers) {
+        if (!l.visible) continue;
+        if (l.type == 1) {
+            if (l.el_visible && (l.sprite >= 0 || (l.color & 0xFF000000) != 0))
+                items.push_back({l.depth, 2, l.id, nullptr, &l, nullptr, 0, 0});
+        } else if (l.type == 3 && cur) {
+            for (int t = 0; t < l.tile_count; ++t) {
+                int ti = l.tile_first + t;
+                if (ti < 0 || ti >= cur->tile_count) continue;
+                items.push_back({cur->tiles[ti].depth, 0, (long long)ti, nullptr, nullptr,
+                                 &cur->tiles[ti], l.x, l.y});
+            }
+        }
     }
     for (auto& sp : g_instances) {
         Instance* inst = sp.get();
         if (inst->dead || !inst->active || !inst->visible) continue;
-        items.push_back({inst->depth, inst, nullptr, nullptr});
+        items.push_back({inst->depth, 1, (long long)inst->id, inst, nullptr, nullptr, 0, 0});
     }
-    std::stable_sort(items.begin(), items.end(),
-                     [](const DrawItem& a, const DrawItem& b) { return a.depth > b.depth; });
+    std::sort(items.begin(), items.end(), [](const DrawItem& a, const DrawItem& b) {
+        if (a.depth != b.depth) return a.depth > b.depth;
+        if (a.type != b.type) return a.type < b.type;
+        if (a.type == 0) return a.order < b.order;
+        return a.order > b.order;
+    });
 
     for (auto& sp : g_instances) {
         Instance* inst = sp.get();
@@ -1814,11 +1882,11 @@ static void draw_world() {
     }
 
     for (const DrawItem& it : items) {
-        if (it.bg) {
-            const RoomBg& bg = *it.bg;
+        if (it.layer) {
+            const RtLayer& bg = *it.layer;
             unsigned int blend = bg.color & 0xFFFFFF;
-            double alpha = ((bg.color >> 24) & 0xFF) / 255.0;
-            if (bg.sprite_index < 0) {
+            double alpha = (((bg.color >> 24) & 0xFF) / 255.0) * bg.alpha;
+            if (bg.sprite < 0) {
                 if (alpha > 0.0) {
                     double sa = render_get_alpha();
                     render_set_alpha(alpha);
@@ -1828,19 +1896,22 @@ static void draw_world() {
                     render_set_alpha(sa);
                 }
             } else if (bg.stretch) {
-                kwik_draw_sprite_stretched(bg.sprite_index, 0, 0, 0, room_width_cur(),
-                                           room_height_cur(), blend, alpha);
+                kwik_draw_sprite_stretched(bg.sprite, 0, bg.x, bg.y,
+                                           room_width_cur(), room_height_cur(), blend, alpha);
             } else if (bg.htiled || bg.vtiled) {
-                kwik_draw_sprite_tiled(bg.sprite_index, 0, bg.x, bg.y, 1, 1, blend, alpha);
+                kwik_draw_sprite_tiled(bg.sprite, 0, bg.x, bg.y, bg.xscale, bg.yscale, blend,
+                                       alpha);
             } else {
-                kwik_draw_sprite_general(bg.sprite_index, 0, bg.x, bg.y, 1, 1, 0, blend, alpha);
+                kwik_draw_sprite_general(bg.sprite, 0, bg.x, bg.y, bg.xscale, bg.yscale, 0, blend,
+                                         alpha);
             }
             continue;
         }
         if (it.tile) {
             const RoomTile& t = *it.tile;
-            kwik_draw_sprite_part(t.sprite, 0, t.src_x, t.src_y, t.w, t.h, t.x, t.y, t.scale_x,
-                                  t.scale_y, t.color & 0xFFFFFF, ((t.color >> 24) & 0xFF) / 255.0);
+            kwik_draw_sprite_part(t.sprite, 0, t.src_x, t.src_y, t.w, t.h, t.x + it.tile_ox,
+                                  t.y + it.tile_oy, t.scale_x, t.scale_y, t.color & 0xFFFFFF,
+                                  ((t.color >> 24) & 0xFF) / 255.0);
             continue;
         }
         Instance* inst = it.inst;
@@ -1870,10 +1941,13 @@ static void draw_world() {
             Instance* inst = sp.get();
             if (inst->dead || !inst->active || !inst->visible) continue;
             if (find_event(inst->object_index, kind, 0))
-                gitems.push_back({inst->depth, inst, nullptr});
+                gitems.push_back(
+                    {inst->depth, 1, (long long)inst->id, inst, nullptr, nullptr, 0, 0});
         }
-        std::stable_sort(gitems.begin(), gitems.end(),
-                         [](const DrawItem& a, const DrawItem& b) { return a.depth > b.depth; });
+        std::sort(gitems.begin(), gitems.end(), [](const DrawItem& a, const DrawItem& b) {
+            if (a.depth != b.depth) return a.depth > b.depth;
+            return a.order > b.order;
+        });
         for (const DrawItem& it : gitems) {
             if (it.inst->dead) continue;
             ScriptFn fn = find_event(it.inst->object_index, kind, 0);
@@ -1965,6 +2039,11 @@ static void run_step_phase() {
     last_ww = ww;
     last_wh = wh;
 
+    for (auto& l : g_rt_layers) {
+        l.x += l.hspeed;
+        l.y += l.vspeed;
+    }
+
     update_camera_follow();
     sweep_dead();
     ++g_frame_counter;
@@ -1977,8 +2056,14 @@ static void run_step_phase() {
             const char* nm = in->object_index >= 0 && in->object_index < g_object_count_rt
                                  ? g_objects_rt[in->object_index].name
                                  : "?";
-            std::fprintf(stderr, "  #%d %s (%.0f,%.0f) vis=%d act=%d depth=%.0f\n", in->id, nm,
-                         in->x, in->y, (int)in->visible, (int)in->active, in->depth);
+            auto gv = [&](const char* n) -> double {
+                auto it = in->vars.find(n);
+                return it == in->vars.end() ? -1 : (double)it->second;
+            };
+            std::fprintf(stderr,
+                         "  #%d %s (%.0f,%.0f) vis=%d act=%d depth=%.0f spr=%g idx=%.2f spd=%g\n",
+                         in->id, nm, in->x, in->y, (int)in->visible, (int)in->active, in->depth,
+                         gv("sprite_index"), gv("image_index"), gv("image_speed"));
         }
     }
 }
@@ -2066,7 +2151,16 @@ restart_game:
     double step_time = 1.0 / g_room_speed_v;
     double accumulator = 0.0;
     double last_t = now_ms() / 1000.0;
+    static const bool ignore_focus =
+        std::getenv("KWIK_AUTOZ") != nullptr || std::getenv("KWIK_NOFOCUS_PAUSE") != nullptr;
     while (!render_should_close() && !g_game_end_requested) {
+        if (!ignore_focus && !render_has_focus()) {
+            render_present_last();
+            usleep(30000);
+            last_t = now_ms() / 1000.0;
+            accumulator = 0.0;
+            continue;
+        }
         double t = now_ms() / 1000.0;
         accumulator += t - last_t;
         last_t = t;

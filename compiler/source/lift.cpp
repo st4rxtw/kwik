@@ -1002,12 +1002,13 @@ static void emit_room_data(std::ostream& os, const GameData& gd) {
                << " },\n";
         os << "    { -1, 0, 0, 0, 1, 1, 0, 0, 0, nullptr },\n";
         os << "};\n";
-        os << "static const RoomBg g_bgs_" << i << "[] = {\n";
-        for (const auto& bg : rooms[i].backgrounds)
-            os << "    { " << bg.sprite_index << ", " << bg.x << ", " << bg.y << ", " << bg.depth
-               << ", " << bg.htiled << ", " << bg.vtiled << ", " << bg.stretch << ", " << bg.color
-               << "u },\n";
-        os << "    { -1, 0, 0, 0, 0, 0, 0, 0u },\n";
+        os << "static const RoomLayerDef g_layers_" << i << "[] = {\n";
+        for (const auto& l : rooms[i].layers)
+            os << "    { " << quote(l.name) << ", " << l.id << ", " << l.type << ", " << l.depth
+               << ", " << l.x << ", " << l.y << ", " << l.visible << ", " << l.sprite << ", "
+               << l.htiled << ", " << l.vtiled << ", " << l.stretch << ", " << l.color << "u, "
+               << l.tile_first << ", " << l.tile_count << " },\n";
+        os << "    { \"\", -1, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0u, 0, 0 },\n";
         os << "};\n";
         os << "static const RoomTile g_tiles_" << i << "[] = {\n";
         for (const auto& t : rooms[i].tiles)
@@ -1025,8 +1026,8 @@ static void emit_room_data(std::ostream& os, const GameData& gd) {
            << ", " << rooms[i].view_border_y << ", " << rooms[i].view_speed_x << ", "
            << rooms[i].view_speed_y << ", " << rooms[i].view_object << ", " << rooms[i].speed
            << ", " << rooms[i].persistent << ", " << code_fn_or_null(gd, rooms[i].creation_code)
-           << ", g_instances_" << i << ", " << rooms[i].instances.size() << ", g_bgs_" << i << ", "
-           << rooms[i].backgrounds.size() << ", g_tiles_" << i << ", " << rooms[i].tiles.size()
+           << ", g_instances_" << i << ", " << rooms[i].instances.size() << ", g_layers_" << i
+           << ", " << rooms[i].layers.size() << ", g_tiles_" << i << ", " << rooms[i].tiles.size()
            << " },\n";
     os << "};\n";
     os << "const int g_room_count = " << rooms.size() << ";\n\n";

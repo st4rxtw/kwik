@@ -87,13 +87,21 @@ Value gml_neg(const Value& a) { return Value(-(double)a); }
 Value gml_not(const Value& a) { return Value(gml_truthy(a) ? 0.0 : 1.0); }
 Value gml_bnot(const Value& a) { return Value((double)(~to_i64(a))); }
 
+static const double kGmlEpsilon = 0.00001;
+
+static int num_cmp(const Value& a, const Value& b) {
+    double diff = (double)a - (double)b;
+    if (std::fabs(diff) <= kGmlEpsilon) return 0;
+    return diff < 0 ? -1 : 1;
+}
+
 Value gml_lt(const Value& a, const Value& b) {
     if (a.type == Value::STR && b.type == Value::STR) return Value(a.str < b.str);
-    return Value((double)a < (double)b);
+    return Value(num_cmp(a, b) < 0);
 }
 Value gml_le(const Value& a, const Value& b) {
     if (a.type == Value::STR && b.type == Value::STR) return Value(a.str <= b.str);
-    return Value((double)a <= (double)b);
+    return Value(num_cmp(a, b) <= 0);
 }
 Value gml_eq(const Value& a, const Value& b) {
     if (a.type == Value::UNDEF || b.type == Value::UNDEF)
@@ -105,16 +113,16 @@ Value gml_eq(const Value& a, const Value& b) {
     if (a.type == Value::ARR || b.type == Value::ARR)
         return Value(a.type == b.type && a.arr == b.arr);
     if (a.type == Value::OBJ && b.type == Value::OBJ) return Value(a.obj == b.obj);
-    return Value((double)a == (double)b);
+    return Value(num_cmp(a, b) == 0);
 }
 Value gml_ne(const Value& a, const Value& b) { return Value(!gml_truthy(gml_eq(a, b))); }
 Value gml_ge(const Value& a, const Value& b) {
     if (a.type == Value::STR && b.type == Value::STR) return Value(a.str >= b.str);
-    return Value((double)a >= (double)b);
+    return Value(num_cmp(a, b) >= 0);
 }
 Value gml_gt(const Value& a, const Value& b) {
     if (a.type == Value::STR && b.type == Value::STR) return Value(a.str > b.str);
-    return Value((double)a > (double)b);
+    return Value(num_cmp(a, b) > 0);
 }
 
 bool gml_truthy(const Value& a) {

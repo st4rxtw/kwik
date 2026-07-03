@@ -136,12 +136,17 @@ struct InstanceInit {
     ScriptFn creation_code;
 };
 
-struct RoomBg {
-    int sprite_index;
-    int x, y;
+struct RoomLayerDef {
+    const char* name;
+    int id;
+    int type;
     double depth;
+    int x, y;
+    int visible;
+    int sprite;
     int htiled, vtiled, stretch;
     unsigned int color;
+    int tile_first, tile_count;
 };
 
 struct RoomTile {
@@ -166,8 +171,8 @@ struct RoomDef {
     ScriptFn creation_code;
     const InstanceInit* instances;
     int instance_count;
-    const RoomBg* backgrounds;
-    int background_count;
+    const RoomLayerDef* layers;
+    int layer_count;
     const RoomTile* tiles;
     int tile_count;
 };

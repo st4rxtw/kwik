@@ -59,6 +59,27 @@ struct MaskSet {
 };
 const MaskSet* kwik_sprite_masks(int spr);
 
+struct RtLayer {
+    std::string name;
+    int id = 0;
+    int type = 1;
+    double depth = 0;
+    double x = 0, y = 0;
+    double hspeed = 0, vspeed = 0;
+    bool visible = true;
+    bool el_visible = true;
+    int sprite = -1;
+    int htiled = 0, vtiled = 0, stretch = 0;
+    unsigned int color = 0xFFFFFFFF;
+    double alpha = 1.0;
+    double xscale = 1.0, yscale = 1.0;
+    int tile_first = 0, tile_count = 0;
+};
+
+extern std::vector<RtLayer> g_rt_layers;
+RtLayer* kwik_layer_by_id(int id);
+int kwik_layer_create(double depth, const std::string& name);
+
 extern std::string g_save_dir;
 std::string kwik_save_path(const std::string& rel);
 std::string kwik_resolve_read(const std::string& rel);
