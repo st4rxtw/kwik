@@ -28,4 +28,9 @@ target_include_directories(kwik_runtime PRIVATE
     ${KWIK_THIRD_PARTY}/miniaudio
 )
 
-target_link_libraries(kwik_runtime PUBLIC glfw OpenGL::GL ${CMAKE_DL_LIBS} Threads::Threads m)
+if(WIN32)
+    target_link_libraries(kwik_runtime PUBLIC glfw OpenGL::GL ${CMAKE_DL_LIBS} Threads::Threads)
+    target_compile_definitions(kwik_runtime PRIVATE _USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN)
+else()
+    target_link_libraries(kwik_runtime PUBLIC glfw OpenGL::GL ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()

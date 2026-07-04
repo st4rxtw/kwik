@@ -1,9 +1,14 @@
+#ifdef _WIN32
+#define _USE_MATH_DEFINES
+#endif
+
 #include "gml_runtime.h"
 #include "engine_internal.h"
 
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
 
 namespace gml {
 

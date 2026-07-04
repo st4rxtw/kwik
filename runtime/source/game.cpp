@@ -1,18 +1,39 @@
+#ifdef _WIN32
+#define _USE_MATH_DEFINES
+#endif
+
 #include "gml_runtime.h"
 #include "engine_internal.h"
 #include "render.h"
 
 #include <algorithm>
 #include <chrono>
+#include <thread>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <random>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <direct.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace gml {
+
+static inline void kwik_sleep_us(long long microseconds) {
+    if (microseconds <= 0) return;
+    std::this_thread::sleep_for(std::chrono::microseconds(microseconds));
+}
 
 std::vector<std::shared_ptr<Instance>> g_instances;
 Instance* g_other_ptr = nullptr;
@@ -2556,7 +2577,7 @@ restart_game:
     while (!render_should_close() && !g_game_end_requested) {
         if (!ignore_focus && !render_has_focus()) {
             render_present_last();
-            usleep(30000);
+            kwik_sleep_us(30000);
             last_t = now_ms() / 1000.0;
             accumulator = 0.0;
             continue;
@@ -2592,7 +2613,7 @@ restart_game:
             render_idle();
             double wait_s = step_time - accumulator;
             if (wait_s > 0.004) wait_s = 0.004;
-            if (wait_s > 0) usleep((useconds_t)(wait_s * 1e6));
+            if (wait_s > 0) kwik_sleep_us((long long)(wait_s * 1e6));
         }
     }
 

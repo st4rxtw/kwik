@@ -1,7 +1,15 @@
 #include "assets.h"
 
+#ifdef _WIN32
+#include "C:\Libraries\bzip2\include\bzlib.h"  // this sucks ass but it works so idc
+#else
 #include <bzlib.h>
+#endif
+#ifdef _WIN32
+#include "C:\Libraries\zlib\include\zlib.h"  // this sucks ass but it works so idc
+#else
 #include <zlib.h>
+#endif
 
 #include <cstring>
 #include <fstream>
