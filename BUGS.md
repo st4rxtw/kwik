@@ -15,12 +15,22 @@
 
 ## DELTARUNE CHAPTER 2
 
+### WARNING: ALL BUGS HERE WERE FOUND ONLY ON THE WEIRD ROUTE, I'M NOT REPLAYING THE NORMAL ROUTE LMAO!
+
 1. Your house doesn't show when you exit it, only the door does
-2. When you enter the dark world for the first time, everything is just pure black. (BG loading issue I'd assume)
-3. After getting the board game pieces and reentering the dark world the bg disappears for castle town
-4. The door to enter the castle is gone
-5. BG missing in the castle
-6. Trying to leave the school takes you back to the classroom
+2. The door to enter the castle is gone (along with the char's room doors, also layering bug?..)
+3. Trying to leave the school takes you back to the classroom
+4. In the sections where you can get damaged in the darkworld (non-battle) the purple outline is there
+5. In one of the sections where notes fall on you there's a layering issue
+6. Battle Box is thicker than it's supposed to be (It's random?...)
+7. The animation for the Battle Box is broken (It's random?...)
+8. Ralsei's dialogue in the battle with the 3 dancing robots is broken
+9. On the part where virovirokun throws stuff at you (in the darkworld overworld) there's a big ass layering issue
+10. On the attack that berdly uses that sends stuff and then it shows small stuff behind, his path isn't curved
+11. The little sign that glows & displays text displays as rectangles
+12. Noelle doesn't switch sprites when hiding from the queen until after the queen hides from berdly
+13. The freeze effect on enemies is wrong
+14. There's an enemy out of bounds that you literally CANNOT get meaning you CANNOT finish the weird route.
 
 ## DELTARUNE CHAPTER 3
 
@@ -50,3 +60,63 @@ layer_sprite_get_angle is unimplemented
 ## DELTATALE
 
 * Two Kris'
+
+## Pizza Tower (Steam)
+
+```
+[lift] unhandled event Other_40 on obj_bigspitcheesespike
+[lift] unhandled event Other_3 on obj_fmod
+[lift] unhandled event Other_40 on obj_cow
+[lift] unhandled event Other_40 on obj_pistolbullet
+[lift] unhandled event Other_40 on obj_stickycheeseprojectile
+[lift] unhandled event Other_40 on obj_policecar
+[lift] unhandled event Other_40 on obj_brickball
+[lift] unhandled event Other_40 on obj_johnghost
+[lift] unhandled event Other_40 on obj_playerspikecheese
+[lift] unhandled event Other_40 on obj_playersmokehitbox
+[lift] unhandled event Other_40 on obj_player2
+[lift] unhandled event Other_40 on obj_player1
+[lift] unhandled event Other_40 on obj_kentukylenny_projectile
+[lift] unhandled event Other_40 on obj_firemouth_projectile
+[lift] unhandled event Other_40 on obj_shotgunbullet
+[lift] unhandled event Other_40 on obj_shotgunbullet857
+[lift] unhandled event Other_40 on obj_pizzard_bolt
+[lift] unhandled event Other_40 on obj_spitcheesespike
+[lift] unhandled event Other_40 on obj_sausageman_dead
+[lift] unhandled event Other_40 on obj_taxi
+[lift] unhandled event Other_40 on obj_taxidud
+[lift] unhandled event Other_40 on obj_washingmachine
+[lift] unhandled event Other_40 on obj_tauntafterimage
+[lift] unhandled event Other_40 on obj_taxi_cutscene
+[lift] unhandled event Other_40 on obj_playernoisearrow
+```
+fmod stuff isn't implemented (hmmh...)
+
+## Pizza Tower (Eggplant Build)
+
+```
+[lift] unhandled event Other_40 on obj_bigspitcheesespike
+[lift] unhandled event Other_40 on obj_cow
+[lift] unhandled event Other_40 on obj_pistolbullet
+[lift] unhandled event Other_40 on obj_stickycheeseprojectile
+[lift] unhandled event Other_40 on obj_policecar
+[lift] unhandled event Other_40 on obj_brickball
+[lift] unhandled event Other_40 on obj_johnghost
+[lift] unhandled event Other_40 on obj_playerspikecheese
+[lift] unhandled event Other_40 on obj_playersmokehitbox
+[lift] unhandled event Other_40 on obj_player2
+[lift] unhandled event Other_40 on obj_player1
+[lift] unhandled event Other_40 on obj_firemouth_projectile
+[lift] unhandled event Other_40 on obj_shotgunbullet
+[lift] unhandled event Other_40 on obj_shotgunbullet857
+[lift] unhandled event Other_40 on obj_pizzard_bolt
+[lift] unhandled event Other_40 on obj_spitcheesespike
+[lift] unhandled event Other_40 on obj_sausageman_dead
+[lift] unhandled event Other_40 on obj_taxi
+[lift] unhandled event Other_40 on obj_taxidud
+[lift] unhandled event Other_40 on obj_washingmachine
+[lift] unhandled event Other_40 on obj_tauntafterimage
+[lift] unhandled event Other_40 on obj_taxi_cutscene
+[lift] unhandled event Other_40 on obj_playernoisearrow
+```
+display_set_gui_size isn't implemented

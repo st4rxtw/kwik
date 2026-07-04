@@ -330,6 +330,37 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
         }
     }
 
+    const Chunk* bgnd = gd.chunk("BGND");
+    if (bgnd) {
+        uint32_t bc = gd.u32(bgnd->offset);
+        out.tilesets.assign(bc, TilesetInfo{});
+        for (uint32_t i = 0; i < bc; ++i) {
+            uint32_t p = gd.u32(bgnd->offset + 4 + i * 4);
+            int tile_w = gd.i32(p + 24), tile_h = gd.i32(p + 28);
+            int border_x = gd.i32(p + 32), border_y = gd.i32(p + 36);
+            int columns = gd.i32(p + 40);
+            uint32_t tpag = gd.u32(p + 16);
+            if (tile_w <= 0 || tile_h <= 0 || columns <= 0 || !tpag) continue;
+            int srcX = (int16_t)gd.u16(tpag + 0), srcY = (int16_t)gd.u16(tpag + 2);
+            int srcW = (int16_t)gd.u16(tpag + 4), srcH = (int16_t)gd.u16(tpag + 6);
+            int texIdx = (int16_t)gd.u16(tpag + 20);
+            if (srcW <= 0 || srcH <= 0) continue;
+            std::vector<uint8_t> canvas = crop_canvas(pages, texIdx, srcX, srcY, srcW, srcH, 0, 0,
+                                                      srcW, srcH);
+            std::vector<uint8_t> png;
+            write_png(png, srcW, srcH, canvas);
+            TilesetInfo ti;
+            ti.image = (int)images.size();
+            ti.tile_w = tile_w;
+            ti.tile_h = tile_h;
+            ti.border_x = border_x;
+            ti.border_y = border_y;
+            ti.columns = columns;
+            images.push_back(build_image_entry(srcW, srcH, 0, 0, png));
+            out.tilesets[i] = ti;
+        }
+    }
+
     auto pack_blob = [&](const uint8_t* data, uint32_t size) {
         uint32_t type = 0;
         if (size >= 4) {
@@ -430,6 +461,28 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
         e.insert(e.end(), mp.data.begin(), mp.data.end());
         out.sprites[mp.sprite].mask_blob = (int)sounds.size();
         sounds.push_back(std::move(e));
+    }
+
+    {
+        const auto& rooms = gd.rooms();
+        for (size_t ri = 0; ri < rooms.size(); ++ri) {
+            for (size_t li = 0; li < rooms[ri].layers.size(); ++li) {
+                const auto& l = rooms[ri].layers[li];
+                if (l.type != 4 || l.grid.empty()) continue;
+                std::vector<uint8_t> e;
+                auto w32 = [&](uint32_t v) {
+                    e.push_back(v);
+                    e.push_back(v >> 8);
+                    e.push_back(v >> 16);
+                    e.push_back(v >> 24);
+                };
+                w32(6);
+                w32((uint32_t)l.grid.size() * 4);
+                for (uint32_t cell : l.grid) w32(cell);
+                out.tilemap_blobs[(int)ri * 1000 + (int)li] = (int)sounds.size();
+                sounds.push_back(std::move(e));
+            }
+        }
     }
 
     out.image_count = images.size();

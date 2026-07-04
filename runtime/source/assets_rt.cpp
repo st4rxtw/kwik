@@ -195,6 +195,32 @@ unsigned int kwik_image_texture(int image, int& w, int& h) {
     return img.ok ? img.tex : 0;
 }
 
+void kwik_draw_image_part(int image, double sx, double sy, double sw, double sh, double dx,
+                          double dy, double xs, double ys, unsigned int blend, double alpha) {
+    LoadedImage& img = load_image(image);
+    if (!img.ok || img.w <= 0 || img.h <= 0) return;
+    float u0 = (float)(sx / img.w), v0 = (float)(sy / img.h);
+    float u1 = (float)((sx + sw) / img.w), v1 = (float)((sy + sh) / img.h);
+    render_draw_quad(img.tex, dx, dy, sw, sh, 0, 0, xs, ys, 0, u0, v0, u1, v1, blend, alpha);
+}
+
+const uint32_t* kwik_tilemap_grid(int blob, int cells) {
+    static std::unordered_map<int, std::vector<uint32_t>> cache;
+    auto it = cache.find(blob);
+    if (it != cache.end()) return it->second.empty() ? nullptr : it->second.data();
+    std::vector<uint32_t>& g = cache[blob];
+    unsigned int size = 0;
+    int type = 0;
+    const unsigned char* d = kwik_sound_blob(blob, size, type);
+    if (d && type == 6 && (int)(size / 4) >= cells) {
+        g.resize(cells);
+        for (int i = 0; i < cells; ++i)
+            g[i] = (unsigned)d[i * 4] | ((unsigned)d[i * 4 + 1] << 8) |
+                   ((unsigned)d[i * 4 + 2] << 16) | ((unsigned)d[i * 4 + 3] << 24);
+    }
+    return g.empty() ? nullptr : g.data();
+}
+
 int kwik_sprite_add_file(const std::string& path, int imgnum, int xorig, int yorig) {
     (void)imgnum;
     std::FILE* f = std::fopen(kwik_resolve_read(path).c_str(), "rb");

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,15 @@ struct SoundInfo {
     int blob = -1;
 };
 
+struct TilesetInfo {
+    int image = -1;
+    int tile_w = 0;
+    int tile_h = 0;
+    int border_x = 0;
+    int border_y = 0;
+    int columns = 0;
+};
+
 struct AssetExtraction {
     int image_count = 0;
     int sound_count = 0;
@@ -55,6 +65,8 @@ struct AssetExtraction {
     std::vector<SoundInfo> sounds;
     std::vector<FontInfo> fonts;
     std::vector<GlyphInfo> glyphs;
+    std::vector<TilesetInfo> tilesets;
+    std::map<int, int> tilemap_blobs;
 };
 
 bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtraction& out);

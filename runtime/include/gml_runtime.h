@@ -148,6 +148,14 @@ struct InstanceInit {
     double angle;
     double depth;
     ScriptFn creation_code;
+    ScriptFn precreate_code;
+};
+
+struct KwikTileset {
+    int image;
+    int tile_w, tile_h;
+    int border_x, border_y;
+    int columns;
 };
 
 struct RoomLayerDef {
@@ -161,6 +169,7 @@ struct RoomLayerDef {
     int htiled, vtiled, stretch;
     unsigned int color;
     int tile_first, tile_count;
+    int tileset, grid_w, grid_h, grid_blob;
 };
 
 struct RoomTile {
@@ -223,6 +232,8 @@ extern const KwikGlyph* g_glyphs;
 extern int g_glyph_count;
 extern const KwikSound* g_sound_table;
 extern int g_sound_count;
+extern const KwikTileset* g_tilesets;
+extern int g_tileset_count;
 
 Value gml_add(const Value& a, const Value& b);
 Value gml_sub(const Value& a, const Value& b);

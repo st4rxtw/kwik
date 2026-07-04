@@ -255,6 +255,7 @@ void GameData::parse_rooms() {
             ri.object_index = i32(ip + 8);
             ri.id = i32(ip + 12);
             ri.creation_code = i32(ip + 16);
+            ri.precreate_code = i32(ip + 44);
             float sx, sy, rot;
             uint32_t usx = u32(ip + 20), usy = u32(ip + 24), urot = u32(ip + 40);
             std::memcpy(&sx, &usx, 4);
@@ -340,6 +341,24 @@ void GameData::parse_rooms() {
                         }
                     }
                     rl.tile_count = (int32_t)r.tiles.size() - rl.tile_first;
+                    r.layers.push_back(rl);
+                } else if (rl.type == 4) {
+                    rl.tileset = i32(lp + 48);
+                    rl.grid_w = i32(lp + 52);
+                    rl.grid_h = i32(lp + 56);
+                    if (rl.grid_w > 0 && rl.grid_h > 0 && rl.grid_w < 4096 && rl.grid_h < 4096) {
+                        uint32_t g = lp + 60;
+                        size_t n = (size_t)rl.grid_w * rl.grid_h;
+                        bool any = false;
+                        rl.grid.resize(n);
+                        for (size_t i = 0; i < n; ++i) {
+                            rl.grid[i] = u32(g + i * 4);
+                            if ((rl.grid[i] & 0x0007FFFF) != 0) any = true;
+                        }
+                        if (!any) rl.grid.clear();
+                    } else {
+                        rl.grid_w = rl.grid_h = 0;
+                    }
                     r.layers.push_back(rl);
                 } else {
                     r.layers.push_back(rl);

@@ -585,7 +585,13 @@ double kwik_room_speed() { return g_room_speed_v; }
 int kwik_current_room() { return g_current_room; }
 
 void kwik_room_goto(int index) {
-    if (index >= 0 && index < g_room_count_rt) g_pending_room = index;
+    if (index >= 0 && index < g_room_count_rt) {
+        g_pending_room = index;
+        if (std::getenv("KWIK_DEBUG"))
+            std::fprintf(stderr, "[goto] room %d (%s) -> %d (%s) entrance=%g\n", g_current_room,
+                         g_current_room >= 0 ? g_room_defs_rt[g_current_room].name : "?", index,
+                         g_room_defs_rt[index].name, (double)global_var("entrance"));
+    }
 }
 
 Value kwik_create_instance(int obj_index, double x, double y, double depth, bool use_depth) {
@@ -1984,6 +1990,10 @@ static void load_room(int index, bool clear_persistent) {
         l.color = ld.color;
         l.tile_first = ld.tile_first;
         l.tile_count = ld.tile_count;
+        l.tileset = ld.tileset;
+        l.grid_w = ld.grid_w;
+        l.grid_h = ld.grid_h;
+        l.grid_blob = ld.grid_blob;
         g_rt_layers.push_back(l);
     }
 
@@ -2007,7 +2017,11 @@ static void load_room(int index, bool clear_persistent) {
         created.push_back(sp.get());
     }
 
-    for (size_t i = 0; i < created.size(); ++i) fire(created[i], EVK_PRE_CREATE, 0);
+    for (size_t i = 0; i < created.size(); ++i) {
+        fire(created[i], EVK_PRE_CREATE, 0);
+        const InstanceInit& init = room.instances[i];
+        if (init.precreate_code && !created[i]->dead) init.precreate_code(created[i], nullptr, 0);
+    }
     for (size_t i = 0; i < created.size(); ++i) {
         fire(created[i], EVK_CREATE, 0);
         const InstanceInit& init = room.instances[i];
@@ -2033,6 +2047,14 @@ static void load_room(int index, bool clear_persistent) {
         }
     }
     g_first_room_loaded = true;
+    if (std::getenv("KWIK_DEBUG_LAYERS")) {
+        for (auto& l : g_rt_layers)
+            std::fprintf(stderr,
+                         "[layer] '%s' id=%d type=%d depth=%g spr=%d vis=%d elvis=%d tiles=%d+%d "
+                         "color=%08x\n",
+                         l.name.c_str(), l.id, l.type, l.depth, l.sprite, (int)l.visible,
+                         (int)l.el_visible, l.tile_first, l.tile_count, l.color);
+    }
     {
         const char* sg = std::getenv("KWIK_SETGLOBALS");
         if (sg && *sg) {
@@ -2071,6 +2093,7 @@ static void draw_world() {
         const RtLayer* layer;
         const RoomTile* tile;
         double tile_ox, tile_oy;
+        bool tilemap;
     };
     std::vector<DrawItem> items;
     const RoomDef* cur = g_current_room >= 0 ? &g_room_defs_rt[g_current_room] : nullptr;
@@ -2078,20 +2101,22 @@ static void draw_world() {
         if (!l.visible) continue;
         if (l.type == 1) {
             if (l.el_visible && (l.sprite >= 0 || (l.color & 0xFF000000) != 0))
-                items.push_back({l.depth, 2, l.id, nullptr, &l, nullptr, 0, 0});
+                items.push_back({l.depth, 2, l.id, nullptr, &l, nullptr, 0, 0, false});
         } else if (l.type == 3 && cur) {
             for (int t = 0; t < l.tile_count; ++t) {
                 int ti = l.tile_first + t;
                 if (ti < 0 || ti >= cur->tile_count) continue;
                 items.push_back({cur->tiles[ti].depth, 0, (long long)ti, nullptr, nullptr,
-                                 &cur->tiles[ti], l.x, l.y});
+                                 &cur->tiles[ti], l.x, l.y, false});
             }
+        } else if (l.type == 4 && l.tileset >= 0 && l.grid_blob >= 0 && l.grid_w > 0) {
+            items.push_back({l.depth, 0, (long long)l.id, nullptr, &l, nullptr, l.x, l.y, true});
         }
     }
     for (auto& sp : g_instances) {
         Instance* inst = sp.get();
         if (inst->dead || !inst->active || !inst->visible) continue;
-        items.push_back({inst->depth, 1, (long long)inst->id, inst, nullptr, nullptr, 0, 0});
+        items.push_back({inst->depth, 1, (long long)inst->id, inst, nullptr, nullptr, 0, 0, false});
     }
     std::sort(items.begin(), items.end(), [](const DrawItem& a, const DrawItem& b) {
         if (a.depth != b.depth) return a.depth > b.depth;
@@ -2112,6 +2137,45 @@ static void draw_world() {
     }
 
     for (const DrawItem& it : items) {
+        if (it.tilemap) {
+            const RtLayer& tm = *it.layer;
+            if (tm.tileset < 0 || tm.tileset >= g_tileset_count) continue;
+            const KwikTileset& ts = g_tilesets[tm.tileset];
+            if (ts.image < 0 || ts.columns <= 0) continue;
+            const uint32_t* grid = kwik_tilemap_grid(tm.grid_blob, tm.grid_w * tm.grid_h);
+            if (!grid) continue;
+            static int dbg = std::getenv("KWIK_DEBUG_TILES") ? 30 : 0;
+            if (dbg > 0) {
+                --dbg;
+                int drawn = 0;
+                for (int i = 0; i < tm.grid_w * tm.grid_h; ++i)
+                    if ((grid[i] & 0x7FFFF) != 0) ++drawn;
+                std::fprintf(stderr, "[tiles] layer '%s' tileset=%d img=%d %dx%d drawn=%d\n",
+                             tm.name.c_str(), tm.tileset, ts.image, tm.grid_w, tm.grid_h, drawn);
+            }
+            int strideX = ts.tile_w + 2 * ts.border_x;
+            int strideY = ts.tile_h + 2 * ts.border_y;
+            double bla = (((tm.color >> 24) & 0xFF) / 255.0) * tm.alpha;
+            unsigned int bblend = tm.color & 0xFFFFFF;
+            for (int gy = 0; gy < tm.grid_h; ++gy) {
+                for (int gx = 0; gx < tm.grid_w; ++gx) {
+                    uint32_t cell = grid[gy * tm.grid_w + gx];
+                    uint32_t idx = cell & 0x0007FFFF;
+                    if (idx == 0) continue;
+                    int col = idx % ts.columns;
+                    int row = idx / ts.columns;
+                    double srcx = col * strideX + ts.border_x;
+                    double srcy = row * strideY + ts.border_y;
+                    bool mirror = cell & 0x10000000;
+                    bool flip = cell & 0x20000000;
+                    double dx = tm.x + gx * ts.tile_w + (mirror ? ts.tile_w : 0);
+                    double dy = tm.y + gy * ts.tile_h + (flip ? ts.tile_h : 0);
+                    kwik_draw_image_part(ts.image, srcx, srcy, ts.tile_w, ts.tile_h, dx, dy,
+                                         mirror ? -1.0 : 1.0, flip ? -1.0 : 1.0, bblend, bla);
+                }
+            }
+            continue;
+        }
         if (it.layer) {
             const RtLayer& bg = *it.layer;
             unsigned int blend = bg.color & 0xFFFFFF;
@@ -2171,7 +2235,7 @@ static void draw_world() {
             if (inst->dead || !inst->active || !inst->visible) continue;
             if (find_event(inst->object_index, kind, 0))
                 gitems.push_back(
-                    {inst->depth, 1, (long long)inst->id, inst, nullptr, nullptr, 0, 0});
+                    {inst->depth, 1, (long long)inst->id, inst, nullptr, nullptr, 0, 0, false});
         }
         std::sort(gitems.begin(), gitems.end(), [](const DrawItem& a, const DrawItem& b) {
             if (a.depth != b.depth) return a.depth > b.depth;

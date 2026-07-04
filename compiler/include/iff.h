@@ -47,6 +47,7 @@ struct RoomInstance {
     double angle;
     int32_t depth = 0;
     int32_t creation_code = -1;
+    int32_t precreate_code = -1;
 };
 
 struct RoomLayerRec {
@@ -64,6 +65,10 @@ struct RoomLayerRec {
     uint32_t color = 0xFFFFFFFF;
     int32_t tile_first = 0;
     int32_t tile_count = 0;
+    int32_t tileset = -1;
+    int32_t grid_w = 0;
+    int32_t grid_h = 0;
+    std::vector<uint32_t> grid;
 };
 
 struct RoomTile {

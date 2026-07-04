@@ -1046,7 +1046,7 @@ static std::string code_fn_or_null(const GameData& gd, int code_id) {
     return "nullptr";
 }
 
-static void emit_room_data(std::ostream& os, const GameData& gd) {
+static void emit_room_data(std::ostream& os, const GameData& gd, const AssetExtraction& ex) {
     const auto& rooms = gd.rooms();
     for (size_t i = 0; i < rooms.size(); ++i) {
         os << "static const InstanceInit g_instances_" << i << "[] = {\n";
@@ -1054,16 +1054,22 @@ static void emit_room_data(std::ostream& os, const GameData& gd) {
             os << "    { " << ri.object_index << ", " << ri.x << ", " << ri.y << ", " << ri.id
                << ", " << ri.scale_x << ", " << ri.scale_y << ", " << ri.image_index << ", "
                << ri.angle << ", " << ri.depth << ", " << code_fn_or_null(gd, ri.creation_code)
-               << " },\n";
-        os << "    { -1, 0, 0, 0, 1, 1, 0, 0, 0, nullptr },\n";
+               << ", " << code_fn_or_null(gd, ri.precreate_code) << " },\n";
+        os << "    { -1, 0, 0, 0, 1, 1, 0, 0, 0, nullptr, nullptr },\n";
         os << "};\n";
         os << "static const RoomLayerDef g_layers_" << i << "[] = {\n";
-        for (const auto& l : rooms[i].layers)
+        for (size_t li = 0; li < rooms[i].layers.size(); ++li) {
+            const auto& l = rooms[i].layers[li];
+            int grid_blob = -1;
+            auto it = ex.tilemap_blobs.find((int)i * 1000 + (int)li);
+            if (it != ex.tilemap_blobs.end()) grid_blob = it->second;
             os << "    { " << quote(l.name) << ", " << l.id << ", " << l.type << ", " << l.depth
                << ", " << l.x << ", " << l.y << ", " << l.visible << ", " << l.sprite << ", "
                << l.htiled << ", " << l.vtiled << ", " << l.stretch << ", " << l.color << "u, "
-               << l.tile_first << ", " << l.tile_count << " },\n";
-        os << "    { \"\", -1, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0u, 0, 0 },\n";
+               << l.tile_first << ", " << l.tile_count << ", " << l.tileset << ", " << l.grid_w
+               << ", " << l.grid_h << ", " << grid_blob << " },\n";
+        }
+        os << "    { \"\", -1, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0u, 0, 0, -1, 0, 0, -1 },\n";
         os << "};\n";
         os << "static const RoomTile g_tiles_" << i << "[] = {\n";
         for (const auto& t : rooms[i].tiles)
@@ -1162,8 +1168,19 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     std::ofstream data(root / "game_data.cpp", std::ios::binary);
     data << "#include \"generated.h\"\n\nusing namespace gml;\n\n";
     emit_object_table(data, gd);
-    emit_room_data(data, gd);
+    emit_room_data(data, gd, ex);
     data << "namespace gml {\n";
+    if (!ex.tilesets.empty()) {
+        data << "static const KwikTileset g_tilesets_data[] = {\n";
+        for (const auto& t : ex.tilesets)
+            data << "    { " << t.image << ", " << t.tile_w << ", " << t.tile_h << ", "
+                 << t.border_x << ", " << t.border_y << ", " << t.columns << " },\n";
+        data << "};\n";
+        data << "const KwikTileset* g_tilesets = g_tilesets_data;\n";
+    } else {
+        data << "const KwikTileset* g_tilesets = nullptr;\n";
+    }
+    data << "int g_tileset_count = " << ex.tilesets.size() << ";\n";
     if (!ex.sprites.empty()) {
         data << "static const KwikSprite g_sprites_data[] = {\n";
         for (const auto& s : ex.sprites)
