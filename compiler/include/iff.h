@@ -112,7 +112,7 @@ public:
     bool load(const std::string& path);
     const std::string& source_path() const { return source_path_; }
     std::string source_dir() const {
-        size_t p = source_path_.find_last_of('/');
+        size_t p = source_path_.find_last_of("/\\");
         return p == std::string::npos ? std::string(".") : source_path_.substr(0, p);
     }
 
