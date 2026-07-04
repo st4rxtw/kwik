@@ -18,3 +18,7 @@ file(GLOB GAME_SOURCES CONFIGURE_DEPENDS
 add_executable(game ${GAME_SOURCES})
 target_include_directories(game PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(game PRIVATE kwik_runtime)
+
+if(MSVC)
+    set_target_properties(game PROPERTIES LINK_FLAGS "/STACK:8388608")
+endif()
