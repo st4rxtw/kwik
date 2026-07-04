@@ -2511,6 +2511,16 @@ int run_game(const GameTables& tables) {
                                     (c >= '0' && c <= '9') || c == '_' || c == '-' || c == ' '
                                 ? c
                                 : '_');
+#ifdef _WIN32
+        const char* appdata = std::getenv("APPDATA");
+        std::string root;
+        if (appdata && *appdata) {
+            root = appdata;
+        } else {
+            const char* userprofile = std::getenv("USERPROFILE");
+            root = std::string(userprofile ? userprofile : ".") + "\\AppData\\Roaming";
+        }
+#else
         const char* xdg = std::getenv("XDG_DATA_HOME");
         std::string root;
         if (xdg && *xdg) {
@@ -2519,6 +2529,7 @@ int run_game(const GameTables& tables) {
             const char* home = std::getenv("HOME");
             root = std::string(home ? home : ".") + "/.local/share";
         }
+#endif
         g_save_dir = root + "/kwik/saves/" + clean;
         std::error_code ec;
         std::filesystem::create_directories(g_save_dir, ec);
