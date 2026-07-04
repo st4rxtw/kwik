@@ -1288,22 +1288,18 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
 #else
     const char* kwik_root = "";
 #endif
+    std::ifstream base(std::string(kwik_root) + "/Base.cmake", std::ios::binary);
+    if (!base) {
+        std::fprintf(stderr, "kwik: could not open %s/Base.cmake\n", kwik_root);
+        return false;
+    }
+    std::string tmpl((std::istreambuf_iterator<char>(base)), std::istreambuf_iterator<char>());
+    const std::string placeholder = "@KWIK_DIR@";
+    for (size_t p = tmpl.find(placeholder); p != std::string::npos;
+         p = tmpl.find(placeholder, p))
+        tmpl.replace(p, placeholder.size(), kwik_root);
     std::ofstream cm(root / "CMakeLists.txt", std::ios::binary);
-    cm << "cmake_minimum_required(VERSION 3.16)\n";
-    cm << "project(kwik_game C CXX)\n\n";
-    cm << "set(CMAKE_CXX_STANDARD 17)\n";
-    cm << "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n";
-    cm << "set(CMAKE_CXX_EXTENSIONS OFF)\n\n";
-    cm << "set(KWIK_DIR \"" << kwik_root << "\" CACHE PATH \"kwik repo root\")\n\n";
-    cm << "add_subdirectory(${KWIK_DIR}/runtime ${CMAKE_BINARY_DIR}/kwik_runtime)\n\n";
-    cm << "file(GLOB GAME_SOURCES CONFIGURE_DEPENDS\n";
-    cm << "    ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp\n";
-    cm << "    ${CMAKE_CURRENT_SOURCE_DIR}/objects/*.cpp\n";
-    cm << "    ${CMAKE_CURRENT_SOURCE_DIR}/rooms/*.cpp\n";
-    cm << "    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/*.cpp)\n\n";
-    cm << "add_executable(game ${GAME_SOURCES})\n";
-    cm << "target_include_directories(game PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})\n";
-    cm << "target_link_libraries(game PRIVATE kwik_runtime)\n";
+    cm << tmpl;
     return true;
 }
 
