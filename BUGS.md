@@ -1,10 +1,19 @@
 # BUGS
 
+### STATUSES
+
+* Perfect - No known issues
+* Playable - Playable from start to finish without many game breaking bugs
+* In-Game - Playable with some game breaking bugs
+* Uncompilable - Doesn't have the functions implemented so you can't compile it.
+
 ## DELTARUNE LAUNCHER
 
 * N/A
 
 ## DELTARUNE CHAPTER 1
+
+### STATUS: Playable
 
 1. Cam is too high in susie encounter
 2. In the part where the door gets closed on Kris & Susie it's still open
@@ -17,22 +26,31 @@
 
 ### WARNING: ALL BUGS HERE WERE FOUND ONLY ON THE WEIRD ROUTE, I'M NOT REPLAYING THE NORMAL ROUTE LMAO!
 
+### STATUS: In-Game
+
 1. Your house doesn't show when you exit it, only the door does
 2. The door to enter the castle is gone (along with the char's room doors, also layering bug?..)
 3. Trying to leave the school takes you back to the classroom
 4. In the sections where you can get damaged in the darkworld (non-battle) the purple outline is there
 5. In one of the sections where notes fall on you there's a layering issue
-6. Battle Box is thicker than it's supposed to be (It's random?...)
-7. The animation for the Battle Box is broken (It's random?...)
+6. Battle Box is thicker than it's supposed to be (On certain attacks, spamton's attacks are an example)
+7. The animation for the Battle Box is broken (On certain attacks, spamton's attacks are an example)
 8. Ralsei's dialogue in the battle with the 3 dancing robots is broken
 9. On the part where virovirokun throws stuff at you (in the darkworld overworld) there's a big ass layering issue
 10. On the attack that berdly uses that sends stuff and then it shows small stuff behind, his path isn't curved
 11. The little sign that glows & displays text displays as rectangles
 12. Noelle doesn't switch sprites when hiding from the queen until after the queen hides from berdly
 13. The freeze effect on enemies is wrong
-14. There's an enemy out of bounds that you literally CANNOT get meaning you CANNOT finish the weird route.
+14. One of Ambyu-Lance's, & one of Maus' attacks (the one with the ambulances and the big mouse one, make the battle box flash/just white while the attack happens)
+15. The Mauswheel enemy is stuck out of bounds (good.)
+16. Layering issue on the part where pipis are flying and exploding
+17. The machine near the room where you fight spamton neo isn't rendered
+18. Fountain room doesn't look right
+19. 
 
 ## DELTARUNE CHAPTER 3
+
+### STATUS: Uncompilable
 
 ```
 [lift] unhandled event Other_40 on obj_particle_generic
@@ -41,6 +59,8 @@
 mp_grid_path is unimplemented
 
 ## DELTARUNE CHAPTER 4
+
+### STATUS: Uncompilable
 
 ```
 [lift] unhandled event Other_73 on obj_mike_controller
@@ -59,9 +79,13 @@ layer_sprite_get_angle is unimplemented
 
 ## DELTATALE
 
+### STATUS: Playable
+
 * Two Kris'
 
 ## Pizza Tower (Steam)
+
+### STATUS: Uncompilable
 
 ```
 [lift] unhandled event Other_40 on obj_bigspitcheesespike
@@ -93,6 +117,8 @@ layer_sprite_get_angle is unimplemented
 fmod stuff isn't implemented (hmmh...)
 
 ## Pizza Tower (Eggplant Build)
+
+### STATUS: Uncompilable
 
 ```
 [lift] unhandled event Other_40 on obj_bigspitcheesespike

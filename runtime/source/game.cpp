@@ -1050,6 +1050,23 @@ Value kwik_builtin_get(Instance* self, const char* name) {
     if (!std::strcmp(name, "view_enabled")) return Value(1.0);
     if (!std::strcmp(name, "async_load")) return Value((double)g_async_load_map);
     if (!std::strcmp(name, "application_surface")) return Value(0.0);
+    if (!std::strcmp(name, "debug_mode")) return global_var("debug");
+    if (!std::strcmp(name, "path_index")) {
+        if (self && self->has("__kwik_path")) return self->var("__kwik_path");
+        return Value(-1.0);
+    }
+    if (!std::strcmp(name, "path_position")) {
+        if (self && self->has("path_position")) return self->var("path_position");
+        return Value(0.0);
+    }
+    if (!std::strcmp(name, "path_speed")) {
+        if (self && self->has("path_speed")) return self->var("path_speed");
+        return Value(0.0);
+    }
+    if (!std::strcmp(name, "path_endaction")) {
+        if (self && self->has("__kwik_path_end")) return self->var("__kwik_path_end");
+        return Value(0.0);
+    }
     if (self) {
         bool handled;
         Value v = scope_get_special(self, name, handled);
@@ -1057,13 +1074,30 @@ Value kwik_builtin_get(Instance* self, const char* name) {
         if (self->has(name)) return self->var(name);
     }
     if (g_dummy_instance && g_dummy_instance->has(name)) return g_dummy_instance->var(name);
-    return kwik_missing(self, (std::string("builtin var ") + name).c_str());
+    if (std::getenv("KWIK_DEBUG"))
+        kwik_missing(self, (std::string("builtin var ") + name).c_str());
+    return Value();
 }
 
 void kwik_builtin_set(Instance* self, const char* name, const Value& v) {
     if (!std::strcmp(name, "room_speed")) { g_room_speed_v = (double)v; return; }
     if (!std::strcmp(name, "room")) { kwik_room_goto((int)(double)v); return; }
     if (!std::strcmp(name, "keyboard_string")) return;
+    if (!std::strcmp(name, "debug_mode")) { global_var("debug") = v; return; }
+    if (self && !std::strcmp(name, "path_index")) {
+        int pth = (int)(double)v;
+        if (pth < 0) {
+            self->vars.erase("__kwik_path");
+        } else {
+            self->var("__kwik_path") = Value((double)pth);
+            if (!self->has("path_position")) self->var("path_position") = Value(0.0);
+            if (!self->has("path_speed")) self->var("path_speed") = Value(4.0);
+            if (!self->has("__kwik_path_end")) self->var("__kwik_path_end") = Value(0.0);
+            self->var("__kwik_path_ox") = Value(0.0);
+            self->var("__kwik_path_oy") = Value(0.0);
+        }
+        return;
+    }
     if (self) inst_set_raw(self, name, v);
 }
 
@@ -1789,6 +1823,19 @@ static void step_path(Instance* inst) {
 }
 
 static void step_motion(Instance* inst) {
+    static const char* trmove = std::getenv("KWIK_TRACE_MOVE");
+    if (trmove && inst->object_index >= 0 && inst->object_index < g_object_count_rt &&
+        !std::strcmp(g_objects_rt[inst->object_index].name, trmove)) {
+        auto gv = [&](const char* n) -> double {
+            auto it = inst->vars.find(n);
+            return it == inst->vars.end() ? -999 : (double)it->second;
+        };
+        std::fprintf(stderr,
+                     "[mv] #%d (%.1f,%.1f) start(%.1f,%.1f) hs=%.2f vs=%.2f spd=%.2f dir=%.1f "
+                     "ptimer=%.0f pcon=%.0f ptype=%.0f\n",
+                     inst->id, inst->x, inst->y, inst->xstart, inst->ystart, inst->m_hs, inst->m_vs,
+                     inst->m_speed, inst->m_dir, gv("pacetimer"), gv("pacecon"), gv("pacetype"));
+    }
     inst->xprevious = inst->x;
     inst->yprevious = inst->y;
     double grav = 0, gdir = 270, fric = 0;
