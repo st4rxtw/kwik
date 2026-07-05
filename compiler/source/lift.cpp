@@ -1268,11 +1268,8 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     }
     mainf << "    t.scripts = g_script_entries;\n";
     mainf << "    t.script_count = g_script_entry_count;\n";
-    mainf << "    t.game_dir = " << quote(game_dir) << ";\n";
     {
-        namespace fsx = std::filesystem;
-        std::string assets = (fsx::absolute(root) / "Assets.dat").string();
-        mainf << "    t.assets_path = " << quote(assets) << ";\n";
+        mainf << "    t.assets_path = \"Assets.dat\";\n";
     }
     mainf << "    t.game_name = " << quote(gd.display_name()) << ";\n";
     mainf << "    t.save_id = " << quote(gd.game_name()) << ";\n";
