@@ -18,6 +18,8 @@ static int g_gui_h = 480;
 static int g_room_w = 640;
 static int g_room_h = 480;
 static double g_view_x = 0, g_view_y = 0, g_view_w = 640, g_view_h = 480;
+static bool g_fog_on = false;
+static float g_fog_rgb[4] = {0, 0, 0, 1};
 static bool g_fullscreen = false;
 static int g_saved_x = 100, g_saved_y = 100, g_saved_w = 640, g_saved_h = 480;
 
@@ -249,11 +251,17 @@ void render_primitive_end() {
 static double g_wheel_accum = 0.0;
 static double g_wheel_frame = 0.0;
 
-bool render_app_snapshot(int x, int y, int w, int h, unsigned char* rgba_out) {
-    if (!g_fbo) return false;
-    glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
-    glReadPixels(x, g_fbo_h - y - h, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba_out);
-    glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+bool render_surface_snapshot(int id, int x, int y, int w, int h, unsigned char* rgba_out) {
+    RtSurface* sf = surf_of(id);
+    GLuint fbo = id == 0 ? g_fbo : (sf ? sf->fbo : 0);
+    int fh = id == 0 ? g_fbo_h : (sf ? sf->h : 0);
+    if (!fbo && id != 0) return false;
+    if (id == 0 && !g_fbo) return false;
+    GLint prev = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glReadPixels(x, fh - y - h, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba_out);
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev);
     for (int row = 0; row < h / 2; ++row) {
         for (int col = 0; col < w * 4; ++col) {
             unsigned char tmp = rgba_out[row * w * 4 + col];
@@ -261,8 +269,11 @@ bool render_app_snapshot(int x, int y, int w, int h, unsigned char* rgba_out) {
             rgba_out[(h - 1 - row) * w * 4 + col] = tmp;
         }
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
     return true;
+}
+
+bool render_app_snapshot(int x, int y, int w, int h, unsigned char* rgba_out) {
+    return render_surface_snapshot(0, x, y, w, h, rgba_out);
 }
 
 static bool key_state(int vk) {
@@ -346,6 +357,7 @@ bool render_should_close() {
 
 void render_begin_frame() {
     g_target_stack.clear();
+    g_fog_on = false;
     if (g_fbo) {
         glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
         glViewport(0, 0, g_fbo_w, g_fbo_h);
@@ -479,6 +491,14 @@ bool render_key_released(int vk) {
     if (vk < 0 || vk >= 512) return false;
     return !g_keys_now[vk] && g_keys_prev[vk];
 }
+void render_keyboard_clear(int vk) {
+    if (vk < 0) {
+        for (int i = 0; i < 512; ++i) g_keys_now[i] = g_keys_prev[i] = false;
+        return;
+    }
+    if (vk >= 512) return;
+    g_keys_now[vk] = g_keys_prev[vk] = false;
+}
 
 static void mouse_to_gui(double& gx, double& gy) {
     gx = 0;
@@ -511,6 +531,7 @@ double render_mouse_y() {
 }
 bool render_mouse_down(int b) { return b >= 0 && b < 3 && g_mouse_now[b]; }
 bool render_mouse_pressed(int b) { return b >= 0 && b < 3 && g_mouse_now[b] && !g_mouse_prev[b]; }
+bool render_mouse_released(int b) { return b >= 0 && b < 3 && !g_mouse_now[b] && g_mouse_prev[b]; }
 
 void render_set_color(unsigned int bgr) {
     g_color_bgr = bgr;
@@ -530,9 +551,43 @@ void render_set_blendmode(int mode) {
     switch (mode) {
         case 1: glBlendFunc(GL_SRC_ALPHA, GL_ONE); break;
         case 2: glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_COLOR); break;
-        case 3: glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA); break;
+        case 3: glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_COLOR); break;
         default: glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); break;
     }
+}
+
+static GLenum gm_blend_factor(int f) {
+    switch (f) {
+        case 1: return GL_ZERO;
+        case 2: return GL_ONE;
+        case 3: return GL_SRC_COLOR;
+        case 4: return GL_ONE_MINUS_SRC_COLOR;
+        case 5: return GL_SRC_ALPHA;
+        case 6: return GL_ONE_MINUS_SRC_ALPHA;
+        case 7: return GL_DST_ALPHA;
+        case 8: return GL_ONE_MINUS_DST_ALPHA;
+        case 9: return GL_DST_COLOR;
+        case 10: return GL_ONE_MINUS_DST_COLOR;
+        case 11: return GL_SRC_ALPHA_SATURATE;
+        default: return GL_ONE;
+    }
+}
+
+void render_set_blendmode_ext(int src, int dst) {
+    glBlendFunc(gm_blend_factor(src), gm_blend_factor(dst));
+}
+
+void render_set_blendmode_sepalpha(int src, int dst, int asrc, int adst) {
+    if (glBlendFuncSeparate)
+        glBlendFuncSeparate(gm_blend_factor(src), gm_blend_factor(dst), gm_blend_factor(asrc),
+                            gm_blend_factor(adst));
+    else
+        glBlendFunc(gm_blend_factor(src), gm_blend_factor(dst));
+}
+
+void render_set_colorwrite(bool r, bool g, bool b, bool a) {
+    glColorMask(r ? GL_TRUE : GL_FALSE, g ? GL_TRUE : GL_FALSE, b ? GL_TRUE : GL_FALSE,
+                a ? GL_TRUE : GL_FALSE);
 }
 
 unsigned int render_upload_texture(const unsigned char* rgba, int w, int h) {
@@ -545,6 +600,28 @@ unsigned int render_upload_texture(const unsigned char* rgba, int w, int h) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     return tex;
+}
+
+void render_set_fog(bool on, unsigned int bgr) {
+    static bool disabled = std::getenv("KWIK_NO_FOG") != nullptr;
+    if (disabled) return;
+    g_fog_on = on;
+    g_fog_rgb[0] = (bgr & 0xFF) / 255.0f;
+    g_fog_rgb[1] = ((bgr >> 8) & 0xFF) / 255.0f;
+    g_fog_rgb[2] = ((bgr >> 16) & 0xFF) / 255.0f;
+    g_fog_rgb[3] = 1.0f;
+}
+
+static void apply_fog_env() {
+    if (g_fog_on) {
+        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+        glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_REPLACE);
+        glTexEnvi(GL_TEXTURE_ENV, GL_SRC0_RGB, GL_CONSTANT);
+        glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_MODULATE);
+        glTexEnvfv(GL_TEXTURE_ENV, GL_TEXTURE_ENV_COLOR, g_fog_rgb);
+    } else {
+        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    }
 }
 
 void render_draw_quad(unsigned int tex, double x, double y, double dw, double dh,
@@ -568,6 +645,7 @@ void render_draw_quad(unsigned int tex, double x, double y, double dw, double dh
 
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex);
+    apply_fog_env();
     glColor4f(r, g, b, (float)alpha);
     glBegin(GL_QUADS);
     glTexCoord2f(u0, v0); glVertex2f(vx[0], vy[0]);

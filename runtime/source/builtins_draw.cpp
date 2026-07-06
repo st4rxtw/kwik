@@ -81,6 +81,21 @@ GMLFN(draw_text_color) {
 }
 GMLFN(draw_text_colour) { return draw_text_color(self, args, argc); }
 
+GMLFN(draw_text_transformed_color) {
+    (void)self;
+    if (argc < 6) return Value();
+    unsigned int saved = render_get_color();
+    double sa = render_get_alpha();
+    if (argc >= 7) render_set_color(C(args, argc, 6));
+    if (argc >= 11) render_set_alpha(A(args, argc, 10, 1));
+    kwik_draw_text_rt(A(args, argc, 0), A(args, argc, 1), (std::string)args[2], A(args, argc, 3, 1),
+                      A(args, argc, 4, 1), A(args, argc, 5));
+    render_set_color(saved);
+    render_set_alpha(sa);
+    return Value();
+}
+GMLFN(draw_text_transformed_colour) { return draw_text_transformed_color(self, args, argc); }
+
 GMLFN(draw_self) {
     (void)args; (void)argc;
     draw_self_instance(self);
@@ -143,14 +158,17 @@ GMLFN(draw_sprite_tiled_ext) {
 
 GMLFN(draw_surface_ext) {
     (void)self;
-    if (argc < 8 || !render_app_surface_available()) return Value();
+    if (argc < 8) return Value();
+    int id = (int)A(args, argc, 0);
+    unsigned int tex = render_surface_texture(id);
+    if (!tex) return Value();
     double x = A(args, argc, 1), y = A(args, argc, 2);
     double xs = A(args, argc, 3, 1), ys = A(args, argc, 4, 1);
     double rot = A(args, argc, 5);
     unsigned int col = C(args, argc, 6);
     double alpha = A(args, argc, 7, 1);
-    render_draw_quad(render_app_texture(), x, y, render_app_width(), render_app_height(), 0, 0,
-                     xs, ys, rot, 0.f, 1.f, 1.f, 0.f, col, alpha);
+    render_draw_quad(tex, x, y, render_surface_width(id), render_surface_height(id), 0, 0, xs, ys,
+                     rot, 0.f, 1.f, 1.f, 0.f, col, alpha);
     return Value();
 }
 
@@ -315,14 +333,25 @@ GMLFN(draw_path) { (void)args; (void)argc; return kwik_missing(self, "draw_path"
 GMLFN(gpu_set_blendenable) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(gpu_set_blendmode) {
     (void)self;
-    render_set_blendmode((int)A(args, argc, 0));
+    g_gpu_blendmode = (int)A(args, argc, 0);
+    render_set_blendmode(g_gpu_blendmode);
     return Value();
 }
-GMLFN(gpu_set_fog) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(gpu_set_fog) {
+    (void)self;
+    render_set_fog(argc > 0 && gml_truthy(args[0]), C(args, argc, 1, 0));
+    return Value();
+}
 GMLFN(gpu_set_texfilter) { (void)self; (void)args; (void)argc; return Value(); }
 
-GMLFN(surface_get_width) { (void)self; (void)args; (void)argc; return Value((double)render_app_width()); }
-GMLFN(surface_get_height) { (void)self; (void)args; (void)argc; return Value((double)render_app_height()); }
+GMLFN(surface_get_width) {
+    (void)self;
+    return Value((double)render_surface_width((int)A(args, argc, 0)));
+}
+GMLFN(surface_get_height) {
+    (void)self;
+    return Value((double)render_surface_height((int)A(args, argc, 0)));
+}
 GMLFN(texture_is_ready) { (void)self; (void)args; (void)argc; return Value(1.0); }
 GMLFN(texture_prefetch) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(texturegroup_get_textures) {
@@ -375,18 +404,22 @@ GMLFN(sprite_get_yoffset) {
 }
 GMLFN(sprite_create_from_surface) {
     (void)self;
-    if (argc < 5 || !render_app_surface_available()) return Value(-1.0);
+    if (argc < 5) return Value(-1.0);
+    int id = (int)A(args, argc, 0);
+    int sw = render_surface_width(id), sh = render_surface_height(id);
+    if (sw <= 0 || sh <= 0) return Value(-1.0);
     int x = (int)A(args, argc, 1), y = (int)A(args, argc, 2);
     int w = (int)A(args, argc, 3), h = (int)A(args, argc, 4);
     int xorig = (int)A(args, argc, 7), yorig = (int)A(args, argc, 8);
     if (x < 0) { w += x; x = 0; }
     if (y < 0) { h += y; y = 0; }
-    if (x + w > render_app_width()) w = render_app_width() - x;
-    if (y + h > render_app_height()) h = render_app_height() - y;
+    if (x + w > sw) w = sw - x;
+    if (y + h > sh) h = sh - y;
     if (w <= 0 || h <= 0) return Value(-1.0);
     std::vector<unsigned char> pixels((size_t)w * h * 4);
-    if (!render_app_snapshot(x, y, w, h, pixels.data())) return Value(-1.0);
-    for (size_t i = 3; i < pixels.size(); i += 4) pixels[i] = 255;
+    if (!render_surface_snapshot(id, x, y, w, h, pixels.data())) return Value(-1.0);
+    if (id == 0)
+        for (size_t i = 3; i < pixels.size(); i += 4) pixels[i] = 255;
     unsigned int tex = render_upload_texture(pixels.data(), w, h);
     int img = kwik_register_dynamic_image(tex, w, h);
     KwikSprite s{};
@@ -539,13 +572,22 @@ GMLFN(layer_get_all_elements) {
     Value out = kwik_new_array(nullptr, 0);
     RtLayer* l = L(args, argc, 0);
     if (l && l->type == 1) out.arr->items.push_back(Value((double)l->id));
+    if (l && l->type == 4) out.arr->items.push_back(Value((double)(900000 + l->id)));
     return out;
 }
 GMLFN(layer_get_element_type) {
     (void)self;
     if (argc < 1) return Value(-1.0);
-    RtLayer* l = kwik_layer_by_id((int)(double)args[0]);
-    return Value(l && l->type == 1 ? 1.0 : -1.0);
+    int id = (int)(double)args[0];
+    if (id >= 900000) {
+        RtLayer* l = kwik_layer_by_id(id - 900000);
+        return Value(l && l->type == 4 ? 5.0 : -1.0);
+    }
+    RtLayer* l = kwik_layer_by_id(id);
+    if (!l) return Value(-1.0);
+    if (l->type == 1) return Value(1.0);
+    if (l->type == 4) return Value(5.0);
+    return Value(-1.0);
 }
 GMLFN(layer_background_get_index) {
     (void)self;

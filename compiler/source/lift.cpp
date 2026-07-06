@@ -621,6 +621,9 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                 if (out) *out << "    " << S(base) << " = kwik_missing(self, \"?\");\n";
             } else if (fn.rfind("gml_", 0) == 0 || fn.rfind("@@", 0) == 0) {
                 emit_args(sanitize(fn) + "(self, ", ")");
+            } else if (int32_t sci = ctx.gd.script_code_index(fn); sci >= 0 &&
+                       (size_t)sci < ctx.gd.code().size()) {
+                emit_args(sanitize(ctx.gd.code()[sci].name) + "(self, ", ")");
             } else {
                 emit_args(builtin_call_name(fn) + "(self, ", ")");
             }
@@ -1075,8 +1078,9 @@ static void emit_room_data(std::ostream& os, const GameData& gd, const AssetExtr
         for (const auto& t : rooms[i].tiles)
             os << "    { " << t.x << ", " << t.y << ", " << t.sprite << ", " << t.src_x << ", "
                << t.src_y << ", " << t.w << ", " << t.h << ", " << t.depth << ", " << t.scale_x
-               << ", " << t.scale_y << ", " << t.color << "u },\n";
-        os << "    { 0, 0, -1, 0, 0, 0, 0, 0, 1, 1, 0u },\n";
+               << ", " << t.scale_y << ", " << t.color << "u, " << t.angle << ", " << t.frame
+               << ", " << t.whole << " },\n";
+        os << "    { 0, 0, -1, 0, 0, 0, 0, 0, 1, 1, 0u, 0, 0, 0 },\n";
         os << "};\n";
     }
     os << "\nconst RoomDef g_rooms[] = {\n";
@@ -1174,7 +1178,8 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
         data << "static const KwikTileset g_tilesets_data[] = {\n";
         for (const auto& t : ex.tilesets)
             data << "    { " << t.image << ", " << t.tile_w << ", " << t.tile_h << ", "
-                 << t.border_x << ", " << t.border_y << ", " << t.columns << " },\n";
+                 << t.border_x << ", " << t.border_y << ", " << t.columns << ", " << t.frames
+                 << ", " << t.tile_count << ", " << t.frame_ms << ", " << t.map_blob << " },\n";
         data << "};\n";
         data << "const KwikTileset* g_tilesets = g_tilesets_data;\n";
     } else {
@@ -1188,7 +1193,8 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
                  << ", " << s.origin_y << ", " << s.speed << ", " << s.speed_type << ", "
                  << s.bbox_left << ", " << s.bbox_top << ", " << s.bbox_right << ", "
                  << s.bbox_bottom << ", " << s.width << ", " << s.height << ", " << s.sep_masks
-                 << ", " << s.mask_blob << ", " << quote(s.name) << " },\n";
+                 << ", " << s.mask_blob << ", " << quote(s.name) << ", " << s.tile_repeat
+                 << " },\n";
         data << "};\n";
         data << "const KwikSprite* g_sprites = g_sprites_data;\n";
     } else {

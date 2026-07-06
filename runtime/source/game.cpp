@@ -96,6 +96,12 @@ int kwik_layer_create(double depth, const std::string& name) {
 int g_view_camera[8] = {0};
 int g_view_visible[8] = {1, 0, 0, 0, 0, 0, 0, 0};
 
+int g_gpu_blendmode = 0;
+int g_gpu_blend_src = 2;
+int g_gpu_blend_dst = 6;
+int g_gpu_colorwrite[4] = {1, 1, 1, 1};
+int g_gpu_alphatest = 0;
+
 static int g_next_instance_id = 10000000;
 static int g_next_struct_id = 20000000;
 static std::unordered_map<int, std::shared_ptr<Instance>> g_structs;
@@ -1349,6 +1355,270 @@ GMLFN(collision_circle) {
     return Value(-4.0);
 }
 
+GMLFN(instance_place_list) {
+    if (argc < 5) return Value(0.0);
+    int who = (int)(double)args[2];
+    int list = (int)(double)args[3];
+    double px = (double)args[0], py = (double)args[1];
+    int n = 0;
+    for (auto& sp : g_instances) {
+        Instance* other = sp.get();
+        if (other == self || !inst_matches(other, who)) continue;
+        if (instances_hit(self, px, py, other)) {
+            kwik_ds_list_push(list, Value((double)other->id));
+            ++n;
+        }
+    }
+    return Value((double)n);
+}
+
+GMLFN(collision_rectangle_list) {
+    if (argc < 8) return Value(0.0);
+    int who = (int)(double)args[4];
+    int list = (int)(double)args[6];
+    KBox a;
+    a.lx0 = std::min((double)args[0], (double)args[2]);
+    a.lx1 = std::max((double)args[0], (double)args[2]);
+    a.ly0 = std::min((double)args[1], (double)args[3]);
+    a.ly1 = std::max((double)args[1], (double)args[3]);
+    a.x = 0;
+    a.y = 0;
+    a.valid = true;
+    bool notme = gml_truthy(args[5]);
+    int n = 0;
+    for (auto& sp : g_instances) {
+        Instance* other = sp.get();
+        if ((notme && other == self) || !inst_matches(other, who)) continue;
+        KBox b = make_box(other, other->x, other->y);
+        if (boxes_hit(a, b)) {
+            kwik_ds_list_push(list, Value((double)other->id));
+            ++n;
+        }
+    }
+    return Value((double)n);
+}
+
+GMLFN(collision_line_list) {
+    if (argc < 8) return Value(0.0);
+    int who = (int)(double)args[4];
+    int list = (int)(double)args[6];
+    bool notme = gml_truthy(args[5]);
+    double x1 = (double)args[0], y1 = (double)args[1];
+    double x2 = (double)args[2], y2 = (double)args[3];
+    int steps = (int)std::ceil(std::max(std::fabs(x2 - x1), std::fabs(y2 - y1)) / 4.0) + 1;
+    int n = 0;
+    for (auto& sp : g_instances) {
+        Instance* other = sp.get();
+        if ((notme && other == self) || !inst_matches(other, who)) continue;
+        for (int i = 0; i <= steps; ++i) {
+            double f = steps == 0 ? 0.0 : (double)i / steps;
+            double px = x1 + (x2 - x1) * f, py = y1 + (y2 - y1) * f;
+            bool hit;
+            if (inst_masks(other)) {
+                hit = point_in_instance(other, other->x, other->y, px, py);
+            } else {
+                KBox b = make_box(other, other->x, other->y);
+                hit = point_in_box(b, px, py);
+            }
+            if (hit) {
+                kwik_ds_list_push(list, Value((double)other->id));
+                ++n;
+                break;
+            }
+        }
+    }
+    return Value((double)n);
+}
+
+GMLFN(collision_circle_list) {
+    if (argc < 7) return Value(0.0);
+    double cx = (double)args[0], cy = (double)args[1], r = (double)args[2];
+    int who = (int)(double)args[3];
+    int list = (int)(double)args[5];
+    bool notme = gml_truthy(args[4]);
+    int n = 0;
+    for (auto& sp : g_instances) {
+        Instance* other = sp.get();
+        if ((notme && other == self) || !inst_matches(other, who)) continue;
+        double l, t, rr, b;
+        if (!inst_bbox(other, other->x, other->y, l, t, rr, b)) continue;
+        double px = cx < l ? l : (cx > rr ? rr : cx);
+        double py = cy < t ? t : (cy > b ? b : cy);
+        if ((px - cx) * (px - cx) + (py - cy) * (py - cy) <= r * r) {
+            kwik_ds_list_push(list, Value((double)other->id));
+            ++n;
+        }
+    }
+    return Value((double)n);
+}
+
+GMLFN(collision_ellipse) {
+    if (argc < 5) return Value(-4.0);
+    double x1 = (double)args[0], y1 = (double)args[1], x2 = (double)args[2], y2 = (double)args[3];
+    double cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+    double rx = std::fabs(x2 - x1) / 2, ry = std::fabs(y2 - y1) / 2;
+    if (rx <= 0 || ry <= 0) return Value(-4.0);
+    int who = (int)(double)args[4];
+    for (auto& sp : g_instances) {
+        Instance* other = sp.get();
+        if (other == self || !inst_matches(other, who)) continue;
+        double l, t, r, b;
+        if (!inst_bbox(other, other->x, other->y, l, t, r, b)) continue;
+        double px = cx < l ? l : (cx > r ? r : cx);
+        double py = cy < t ? t : (cy > b ? b : cy);
+        double dx = (px - cx) / rx, dy = (py - cy) / ry;
+        if (dx * dx + dy * dy <= 1.0) return Value((double)other->id);
+    }
+    return Value(-4.0);
+}
+
+GMLFN(instance_change) {
+    if (!self || argc < 1) return Value();
+    int obj = (int)(double)args[0];
+    if (obj < 0 || obj >= g_object_count_rt) return Value();
+    bool perform = argc > 1 && gml_truthy(args[1]);
+    if (perform) fire(self, EVK_DESTROY, 0);
+    self->object_index = obj;
+    self->var("sprite_index") = Value((double)g_objects_rt[obj].sprite_index);
+    self->var("mask_index") = Value((double)g_objects_rt[obj].mask_index);
+    self->var("image_index") = Value(0.0);
+    self->depth = g_objects_rt[obj].depth;
+    self->visible = g_objects_rt[obj].visible != 0;
+    if (perform) fire(self, EVK_CREATE, 0);
+    return Value();
+}
+
+GMLFN(instance_copy) {
+    if (!self) return Value(-4.0);
+    bool perform = argc > 0 && gml_truthy(args[0]);
+    auto sp = std::make_shared<Instance>();
+    sp->x = self->x;
+    sp->y = self->y;
+    sp->xstart = self->xstart;
+    sp->ystart = self->ystart;
+    sp->xprevious = self->xprevious;
+    sp->yprevious = self->yprevious;
+    sp->id = g_next_instance_id++;
+    sp->object_index = self->object_index;
+    sp->depth = self->depth;
+    sp->visible = self->visible;
+    sp->persistent = self->persistent;
+    sp->m_speed = self->m_speed;
+    sp->m_dir = self->m_dir;
+    sp->m_hs = self->m_hs;
+    sp->m_vs = self->m_vs;
+    sp->vars = self->vars;
+    g_instances.push_back(sp);
+    if (perform) fire(sp.get(), EVK_CREATE, 0);
+    return Value((double)sp->id);
+}
+
+GMLFN(instance_id_get) {
+    (void)self;
+    int idx = argc > 0 ? (int)(double)args[0] : -1;
+    int n = 0;
+    for (auto& sp : g_instances) {
+        if (sp->dead || !sp->active) continue;
+        if (n == idx) return Value((double)sp->id);
+        ++n;
+    }
+    return Value(-4.0);
+}
+
+GMLFN(instance_deactivate_layer) { (void)self; (void)args; (void)argc; return Value(); }
+
+GMLFN(mouse_check_button_released) {
+    (void)self;
+    int b = argc > 0 ? (int)(double)args[0] : 0;
+    if (b == -1) return Value(render_mouse_released(0) || render_mouse_released(1) || render_mouse_released(2));
+    return Value(render_mouse_released(b - 1));
+}
+
+GMLFN(keyboard_clear) {
+    (void)self;
+    render_keyboard_clear(argc > 0 ? (int)(double)args[0] : -1);
+    return Value();
+}
+
+GMLFN(alarm_set) {
+    if (!self || argc < 2) return Value();
+    auto it = self->vars.find("alarm");
+    if (it != self->vars.end() && it->second.type == Value::ARR && it->second.arr) {
+        int idx = (int)(double)args[0];
+        if (idx >= 0 && (size_t)idx < it->second.arr->items.size())
+            it->second.arr->items[idx] = Value((double)args[1]);
+    }
+    return Value();
+}
+
+GMLFN(camera_get_active) {
+    (void)self; (void)args; (void)argc;
+    return Value((double)g_view_camera[0]);
+}
+
+GMLFN(camera_get_default) {
+    (void)self; (void)args; (void)argc;
+    return Value(0.0);
+}
+
+GMLFN(room_get_camera) {
+    (void)self;
+    int vi = argc > 1 ? (int)(double)args[1] : 0;
+    if (vi < 0 || vi >= 8) vi = 0;
+    return Value((double)g_view_camera[vi]);
+}
+
+struct CallLater {
+    double frames_left = 0;
+    double interval = 0;
+    bool repeat = false;
+    bool alive = true;
+    Value cb;
+    std::weak_ptr<Instance> owner;
+};
+static std::vector<CallLater> g_call_later;
+
+GMLFN(call_later) {
+    if (argc < 3) return Value(-1.0);
+    CallLater cl;
+    double amount = (double)args[0];
+    int unit = (int)(double)args[1];
+    cl.interval = unit == 0 ? amount * (g_room_speed_v > 0 ? g_room_speed_v : 30.0) : amount;
+    if (cl.interval < 1) cl.interval = 1;
+    cl.frames_left = cl.interval;
+    cl.cb = args[2];
+    cl.repeat = argc > 3 && gml_truthy(args[3]);
+    if (self) cl.owner = self->shared_from_this();
+    g_call_later.push_back(std::move(cl));
+    return Value((double)(g_call_later.size() - 1));
+}
+
+GMLFN(call_cancel) {
+    (void)self;
+    int i = argc > 0 ? (int)(double)args[0] : -1;
+    if (i >= 0 && (size_t)i < g_call_later.size()) g_call_later[i].alive = false;
+    return Value();
+}
+
+static void tick_call_later() {
+    size_t n = g_call_later.size();
+    for (size_t i = 0; i < n; ++i) {
+        CallLater& cl = g_call_later[i];
+        if (!cl.alive) continue;
+        cl.frames_left -= 1;
+        if (cl.frames_left > 0) continue;
+        auto sp = cl.owner.lock();
+        Instance* who = sp ? sp.get() : nullptr;
+        if (!who || !who->dead) {
+            Value cb = cl.cb;
+            kwik_call_method(who, cb, Value(-1.0), nullptr, 0);
+        }
+        CallLater& cl2 = g_call_later[i];
+        if (cl2.repeat) cl2.frames_left = cl2.interval;
+        else cl2.alive = false;
+    }
+}
+
 GMLFN(distance_to_object) {
     if (argc < 1 || !self) return Value(1e10);
     int who = (int)(double)args[0];
@@ -1768,6 +2038,230 @@ void kwik_path_clear(int id) {
 
 bool kwik_path_exists(int id) { return kwik_path_by_id(id) != nullptr; }
 
+struct MpGrid {
+    double left = 0, top = 0, cellw = 1, cellh = 1;
+    int hcells = 0, vcells = 0;
+    std::vector<uint8_t> cells;
+};
+static std::vector<MpGrid> g_mp_grids;
+
+static MpGrid* mp_grid_get(int id) {
+    if (id < 0 || (size_t)id >= g_mp_grids.size()) return nullptr;
+    MpGrid& g = g_mp_grids[id];
+    return g.hcells > 0 && g.vcells > 0 ? &g : nullptr;
+}
+
+GMLFN(mp_grid_create) {
+    (void)self;
+    if (argc < 6) return Value(-1.0);
+    MpGrid g;
+    g.left = (double)args[0];
+    g.top = (double)args[1];
+    g.hcells = (int)(double)args[2];
+    g.vcells = (int)(double)args[3];
+    g.cellw = (double)args[4];
+    g.cellh = (double)args[5];
+    if (g.hcells <= 0 || g.vcells <= 0) return Value(-1.0);
+    g.cells.assign((size_t)g.hcells * g.vcells, 0);
+    int id = (int)g_mp_grids.size();
+    g_mp_grids.push_back(std::move(g));
+    return Value((double)id);
+}
+
+GMLFN(mp_grid_destroy) {
+    (void)self;
+    MpGrid* g = argc > 0 ? mp_grid_get((int)(double)args[0]) : nullptr;
+    if (g) {
+        g->cells.clear();
+        g->hcells = g->vcells = 0;
+    }
+    return Value();
+}
+
+GMLFN(mp_grid_clear_all) {
+    (void)self;
+    MpGrid* g = argc > 0 ? mp_grid_get((int)(double)args[0]) : nullptr;
+    if (g) std::fill(g->cells.begin(), g->cells.end(), (uint8_t)0);
+    return Value();
+}
+
+GMLFN(mp_grid_add_cell) {
+    (void)self;
+    MpGrid* g = argc > 2 ? mp_grid_get((int)(double)args[0]) : nullptr;
+    if (g) {
+        int cx = (int)(double)args[1], cy = (int)(double)args[2];
+        if (cx >= 0 && cy >= 0 && cx < g->hcells && cy < g->vcells) g->cells[cx * g->vcells + cy] = 1;
+    }
+    return Value();
+}
+
+GMLFN(mp_grid_clear_cell) {
+    (void)self;
+    MpGrid* g = argc > 2 ? mp_grid_get((int)(double)args[0]) : nullptr;
+    if (g) {
+        int cx = (int)(double)args[1], cy = (int)(double)args[2];
+        if (cx >= 0 && cy >= 0 && cx < g->hcells && cy < g->vcells) g->cells[cx * g->vcells + cy] = 0;
+    }
+    return Value();
+}
+
+GMLFN(mp_grid_get_cell) {
+    (void)self;
+    MpGrid* g = argc > 2 ? mp_grid_get((int)(double)args[0]) : nullptr;
+    if (!g) return Value(0.0);
+    int cx = (int)(double)args[1], cy = (int)(double)args[2];
+    if (cx < 0 || cy < 0 || cx >= g->hcells || cy >= g->vcells) return Value(0.0);
+    return Value(g->cells[cx * g->vcells + cy] ? -1.0 : 0.0);
+}
+
+static void mp_grid_rect(MpGrid* g, int x1, int y1, int x2, int y2, uint8_t v) {
+    if (x1 < 0) x1 = 0;
+    if (y1 < 0) y1 = 0;
+    if (x2 > g->hcells - 1) x2 = g->hcells - 1;
+    if (y2 > g->vcells - 1) y2 = g->vcells - 1;
+    for (int cx = x1; cx <= x2; ++cx)
+        for (int cy = y1; cy <= y2; ++cy) g->cells[cx * g->vcells + cy] = v;
+}
+
+GMLFN(mp_grid_add_rectangle) {
+    (void)self;
+    MpGrid* g = argc > 4 ? mp_grid_get((int)(double)args[0]) : nullptr;
+    if (g) mp_grid_rect(g, (int)(double)args[1], (int)(double)args[2], (int)(double)args[3],
+                        (int)(double)args[4], 1);
+    return Value();
+}
+
+GMLFN(mp_grid_clear_rectangle) {
+    (void)self;
+    MpGrid* g = argc > 4 ? mp_grid_get((int)(double)args[0]) : nullptr;
+    if (g) mp_grid_rect(g, (int)(double)args[1], (int)(double)args[2], (int)(double)args[3],
+                        (int)(double)args[4], 0);
+    return Value();
+}
+
+GMLFN(mp_grid_add_instances) {
+    (void)self;
+    MpGrid* g = argc > 1 ? mp_grid_get((int)(double)args[0]) : nullptr;
+    if (!g) return Value();
+    int who = (int)(double)args[1];
+    for (auto& sp : g_instances) {
+        Instance* other = sp.get();
+        if (!inst_matches(other, who)) continue;
+        double l, t, r, b;
+        if (!inst_bbox(other, other->x, other->y, l, t, r, b)) {
+            l = r = other->x;
+            t = b = other->y;
+        }
+        int x1 = (int)std::floor((l - g->left) / g->cellw);
+        int y1 = (int)std::floor((t - g->top) / g->cellh);
+        int x2 = (int)std::floor((r - g->left) / g->cellw);
+        int y2 = (int)std::floor((b - g->top) / g->cellh);
+        mp_grid_rect(g, x1, y1, x2, y2, 1);
+    }
+    return Value();
+}
+
+GMLFN(mp_grid_path) {
+    (void)self;
+    if (argc < 7) return Value(0.0);
+    MpGrid* mp = mp_grid_get((int)(double)args[0]);
+    int path = (int)(double)args[1];
+    if (!mp || !kwik_path_exists(path)) return Value(0.0);
+    double xstart = (double)args[2], ystart = (double)args[3];
+    double xgoal = (double)args[4], ygoal = (double)args[5];
+    bool allowdiag = gml_truthy(args[6]);
+    int V = mp->vcells, Hc = mp->hcells;
+
+    int cxs = (int)std::floor((xstart - mp->left) / mp->cellw);
+    int cys = (int)std::floor((ystart - mp->top) / mp->cellh);
+    int cxg = (int)std::floor((xgoal - mp->left) / mp->cellw);
+    int cyg = (int)std::floor((ygoal - mp->top) / mp->cellh);
+    if (cxs < 0 || cxs >= Hc || cys < 0 || cys >= V) return Value(0.0);
+    if (cxg < 0 || cxg >= Hc || cyg < 0 || cyg >= V) return Value(0.0);
+    if (mp->cells[cxs * V + cys]) return Value(0.0);
+    if (mp->cells[cxg * V + cyg]) return Value(0.0);
+
+    int total = Hc * V;
+    std::vector<int> dist(total, -1);
+    std::vector<int> qq(total);
+    int startIdx = cxs * V + cys, goalIdx = cxg * V + cyg;
+    int head = 0, tail = 0;
+    dist[startIdx] = 1;
+    qq[tail++] = startIdx;
+    bool result = false;
+    auto& cells = mp->cells;
+    while (tail > head) {
+        int val = qq[head++];
+        int xx = val / V, yy = val % V;
+        if (xx == cxg && yy == cyg) { result = true; break; }
+        int d = dist[val] + 1;
+        bool f1 = xx > 0 && yy < V - 1 && dist[(xx - 1) * V + (yy + 1)] == -1 && !cells[(xx - 1) * V + (yy + 1)];
+        bool f2 = yy < V - 1 && dist[xx * V + (yy + 1)] == -1 && !cells[xx * V + (yy + 1)];
+        bool f3 = xx < Hc - 1 && yy < V - 1 && dist[(xx + 1) * V + (yy + 1)] == -1 && !cells[(xx + 1) * V + (yy + 1)];
+        bool f4 = xx > 0 && dist[(xx - 1) * V + yy] == -1 && !cells[(xx - 1) * V + yy];
+        bool f6 = xx < Hc - 1 && dist[(xx + 1) * V + yy] == -1 && !cells[(xx + 1) * V + yy];
+        bool f7 = xx > 0 && yy > 0 && dist[(xx - 1) * V + (yy - 1)] == -1 && !cells[(xx - 1) * V + (yy - 1)];
+        bool f8 = yy > 0 && dist[xx * V + (yy - 1)] == -1 && !cells[xx * V + (yy - 1)];
+        bool f9 = xx < Hc - 1 && yy > 0 && dist[(xx + 1) * V + (yy - 1)] == -1 && !cells[(xx + 1) * V + (yy - 1)];
+        if (f4) { dist[(xx - 1) * V + yy] = d; qq[tail++] = (xx - 1) * V + yy; }
+        if (f6) { dist[(xx + 1) * V + yy] = d; qq[tail++] = (xx + 1) * V + yy; }
+        if (f8) { dist[xx * V + (yy - 1)] = d; qq[tail++] = xx * V + (yy - 1); }
+        if (f2) { dist[xx * V + (yy + 1)] = d; qq[tail++] = xx * V + (yy + 1); }
+        if (allowdiag && f1 && f2 && f4) { dist[(xx - 1) * V + (yy + 1)] = d; qq[tail++] = (xx - 1) * V + (yy + 1); }
+        if (allowdiag && f7 && f8 && f4) { dist[(xx - 1) * V + (yy - 1)] = d; qq[tail++] = (xx - 1) * V + (yy - 1); }
+        if (allowdiag && f3 && f2 && f6) { dist[(xx + 1) * V + (yy + 1)] = d; qq[tail++] = (xx + 1) * V + (yy + 1); }
+        if (allowdiag && f9 && f8 && f6) { dist[(xx + 1) * V + (yy - 1)] = d; qq[tail++] = (xx + 1) * V + (yy - 1); }
+    }
+    if (!result) return Value(0.0);
+
+    std::vector<int> chain;
+    {
+        int xx = cxg, yy = cyg;
+        chain.push_back(xx * V + yy);
+        while (xx != cxs || yy != cys) {
+            int val = dist[xx * V + yy];
+            bool f1 = xx > 0 && yy < V - 1 && dist[(xx - 1) * V + (yy + 1)] == val - 1;
+            bool f2 = yy < V - 1 && dist[xx * V + (yy + 1)] == val - 1;
+            bool f3 = xx < Hc - 1 && yy < V - 1 && dist[(xx + 1) * V + (yy + 1)] == val - 1;
+            bool f4 = xx > 0 && dist[(xx - 1) * V + yy] == val - 1;
+            bool f6 = xx < Hc - 1 && dist[(xx + 1) * V + yy] == val - 1;
+            bool f7 = xx > 0 && yy > 0 && dist[(xx - 1) * V + (yy - 1)] == val - 1;
+            bool f8 = yy > 0 && dist[xx * V + (yy - 1)] == val - 1;
+            bool f9 = xx < Hc - 1 && yy > 0 && dist[(xx + 1) * V + (yy - 1)] == val - 1;
+            if (f4) { xx -= 1; } else if (f6) { xx += 1; } else if (f8) { yy -= 1; } else if (f2) {
+                yy += 1;
+            } else if (allowdiag && f1) { xx -= 1; yy += 1; } else if (allowdiag && f3) {
+                xx += 1; yy += 1;
+            } else if (allowdiag && f7) { xx -= 1; yy -= 1; } else if (allowdiag && f9) {
+                xx += 1; yy -= 1;
+            } else {
+                return Value(0.0);
+            }
+            chain.push_back(xx * V + yy);
+        }
+    }
+
+    kwik_path_clear(path);
+    int chainLen = (int)chain.size();
+    int pointCount = (startIdx == goalIdx) ? 2 : chainLen;
+    for (int i = 0; i < pointCount; ++i) {
+        double wx, wy;
+        if (startIdx == goalIdx) {
+            wx = (i == 0 ? xstart : xgoal);
+            wy = (i == 0 ? ystart : ygoal);
+        } else {
+            int cidx = chain[chainLen - 1 - i];
+            int xx = cidx / V, yy = cidx % V;
+            wx = mp->left + (xx + 0.5) * mp->cellw;
+            wy = mp->top + (yy + 0.5) * mp->cellh;
+            if (i == 0) { wx = xstart; wy = ystart; }
+            if (i == chainLen - 1) { wx = xgoal; wy = ygoal; }
+        }
+        kwik_path_add_point(path, wx, wy);
+    }
+    return Value(1.0);
+}
+
 GMLFN(path_start) {
     if (!self || argc < 3) return Value();
     int path = (int)(double)args[0];
@@ -1975,6 +2469,7 @@ static void update_camera_follow() {
     Camera& c = g_cameras[g_view_camera[0]];
     if (c.target >= 0) {
         Instance* t = kwik_first_instance(c.target);
+        if (t && (t->dead || !t->active)) t = nullptr;
         if (t) {
             double left = c.x + c.border_x;
             double right = c.x + c.w - c.border_x;
@@ -2149,6 +2644,45 @@ static void load_room(int index, bool clear_persistent) {
     sweep_dead();
 }
 
+void kwik_render_tilemap(const RtLayer& tm, double ox, double oy) {
+    if (tm.tileset < 0 || tm.tileset >= g_tileset_count) return;
+    const KwikTileset& ts = g_tilesets[tm.tileset];
+    if (ts.image < 0 || ts.columns <= 0) return;
+    const uint32_t* grid = kwik_tilemap_grid(tm.grid_blob, tm.grid_w * tm.grid_h);
+    if (!grid) return;
+    int strideX = ts.tile_w + 2 * ts.border_x;
+    int strideY = ts.tile_h + 2 * ts.border_y;
+    double bla = (((tm.color >> 24) & 0xFF) / 255.0) * tm.alpha;
+    unsigned int bblend = tm.color & 0xFFFFFF;
+    for (int gy = 0; gy < tm.grid_h; ++gy) {
+        for (int gx = 0; gx < tm.grid_w; ++gx) {
+            uint32_t cell = grid[gy * tm.grid_w + gx];
+            uint32_t idx = cell & 0x0007FFFF;
+            if (idx == 0) continue;
+            idx = kwik_tileset_frame_index(ts, idx);
+            int col = idx % ts.columns;
+            int row = idx / ts.columns;
+            double srcx = col * strideX + ts.border_x;
+            double srcy = row * strideY + ts.border_y;
+            bool mirror = cell & 0x10000000;
+            bool flip = cell & 0x20000000;
+            bool rot = cell & 0x40000000;
+            if (rot) {
+                kwik_draw_image_part_rot(ts.image, srcx, srcy, ts.tile_w, ts.tile_h,
+                                         ox + gx * ts.tile_w + ts.tile_w / 2.0,
+                                         oy + gy * ts.tile_h + ts.tile_h / 2.0, ts.tile_w / 2.0,
+                                         ts.tile_h / 2.0, mirror ? -1.0 : 1.0, flip ? -1.0 : 1.0,
+                                         -90.0, bblend, bla);
+            } else {
+                double dx = ox + gx * ts.tile_w + (mirror ? ts.tile_w : 0);
+                double dy = oy + gy * ts.tile_h + (flip ? ts.tile_h : 0);
+                kwik_draw_image_part(ts.image, srcx, srcy, ts.tile_w, ts.tile_h, dx, dy,
+                                     mirror ? -1.0 : 1.0, flip ? -1.0 : 1.0, bblend, bla);
+            }
+        }
+    }
+}
+
 static void draw_world() {
     Camera& cam = g_cameras[g_view_camera[0]];
     render_set_view(cam.x, cam.y, cam.w, cam.h);
@@ -2207,41 +2741,7 @@ static void draw_world() {
     for (const DrawItem& it : items) {
         if (it.tilemap) {
             const RtLayer& tm = *it.layer;
-            if (tm.tileset < 0 || tm.tileset >= g_tileset_count) continue;
-            const KwikTileset& ts = g_tilesets[tm.tileset];
-            if (ts.image < 0 || ts.columns <= 0) continue;
-            const uint32_t* grid = kwik_tilemap_grid(tm.grid_blob, tm.grid_w * tm.grid_h);
-            if (!grid) continue;
-            static int dbg = std::getenv("KWIK_DEBUG_TILES") ? 30 : 0;
-            if (dbg > 0) {
-                --dbg;
-                int drawn = 0;
-                for (int i = 0; i < tm.grid_w * tm.grid_h; ++i)
-                    if ((grid[i] & 0x7FFFF) != 0) ++drawn;
-                std::fprintf(stderr, "[tiles] layer '%s' tileset=%d img=%d %dx%d drawn=%d\n",
-                             tm.name.c_str(), tm.tileset, ts.image, tm.grid_w, tm.grid_h, drawn);
-            }
-            int strideX = ts.tile_w + 2 * ts.border_x;
-            int strideY = ts.tile_h + 2 * ts.border_y;
-            double bla = (((tm.color >> 24) & 0xFF) / 255.0) * tm.alpha;
-            unsigned int bblend = tm.color & 0xFFFFFF;
-            for (int gy = 0; gy < tm.grid_h; ++gy) {
-                for (int gx = 0; gx < tm.grid_w; ++gx) {
-                    uint32_t cell = grid[gy * tm.grid_w + gx];
-                    uint32_t idx = cell & 0x0007FFFF;
-                    if (idx == 0) continue;
-                    int col = idx % ts.columns;
-                    int row = idx / ts.columns;
-                    double srcx = col * strideX + ts.border_x;
-                    double srcy = row * strideY + ts.border_y;
-                    bool mirror = cell & 0x10000000;
-                    bool flip = cell & 0x20000000;
-                    double dx = tm.x + gx * ts.tile_w + (mirror ? ts.tile_w : 0);
-                    double dy = tm.y + gy * ts.tile_h + (flip ? ts.tile_h : 0);
-                    kwik_draw_image_part(ts.image, srcx, srcy, ts.tile_w, ts.tile_h, dx, dy,
-                                         mirror ? -1.0 : 1.0, flip ? -1.0 : 1.0, bblend, bla);
-                }
-            }
+            kwik_render_tilemap(tm, tm.x, tm.y);
             continue;
         }
         if (it.layer) {
@@ -2271,9 +2771,14 @@ static void draw_world() {
         }
         if (it.tile) {
             const RoomTile& t = *it.tile;
-            kwik_draw_sprite_part(t.sprite, 0, t.src_x, t.src_y, t.w, t.h, t.x + it.tile_ox,
-                                  t.y + it.tile_oy, t.scale_x, t.scale_y, t.color & 0xFFFFFF,
-                                  ((t.color >> 24) & 0xFF) / 255.0);
+            if (t.whole)
+                kwik_draw_sprite_general(t.sprite, t.frame, t.x + it.tile_ox, t.y + it.tile_oy,
+                                         t.scale_x, t.scale_y, t.angle, t.color & 0xFFFFFF,
+                                         ((t.color >> 24) & 0xFF) / 255.0);
+            else
+                kwik_draw_sprite_part(t.sprite, 0, t.src_x, t.src_y, t.w, t.h, t.x + it.tile_ox,
+                                      t.y + it.tile_oy, t.scale_x, t.scale_y, t.color & 0xFFFFFF,
+                                      ((t.color >> 24) & 0xFF) / 255.0);
             continue;
         }
         Instance* inst = it.inst;
@@ -2316,8 +2821,93 @@ static void draw_world() {
     }
 }
 
+static void debug_globals_tick() {
+    static const char* env = std::getenv("KWIK_DEBUG_GLOBALS");
+    if (!env || !*env || (g_frame_counter % 30) != 0) return;
+    std::string list(env);
+    const Camera& dbgc = g_cameras[g_view_camera[0]];
+    std::fprintf(stderr, "[globals f%llu room=%d cam=%.0f,%.0f %gx%g tgt=%d]", g_frame_counter,
+                 g_current_room, dbgc.x, dbgc.y, dbgc.w, dbgc.h, dbgc.target);
+    size_t p = 0;
+    while (p <= list.size()) {
+        size_t q = list.find(',', p);
+        if (q == std::string::npos) q = list.size();
+        std::string nm = list.substr(p, q - p);
+        if (!nm.empty()) {
+            Value& v = global_var(nm);
+            if (v.type == Value::STR)
+                std::fprintf(stderr, " %s=\"%s\"", nm.c_str(), v.str.c_str());
+            else if (v.type == Value::UNDEF)
+                std::fprintf(stderr, " %s=undef", nm.c_str());
+            else
+                std::fprintf(stderr, " %s=%g", nm.c_str(), v.num);
+        }
+        p = q + 1;
+    }
+    std::fprintf(stderr, "\n");
+}
+
+static void maybe_snapshot() {
+    static const char* env = std::getenv("KWIK_SNAP");
+    if (!env) return;
+    static int interval = std::atoi(env);
+    if (interval <= 0 || g_frame_counter == 0 || g_frame_counter % (unsigned)interval != 0) return;
+    int w = render_app_width(), h = render_app_height();
+    if (w <= 0 || h <= 0) return;
+    std::vector<unsigned char> px((size_t)w * h * 4);
+    if (!render_app_snapshot(0, 0, w, h, px.data())) return;
+    char name[128];
+    std::snprintf(name, sizeof name, "kwik_snap_%06llu_r%d.bmp", g_frame_counter, g_current_room);
+    std::FILE* f = std::fopen(name, "wb");
+    if (!f) return;
+    int rowsz = (w * 3 + 3) & ~3;
+    int datasz = rowsz * h;
+    unsigned char hdr[54] = {'B', 'M'};
+    auto p32 = [&](int off, unsigned v) {
+        hdr[off] = (unsigned char)v;
+        hdr[off + 1] = (unsigned char)(v >> 8);
+        hdr[off + 2] = (unsigned char)(v >> 16);
+        hdr[off + 3] = (unsigned char)(v >> 24);
+    };
+    p32(2, 54 + datasz);
+    p32(10, 54);
+    p32(14, 40);
+    p32(18, (unsigned)w);
+    p32(22, (unsigned)h);
+    hdr[26] = 1;
+    hdr[28] = 24;
+    p32(34, (unsigned)datasz);
+    std::fwrite(hdr, 1, 54, f);
+    std::vector<unsigned char> row(rowsz, 0);
+    for (int y = h - 1; y >= 0; --y) {
+        for (int x = 0; x < w; ++x) {
+            const unsigned char* s = &px[((size_t)y * w + x) * 4];
+            row[x * 3] = s[2];
+            row[x * 3 + 1] = s[1];
+            row[x * 3 + 2] = s[0];
+        }
+        std::fwrite(row.data(), 1, rowsz, f);
+    }
+    std::fclose(f);
+}
+
+static void maybe_force_room() {
+    static const char* env = std::getenv("KWIK_ROOM");
+    static bool done = false;
+    if (!env || done) return;
+    if (g_frame_counter >= 180) {
+        done = true;
+        kwik_room_goto(std::atoi(env));
+    }
+}
+
 static void run_step_phase() {
     size_t n;
+
+    debug_globals_tick();
+    maybe_snapshot();
+    maybe_force_room();
+    update_camera_follow();
 
     n = g_instances.size();
     for (size_t i = 0; i < n; ++i) {
@@ -2332,6 +2922,8 @@ static void run_step_phase() {
         if (inst->dead || !inst->active) continue;
         run_alarms(inst);
     }
+
+    tick_call_later();
 
     {
         double wheel = render_wheel_delta();
@@ -2465,7 +3057,6 @@ static void run_step_phase() {
         l.y += l.vspeed;
     }
 
-    update_camera_follow();
     sweep_dead();
     ++g_frame_counter;
 
@@ -2482,9 +3073,28 @@ static void run_step_phase() {
                 return it == in->vars.end() ? -1 : (double)it->second;
             };
             std::fprintf(stderr,
-                         "  #%d %s (%.0f,%.0f) vis=%d act=%d depth=%.0f spr=%g idx=%.2f spd=%g\n",
+                         "  #%d %s (%.0f,%.0f) vis=%d act=%d depth=%.0f spr=%g idx=%.2f spd=%g",
                          in->id, nm, in->x, in->y, (int)in->visible, (int)in->active, in->depth,
                          gv("sprite_index"), gv("image_index"), gv("image_speed"));
+            static bool dbg_bbox = std::getenv("KWIK_DEBUG_BBOX") != nullptr;
+            if (dbg_bbox) {
+                double l, t, r, b;
+                if (inst_bbox(in, in->x, in->y, l, t, r, b))
+                    std::fprintf(stderr, " bbox=%.0f,%.0f..%.0f,%.0f", l, t, r, b);
+                else
+                    std::fprintf(stderr, " bbox=FAIL");
+            }
+            static const char* extra_var = std::getenv("KWIK_DEBUG_VAR");
+            if (extra_var && *extra_var) {
+                auto it = in->vars.find(extra_var);
+                if (it == in->vars.end())
+                    std::fprintf(stderr, " %s=<unset>", extra_var);
+                else if (it->second.type == Value::STR)
+                    std::fprintf(stderr, " %s=\"%s\"", extra_var, it->second.str.c_str());
+                else
+                    std::fprintf(stderr, " %s=%g", extra_var, (double)it->second);
+            }
+            std::fprintf(stderr, "\n");
         }
     }
 }

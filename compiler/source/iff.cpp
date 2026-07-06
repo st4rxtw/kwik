@@ -24,6 +24,7 @@ bool GameData::load(const std::string& path) {
     parse_variables();
     parse_code();
     parse_objects();
+    parse_scripts();
     parse_rooms();
     parse_glob();
     parse_gen8();
@@ -49,11 +50,14 @@ void GameData::parse_gen8() {
     if (!nm.empty()) game_name_ = nm;
     display_name_ = plausible(100);
     if (display_name_.empty()) display_name_ = game_name_;
-    if (c->size >= 24) {
-        uint32_t raw = u32(c->offset + c->size - 24);
+    for (uint32_t back = 24; back <= 48 && back <= c->size; back += 4) {
+        uint32_t raw = u32(c->offset + c->size - back);
         float f;
         std::memcpy(&f, &raw, 4);
-        if (f >= 1.0f && f <= 1000.0f) game_fps_ = (int)f;
+        if (f >= 1.0f && f <= 1000.0f && f == (float)(int)f) {
+            game_fps_ = (int)f;
+            break;
+        }
     }
 }
 
@@ -211,6 +215,28 @@ void GameData::parse_objects() {
     }
 }
 
+void GameData::parse_scripts() {
+    const Chunk* c = chunk("SCPT");
+    if (!c) return;
+    std::unordered_map<uint32_t, int32_t> by_bc;
+    for (size_t i = 0; i < code_.size(); ++i) by_bc.emplace(code_[i].bytecode_offset, (int32_t)i);
+    uint32_t count = u32(c->offset);
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t ptr = u32(c->offset + 4 + i * 4);
+        std::string name = string_at_offset(u32(ptr));
+        int32_t code = i32(ptr + 4);
+        if (code < 0) continue;
+        code &= 0x7FFFFFFF;
+        if (code >= (int32_t)code_.size()) continue;
+        if (code_[code].name.rfind("gml_GlobalScript_", 0) == 0) {
+            auto it = by_bc.find(code_[code].bytecode_offset + 4);
+            if (it != by_bc.end() && code_[it->second].name.rfind("gml_Script_", 0) == 0)
+                code = it->second;
+        }
+        scripts_[name] = code;
+    }
+}
+
 void GameData::parse_rooms() {
     const Chunk* c = chunk("ROOM");
     if (!c) return;
@@ -289,8 +315,12 @@ void GameData::parse_rooms() {
                 rl.id = i32(lp + 4);
                 rl.type = (int32_t)u32(lp + 8);
                 rl.depth = i32(lp + 12);
-                rl.x = i32(lp + 16);
-                rl.y = i32(lp + 20);
+                float lx, ly;
+                uint32_t ulx = u32(lp + 16), uly = u32(lp + 20);
+                std::memcpy(&lx, &ulx, 4);
+                std::memcpy(&ly, &uly, 4);
+                rl.x = (int32_t)lx;
+                rl.y = (int32_t)ly;
                 rl.visible = i32(lp + 32) ? 1 : 0;
                 if (rl.type == 1) {
                     int32_t sprite = i32(lp + 56);
@@ -340,6 +370,40 @@ void GameData::parse_rooms() {
                             }
                         }
                     }
+                    uint32_t sl = u32(lp + 52);
+                    if (sl > c->offset && sl < c->offset + c->size) {
+                        uint32_t sn = u32(sl);
+                        if (sn <= 100000) {
+                            for (uint32_t si = 0; si < sn; ++si) {
+                                uint32_t sp = u32(sl + 4 + si * 4);
+                                if (sp <= c->offset || sp >= c->offset + c->size) continue;
+                                RoomTile t;
+                                t.sprite = i32(sp + 4);
+                                t.x = i32(sp + 8);
+                                t.y = i32(sp + 12);
+                                float fsx, fsy, fframe, frot;
+                                uint32_t usx = u32(sp + 16), usy = u32(sp + 20);
+                                uint32_t uframe = u32(sp + 36), urot = u32(sp + 40);
+                                std::memcpy(&fsx, &usx, 4);
+                                std::memcpy(&fsy, &usy, 4);
+                                std::memcpy(&fframe, &uframe, 4);
+                                std::memcpy(&frot, &urot, 4);
+                                t.scale_x = fsx;
+                                t.scale_y = fsy;
+                                t.color = u32(sp + 24);
+                                t.frame = (int32_t)fframe;
+                                t.angle = frot;
+                                t.depth = rl.depth;
+                                t.src_x = 0;
+                                t.src_y = 0;
+                                t.w = 0;
+                                t.h = 0;
+                                t.whole = 1;
+                                if (t.sprite >= 0 && t.sprite < sprite_count)
+                                    r.tiles.push_back(t);
+                            }
+                        }
+                    }
                     rl.tile_count = (int32_t)r.tiles.size() - rl.tile_first;
                     r.layers.push_back(rl);
                 } else if (rl.type == 4) {
@@ -349,13 +413,8 @@ void GameData::parse_rooms() {
                     if (rl.grid_w > 0 && rl.grid_h > 0 && rl.grid_w < 4096 && rl.grid_h < 4096) {
                         uint32_t g = lp + 60;
                         size_t n = (size_t)rl.grid_w * rl.grid_h;
-                        bool any = false;
                         rl.grid.resize(n);
-                        for (size_t i = 0; i < n; ++i) {
-                            rl.grid[i] = u32(g + i * 4);
-                            if ((rl.grid[i] & 0x0007FFFF) != 0) any = true;
-                        }
-                        if (!any) rl.grid.clear();
+                        for (size_t i = 0; i < n; ++i) rl.grid[i] = u32(g + i * 4);
                     } else {
                         rl.grid_w = rl.grid_h = 0;
                     }

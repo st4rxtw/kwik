@@ -25,6 +25,7 @@ struct SpriteInfo {
     int speed_type;
     int sep_masks = 0;
     int mask_blob = -1;
+    int tile_repeat = 0;
 };
 
 struct GlyphInfo {
@@ -56,6 +57,11 @@ struct TilesetInfo {
     int border_x = 0;
     int border_y = 0;
     int columns = 0;
+    int frames = 1;
+    int tile_count = 0;
+    int frame_ms = 0;
+    std::vector<uint32_t> tile_ids;
+    int map_blob = -1;
 };
 
 struct AssetExtraction {

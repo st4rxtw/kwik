@@ -162,7 +162,6 @@ GMLFN(surface_getpixel_ext) {
     return Value((double)((unsigned)px[0] | ((unsigned)px[1] << 8) | ((unsigned)px[2] << 16) |
                           ((unsigned)px[3] << 24)));
 }
-GMLFN(buffer_get_surface) { (void)args; (void)argc; return kwik_missing(self, "buffer_get_surface"); }
 GMLFN(screen_save) { (void)self; (void)args; (void)argc; return Value(); }
 
 GMLFN(draw_surface) {
@@ -249,6 +248,20 @@ GMLFN(draw_vertex_texture_color) {
                             C(args, argc, 4), A(args, argc, 5, 1), g_prim_textured);
     return Value();
 }
+GMLFN(draw_vertex_texture_colour) { return draw_vertex_texture_color(self, args, argc); }
+GMLFN(draw_vertex_color) {
+    (void)self;
+    render_primitive_vertex(A(args, argc, 0), A(args, argc, 1), 0, 0, C(args, argc, 2),
+                            A(args, argc, 3, 1), false);
+    return Value();
+}
+GMLFN(draw_vertex_colour) { return draw_vertex_color(self, args, argc); }
+GMLFN(draw_vertex_texture) {
+    (void)self;
+    render_primitive_vertex(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2), A(args, argc, 3),
+                            render_get_color(), render_get_alpha(), g_prim_textured);
+    return Value();
+}
 
 GMLFN(draw_sprite_general) {
     (void)self;
@@ -259,7 +272,22 @@ GMLFN(draw_sprite_general) {
                           C(args, argc, 11), A(args, argc, 15, 1));
     return Value();
 }
-GMLFN(draw_sprite_pos) { (void)args; (void)argc; return kwik_missing(self, "draw_sprite_pos"); }
+GMLFN(draw_sprite_pos) {
+    (void)self;
+    if (argc < 10) return Value();
+    int image = kwik_sprite_frame_image((int)A(args, argc, 0), (int)A(args, argc, 1));
+    int w = 0, h = 0;
+    unsigned int tex = kwik_image_texture(image, w, h);
+    if (!tex) return Value();
+    double alpha = A(args, argc, 10, 1);
+    render_primitive_begin(6, tex);
+    render_primitive_vertex(A(args, argc, 2), A(args, argc, 3), 0, 0, 0xFFFFFF, alpha, true);
+    render_primitive_vertex(A(args, argc, 4), A(args, argc, 5), 1, 0, 0xFFFFFF, alpha, true);
+    render_primitive_vertex(A(args, argc, 6), A(args, argc, 7), 1, 1, 0xFFFFFF, alpha, true);
+    render_primitive_vertex(A(args, argc, 8), A(args, argc, 9), 0, 1, 0xFFFFFF, alpha, true);
+    render_primitive_end();
+    return Value();
+}
 GMLFN(draw_sprite_stretched_ext) {
     (void)self;
     if (argc < 8) return Value();
@@ -275,7 +303,15 @@ GMLFN(draw_sprite_tiled) {
                            A(args, argc, 3), 1, 1, 0xFFFFFF, render_get_alpha());
     return Value();
 }
-GMLFN(draw_tilemap) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(draw_tilemap) {
+    (void)self;
+    int id = (int)A(args, argc, 0, -1);
+    if (id >= 900000) id -= 900000;
+    RtLayer* l = kwik_layer_by_id(id);
+    if (!l) return Value();
+    kwik_render_tilemap(*l, A(args, argc, 1), A(args, argc, 2));
+    return Value();
+}
 
 GMLFN(draw_text_ext) {
     (void)self;
@@ -303,8 +339,25 @@ GMLFN(texture_get_texel_width) { (void)self; (void)args; (void)argc; return Valu
 GMLFN(texture_get_texel_height) { (void)self; (void)args; (void)argc; return Value(1.0 / 2048.0); }
 GMLFN(gpu_set_alphatestenable) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(gpu_set_alphatestref) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(gpu_set_blendmode_ext) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(gpu_set_colorwriteenable) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(gpu_set_blendmode_ext) {
+    (void)self;
+    g_gpu_blend_src = (int)A(args, argc, 0, 2);
+    g_gpu_blend_dst = (int)A(args, argc, 1, 6);
+    render_set_blendmode_ext(g_gpu_blend_src, g_gpu_blend_dst);
+    return Value();
+}
+GMLFN(gpu_set_colorwriteenable) {
+    (void)self;
+    if (argc == 1 && args[0].type == Value::ARR && args[0].arr) {
+        for (int i = 0; i < 4 && i < (int)args[0].arr->items.size(); ++i)
+            g_gpu_colorwrite[i] = gml_truthy(args[0].arr->items[i]) ? 1 : 0;
+    } else {
+        for (int i = 0; i < 4 && i < argc; ++i) g_gpu_colorwrite[i] = gml_truthy(args[i]) ? 1 : 0;
+    }
+    render_set_colorwrite(g_gpu_colorwrite[0], g_gpu_colorwrite[1], g_gpu_colorwrite[2],
+                          g_gpu_colorwrite[3]);
+    return Value();
+}
 
 GMLFN(sprite_get_bbox_left) {
     (void)self;
@@ -418,10 +471,19 @@ GMLFN(layer_sprite_get_x) { (void)self; (void)args; (void)argc; return Value(0.0
 GMLFN(layer_sprite_get_xscale) { (void)self; (void)args; (void)argc; return Value(1.0); }
 GMLFN(layer_sprite_get_y) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(layer_sprite_get_yscale) { (void)self; (void)args; (void)argc; return Value(1.0); }
+GMLFN(layer_sprite_get_angle) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(layer_sprite_get_alpha) { (void)self; (void)args; (void)argc; return Value(1.0); }
+GMLFN(layer_sprite_get_blend) { (void)self; (void)args; (void)argc; return Value(16777215.0); }
 GMLFN(layer_sprite_speed) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(layer_sprite_x) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(layer_sprite_y) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(layer_tilemap_get_id) { (void)self; (void)args; (void)argc; return Value(-1.0); }
+GMLFN(layer_tilemap_get_id) {
+    (void)self;
+    if (argc < 1) return Value(-1.0);
+    RtLayer* l = kwik_layer_by_id((int)(double)args[0]);
+    if (!l || l->grid_blob < 0) return Value(-1.0);
+    return Value((double)(900000 + l->id));
+}
 GMLFN(tilemap_get_x) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(tilemap_x) { (void)self; (void)args; (void)argc; return Value(); }
 
@@ -473,6 +535,21 @@ GMLFN(ds_priority_empty) {
     (void)self;
     DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
     return Value(!p || p->data.empty());
+}
+GMLFN(ds_priority_delete_max) {
+    (void)self;
+    DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
+    if (!p || p->data.empty()) return Value();
+    auto it = std::prev(p->data.end());
+    Value v = it->second;
+    p->data.erase(it);
+    return v;
+}
+GMLFN(ds_priority_destroy) {
+    (void)self;
+    DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
+    if (p) { p->alive = false; p->data.clear(); }
+    return Value();
 }
 GMLFN(ds_queue_create) {
     (void)self; (void)args; (void)argc;

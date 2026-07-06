@@ -1,6 +1,8 @@
 #include "gml_runtime.h"
 #include "engine_internal.h"
+#include "render.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -206,8 +208,83 @@ GMLFN(ds_map_clear) {
     return Value();
 }
 GMLFN(ds_map_add_list) { return ds_map_set(self, args, argc); }
-GMLFN(ds_list_read) { (void)args; (void)argc; return kwik_missing(self, "ds_list_read"); }
-GMLFN(ds_list_write) { (void)args; (void)argc; return kwik_missing(self, "ds_list_write"); }
+static void hex_append(std::string& out, const void* p, size_t n) {
+    static const char* hx = "0123456789ABCDEF";
+    const unsigned char* b = (const unsigned char*)p;
+    for (size_t i = 0; i < n; ++i) {
+        out.push_back(hx[b[i] >> 4]);
+        out.push_back(hx[b[i] & 15]);
+    }
+}
+static bool hex_read(const std::string& in, size_t& pos, void* p, size_t n) {
+    if (pos + n * 2 > in.size()) return false;
+    unsigned char* b = (unsigned char*)p;
+    for (size_t i = 0; i < n; ++i) {
+        auto nib = [&](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            return -1;
+        };
+        int hi = nib(in[pos]), lo = nib(in[pos + 1]);
+        if (hi < 0 || lo < 0) return false;
+        b[i] = (unsigned char)((hi << 4) | lo);
+        pos += 2;
+    }
+    return true;
+}
+
+GMLFN(ds_list_write) {
+    (void)self;
+    DsList* l = argc > 0 ? list_of(args[0]) : nullptr;
+    if (!l) return Value("");
+    std::string out = "4B57494B";
+    uint32_t count = (uint32_t)l->data.size();
+    hex_append(out, &count, 4);
+    for (const Value& v : l->data) {
+        if (v.type == Value::STR) {
+            uint8_t tag = 1;
+            uint32_t len = (uint32_t)v.str.size();
+            hex_append(out, &tag, 1);
+            hex_append(out, &len, 4);
+            hex_append(out, v.str.data(), v.str.size());
+        } else {
+            uint8_t tag = 0;
+            double d = v.num;
+            hex_append(out, &tag, 1);
+            hex_append(out, &d, 8);
+        }
+    }
+    return Value(out);
+}
+GMLFN(ds_list_read) {
+    (void)self;
+    DsList* l = argc > 0 ? list_of(args[0]) : nullptr;
+    if (!l || argc < 2) return Value();
+    std::string in = (std::string)args[1];
+    size_t pos = 0;
+    uint32_t magic = 0;
+    if (!hex_read(in, pos, &magic, 4) || magic != 0x4B49574Bu) return Value();
+    uint32_t count = 0;
+    if (!hex_read(in, pos, &count, 4) || count > 1000000) return Value();
+    l->data.clear();
+    for (uint32_t i = 0; i < count; ++i) {
+        uint8_t tag = 0;
+        if (!hex_read(in, pos, &tag, 1)) return Value();
+        if (tag == 1) {
+            uint32_t len = 0;
+            if (!hex_read(in, pos, &len, 4) || len > 10000000) return Value();
+            std::string s(len, '\0');
+            if (!hex_read(in, pos, s.data(), len)) return Value();
+            l->data.push_back(Value(s));
+        } else {
+            double d = 0;
+            if (!hex_read(in, pos, &d, 8)) return Value();
+            l->data.push_back(Value(d));
+        }
+    }
+    return Value();
+}
 GMLFN(ds_exists) {
     (void)self;
     if (argc < 2) return Value(0.0);
@@ -1006,6 +1083,145 @@ GMLFN(buffer_md5) {
     char hex[33];
     for (int i = 0; i < 16; ++i) std::snprintf(hex + i * 2, 3, "%02x", digest[i]);
     return Value(std::string(hex, 32));
+}
+
+
+bool kwik_ds_list_push(int list, const Value& v) {
+    if (list < 0 || (size_t)list >= g_lists.size() || !g_lists[list].alive) return false;
+    g_lists[list].data.push_back(v);
+    return true;
+}
+
+GMLFN(ds_list_insert) {
+    (void)self;
+    DsList* l = argc > 2 ? list_of(args[0]) : nullptr;
+    if (l) {
+        int i = (int)(double)args[1];
+        if (i < 0) i = 0;
+        if ((size_t)i > l->data.size()) i = (int)l->data.size();
+        l->data.insert(l->data.begin() + i, args[2]);
+    }
+    return Value();
+}
+GMLFN(ds_list_replace) {
+    (void)self;
+    DsList* l = argc > 2 ? list_of(args[0]) : nullptr;
+    if (l) {
+        int i = (int)(double)args[1];
+        if (i >= 0 && (size_t)i < l->data.size()) l->data[i] = args[2];
+    }
+    return Value();
+}
+GMLFN(ds_list_set) {
+    (void)self;
+    DsList* l = argc > 2 ? list_of(args[0]) : nullptr;
+    if (l) {
+        int i = (int)(double)args[1];
+        if (i >= 0) {
+            if ((size_t)i >= l->data.size()) l->data.resize(i + 1);
+            l->data[i] = args[2];
+        }
+    }
+    return Value();
+}
+GMLFN(ds_list_sort) {
+    (void)self;
+    DsList* l = argc > 0 ? list_of(args[0]) : nullptr;
+    if (!l) return Value();
+    bool asc = argc < 2 || gml_truthy(args[1]);
+    std::stable_sort(l->data.begin(), l->data.end(), [asc](const Value& a, const Value& b) {
+        bool lt;
+        if (a.type == Value::STR || b.type == Value::STR)
+            lt = (std::string)a < (std::string)b;
+        else
+            lt = (double)a < (double)b;
+        return asc ? lt : !lt;
+    });
+    return Value();
+}
+
+struct DsGrid {
+    int w = 0, h = 0;
+    std::vector<Value> data;
+    bool alive = false;
+};
+static std::vector<DsGrid> g_grids;
+
+GMLFN(ds_grid_create) {
+    (void)self;
+    DsGrid g;
+    g.alive = true;
+    g.w = (int)A(args, argc, 0);
+    g.h = (int)A(args, argc, 1);
+    if (g.w < 0) g.w = 0;
+    if (g.h < 0) g.h = 0;
+    g.data.assign((size_t)g.w * g.h, Value(0.0));
+    g_grids.push_back(std::move(g));
+    return Value((double)(g_grids.size() - 1));
+}
+GMLFN(ds_grid_destroy) {
+    (void)self;
+    int i = argc > 0 ? (int)(double)args[0] : -1;
+    if (i >= 0 && (size_t)i < g_grids.size()) {
+        g_grids[i].alive = false;
+        g_grids[i].data.clear();
+    }
+    return Value();
+}
+
+static std::vector<DsList> g_stacks;
+GMLFN(ds_stack_create) {
+    (void)self; (void)args; (void)argc;
+    g_stacks.emplace_back();
+    g_stacks.back().alive = true;
+    return Value((double)(g_stacks.size() - 1));
+}
+GMLFN(ds_stack_destroy) {
+    (void)self;
+    int i = argc > 0 ? (int)(double)args[0] : -1;
+    if (i >= 0 && (size_t)i < g_stacks.size()) {
+        g_stacks[i].alive = false;
+        g_stacks[i].data.clear();
+    }
+    return Value();
+}
+GMLFN(ds_queue_destroy) { (void)self; (void)args; (void)argc; return Value(); }
+
+GMLFN(buffer_exists) {
+    (void)self;
+    return Value(argc > 0 && buf_of(args[0]) != nullptr);
+}
+GMLFN(buffer_get_surface) {
+    (void)self;
+    Buffer* b = argc > 1 ? buf_of(args[0]) : nullptr;
+    if (!b) return Value();
+    int surf = (int)A(args, argc, 1);
+    int w = render_surface_width(surf), h = render_surface_height(surf);
+    if (w <= 0 || h <= 0) return Value();
+    size_t off = (size_t)A(args, argc, 2);
+    size_t need = (size_t)w * h * 4;
+    if (b->data.size() < off + need) b->data.resize(off + need);
+    render_surface_snapshot(surf, 0, 0, w, h, b->data.data() + off);
+    return Value();
+}
+GMLFN(buffer_set_surface) {
+    (void)self;
+    Buffer* b = argc > 1 ? buf_of(args[0]) : nullptr;
+    if (!b) return Value();
+    int surf = (int)A(args, argc, 1);
+    int w = render_surface_width(surf), h = render_surface_height(surf);
+    if (w <= 0 || h <= 0) return Value();
+    size_t off = (size_t)A(args, argc, 2);
+    size_t need = (size_t)w * h * 4;
+    if (b->data.size() < off + need) return Value();
+    unsigned int tex = render_upload_texture(b->data.data() + off, w, h);
+    if (!tex) return Value();
+    if (render_surface_set_target(surf)) {
+        render_surface_clear(0, 0.0);
+        render_draw_quad(tex, 0, 0, w, h, 0, 0, 1, 1, 0, 0.f, 0.f, 1.f, 1.f, 0xFFFFFF, 1.0);
+        render_surface_reset_target();
+    }
+    return Value();
 }
 
 }

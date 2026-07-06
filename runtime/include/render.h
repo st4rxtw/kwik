@@ -37,6 +37,8 @@ double render_mouse_x();
 double render_mouse_y();
 bool render_mouse_down(int button);
 bool render_mouse_pressed(int button);
+bool render_mouse_released(int button);
+void render_keyboard_clear(int gml_vk);
 
 void render_set_color(unsigned int bgr);
 unsigned int render_get_color();
@@ -47,6 +49,10 @@ void render_set_valign(int align);
 int render_get_halign();
 int render_get_valign();
 void render_set_blendmode(int mode);
+void render_set_blendmode_ext(int src, int dst);
+void render_set_blendmode_sepalpha(int src, int dst, int asrc, int adst);
+void render_set_fog(bool on, unsigned int bgr);
+void render_set_colorwrite(bool r, bool g, bool b, bool a);
 
 unsigned int render_upload_texture(const unsigned char* rgba, int w, int h);
 bool render_app_surface_available();
@@ -54,6 +60,7 @@ unsigned int render_app_texture();
 int render_app_width();
 int render_app_height();
 bool render_app_snapshot(int x, int y, int w, int h, unsigned char* rgba_out);
+bool render_surface_snapshot(int id, int x, int y, int w, int h, unsigned char* rgba_out);
 
 int render_surface_create(int w, int h);
 bool render_surface_exists(int id);

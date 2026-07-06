@@ -78,8 +78,20 @@ struct RtLayer {
 };
 
 const uint32_t* kwik_tilemap_grid(int blob, int cells);
+uint32_t* kwik_tilemap_grid_mut(int blob, int cells);
+uint32_t kwik_tileset_frame_index(const KwikTileset& ts, uint32_t idx);
+void kwik_render_tilemap(const RtLayer& tm, double ox, double oy);
 void kwik_draw_image_part(int image, double sx, double sy, double sw, double sh, double dx,
                           double dy, double xs, double ys, unsigned int blend, double alpha);
+void kwik_draw_image_part_rot(int image, double sx, double sy, double sw, double sh, double dx,
+                              double dy, double ox, double oy, double xs, double ys, double angle,
+                              unsigned int blend, double alpha);
+bool kwik_ds_list_push(int list, const Value& v);
+extern int g_gpu_blendmode;
+extern int g_gpu_blend_src;
+extern int g_gpu_blend_dst;
+extern int g_gpu_colorwrite[4];
+extern int g_gpu_alphatest;
 
 extern std::vector<RtLayer> g_rt_layers;
 RtLayer* kwik_layer_by_id(int id);

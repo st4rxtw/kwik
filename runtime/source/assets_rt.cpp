@@ -208,11 +208,34 @@ void kwik_draw_image_part(int image, double sx, double sy, double sw, double sh,
     render_draw_quad(img.tex, dx, dy, sw, sh, 0, 0, xs, ys, 0, u0, v0, u1, v1, blend, alpha);
 }
 
+uint32_t kwik_tileset_frame_index(const KwikTileset& ts, uint32_t idx) {
+    if (ts.map_blob < 0 || ts.tile_count <= 0 || idx >= (uint32_t)ts.tile_count) return idx;
+    int frames = ts.frames > 0 ? ts.frames : 1;
+    const uint32_t* map = kwik_tilemap_grid(ts.map_blob, ts.tile_count * frames);
+    if (!map) return idx;
+    int fr = 0;
+    if (frames > 1 && ts.frame_ms > 0)
+        fr = (int)((long long)(now_ms() / ts.frame_ms) % frames);
+    return map[idx * frames + fr];
+}
+
+void kwik_draw_image_part_rot(int image, double sx, double sy, double sw, double sh, double dx,
+                              double dy, double ox, double oy, double xs, double ys, double angle,
+                              unsigned int blend, double alpha) {
+    LoadedImage& img = load_image(image);
+    if (!img.ok || img.w <= 0 || img.h <= 0) return;
+    float u0 = (float)(sx / img.w), v0 = (float)(sy / img.h);
+    float u1 = (float)((sx + sw) / img.w), v1 = (float)((sy + sh) / img.h);
+    render_draw_quad(img.tex, dx, dy, sw, sh, ox, oy, xs, ys, angle, u0, v0, u1, v1, blend,
+                     alpha);
+}
+
+static std::unordered_map<int, std::vector<uint32_t>> g_tilemap_cache;
+
 const uint32_t* kwik_tilemap_grid(int blob, int cells) {
-    static std::unordered_map<int, std::vector<uint32_t>> cache;
-    auto it = cache.find(blob);
-    if (it != cache.end()) return it->second.empty() ? nullptr : it->second.data();
-    std::vector<uint32_t>& g = cache[blob];
+    auto it = g_tilemap_cache.find(blob);
+    if (it != g_tilemap_cache.end()) return it->second.empty() ? nullptr : it->second.data();
+    std::vector<uint32_t>& g = g_tilemap_cache[blob];
     unsigned int size = 0;
     int type = 0;
     const unsigned char* d = kwik_sound_blob(blob, size, type);
@@ -223,6 +246,13 @@ const uint32_t* kwik_tilemap_grid(int blob, int cells) {
                    ((unsigned)d[i * 4 + 2] << 16) | ((unsigned)d[i * 4 + 3] << 24);
     }
     return g.empty() ? nullptr : g.data();
+}
+
+uint32_t* kwik_tilemap_grid_mut(int blob, int cells) {
+    kwik_tilemap_grid(blob, cells);
+    auto it = g_tilemap_cache.find(blob);
+    if (it == g_tilemap_cache.end() || it->second.empty()) return nullptr;
+    return it->second.data();
 }
 
 int kwik_sprite_add_file(const std::string& path, int imgnum, int xorig, int yorig) {
@@ -282,6 +312,22 @@ void kwik_draw_sprite_general(int spr, int sub, double x, double y, double xs, d
     if (frame < 0) return;
     LoadedImage& img = load_image(frame);
     if (!img.ok) return;
+    if (s->tile_repeat && angle == 0 && img.w > 0 && img.h > 0 &&
+        (std::fabs(xs) != 1.0 || std::fabs(ys) != 1.0)) {
+        double totw = img.w * std::fabs(xs), toth = img.h * std::fabs(ys);
+        double ox = x - s->origin_x * std::fabs(xs);
+        double oy = y - s->origin_y * std::fabs(ys);
+        for (double py = 0; py < toth; py += img.h) {
+            double ch = std::min((double)img.h, toth - py);
+            for (double px = 0; px < totw; px += img.w) {
+                double cw = std::min((double)img.w, totw - px);
+                float u1 = (float)(cw / img.w), v1 = (float)(ch / img.h);
+                render_draw_quad(img.tex, ox + px, oy + py, cw, ch, 0, 0, 1, 1, 0, 0, 0, u1, v1,
+                                 blend, alpha);
+            }
+        }
+        return;
+    }
     render_draw_quad(img.tex, x, y, img.w, img.h, s->origin_x, s->origin_y, xs, ys, angle, 0, 0, 1,
                      1, blend, alpha);
 }

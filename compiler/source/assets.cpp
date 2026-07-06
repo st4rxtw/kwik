@@ -221,7 +221,17 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
                 info.speed_type = (int)gd.u32(sp + 72);
                 uint32_t base = sp + 76;
                 if (sver >= 2) base += 4;
-                if (sver >= 3) base += 4;
+                if (sver >= 3) {
+                    uint32_t ns = gd.u32(sp + 80);
+                    if (ns && (size_t)ns + 40 <= gd.bytes().size()) {
+                        bool enabled = gd.u32(ns + 16) != 0;
+                        bool margins0 = gd.i32(ns) == 0 && gd.i32(ns + 4) == 0 &&
+                                        gd.i32(ns + 8) == 0 && gd.i32(ns + 12) == 0;
+                        int center_mode = gd.i32(ns + 36);
+                        if (enabled && margins0 && center_mode == 1) info.tile_repeat = 1;
+                    }
+                    base += 4;
+                }
                 tex_list = base;
             } else {
                 tex_list = sp + 56;
@@ -364,6 +374,21 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
             ti.border_x = border_x;
             ti.border_y = border_y;
             ti.columns = columns;
+            int frames = gd.i32(p + 44);
+            int tile_count = gd.i32(p + 48);
+            int64_t frame_us = (int64_t)gd.u32(p + 56) | ((int64_t)gd.u32(p + 60) << 32);
+            if (frames >= 1 && frames <= 64 && tile_count > 0 && tile_count <= 100000) {
+                ti.frames = frames;
+                ti.tile_count = tile_count;
+                ti.frame_ms = (int)(frame_us / 1000);
+                bool identity = frames == 1;
+                ti.tile_ids.resize((size_t)tile_count * frames);
+                for (size_t k = 0; k < ti.tile_ids.size(); ++k) {
+                    ti.tile_ids[k] = gd.u32(p + 64 + (uint32_t)k * 4);
+                    if (identity && ti.tile_ids[k] != k) identity = false;
+                }
+                if (identity) ti.tile_ids.clear();
+            }
             images.push_back(build_image_entry(srcW, srcH, 0, 0, png));
             out.tilesets[i] = ti;
         }
@@ -491,6 +516,22 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
                 sounds.push_back(std::move(e));
             }
         }
+    }
+
+    for (auto& ti : out.tilesets) {
+        if (ti.tile_ids.empty()) continue;
+        std::vector<uint8_t> e;
+        auto w32 = [&](uint32_t v) {
+            e.push_back(v);
+            e.push_back(v >> 8);
+            e.push_back(v >> 16);
+            e.push_back(v >> 24);
+        };
+        w32(6);
+        w32((uint32_t)ti.tile_ids.size() * 4);
+        for (uint32_t id : ti.tile_ids) w32(id);
+        ti.map_blob = (int)sounds.size();
+        sounds.push_back(std::move(e));
     }
 
     out.image_count = images.size();

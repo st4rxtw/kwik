@@ -83,6 +83,9 @@ struct RoomTile {
     double scale_x = 1.0;
     double scale_y = 1.0;
     uint32_t color = 0xFFFFFFFF;
+    double angle = 0.0;
+    int32_t frame = 0;
+    int32_t whole = 0;
 };
 
 struct Room {
@@ -137,6 +140,10 @@ public:
     std::string function_by_index(uint32_t idx) const {
         return idx < func_names_.size() ? func_names_[idx] : std::string();
     }
+    int32_t script_code_index(const std::string& name) const {
+        auto it = scripts_.find(name);
+        return it == scripts_.end() ? -1 : it->second;
+    }
     VarRef var_at(uint32_t push_addr) const;
 
     uint8_t u8(uint32_t off) const;
@@ -151,6 +158,7 @@ private:
     void parse_variables();
     void parse_code();
     void parse_objects();
+    void parse_scripts();
     void parse_rooms();
     void parse_glob();
     void parse_gen8();
@@ -163,6 +171,7 @@ private:
     std::vector<std::string> func_names_;
     std::unordered_map<uint32_t, VarRef> var_by_addr_;
     std::vector<GameObject> objects_;
+    std::unordered_map<std::string, int32_t> scripts_;
     std::vector<Room> rooms_;
     std::vector<uint32_t> global_init_;
     std::string source_path_;
