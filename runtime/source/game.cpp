@@ -1843,6 +1843,7 @@ GMLFN(camera_set_view_pos) {
     Camera& c = cam_of(args[0]);
     c.x = (double)args[1];
     c.y = (double)args[2];
+    c.script_controlled = true;
     return Value();
 }
 GMLFN(camera_set_view_size) {
@@ -2471,15 +2472,17 @@ static void update_camera_follow() {
         Instance* t = kwik_first_instance(c.target);
         if (t && (t->dead || !t->active)) t = nullptr;
         if (t) {
-            double left = c.x + c.border_x;
-            double right = c.x + c.w - c.border_x;
-            double top = c.y + c.border_y;
-            double bottom = c.y + c.h - c.border_y;
+            double bx = std::min(c.border_x, c.w / 2);
+            double by = std::min(c.border_y, c.h / 2);
+            double left = c.x + bx;
+            double right = c.x + c.w - bx;
+            double top = c.y + by;
+            double bottom = c.y + c.h - by;
             double nx = c.x, ny = c.y;
-            if (t->x < left) nx = t->x - c.border_x;
-            else if (t->x > right) nx = t->x - c.w + c.border_x;
-            if (t->y < top) ny = t->y - c.border_y;
-            else if (t->y > bottom) ny = t->y - c.h + c.border_y;
+            if (t->x < left) nx = t->x - bx;
+            else if (t->x > right) nx = t->x - c.w + bx;
+            if (t->y < top) ny = t->y - by;
+            else if (t->y > bottom) ny = t->y - c.h + by;
             if (c.speed_x >= 0) {
                 double dx = nx - c.x;
                 if (std::fabs(dx) > c.speed_x) nx = c.x + (dx > 0 ? c.speed_x : -c.speed_x);
@@ -2532,6 +2535,7 @@ static void load_room(int index, bool clear_persistent) {
     cam.speed_x = room.view_speed_x;
     cam.speed_y = room.view_speed_y;
     cam.target = room.view_object;
+    cam.script_controlled = false;
 
     render_set_room(room.width, room.height, room.bg_color);
 
@@ -2907,7 +2911,12 @@ static void run_step_phase() {
     debug_globals_tick();
     maybe_snapshot();
     maybe_force_room();
-    update_camera_follow();
+    static bool dbg_cam = std::getenv("KWIK_DEBUG_CAM") != nullptr;
+    if (dbg_cam) {
+        const Camera& c = g_cameras[g_view_camera[0]];
+        std::fprintf(stderr, "[cam f%llu r%d] %.1f,%.1f %gx%g tgt=%d\n", g_frame_counter,
+                     g_current_room, c.x, c.y, c.w, c.h, c.target);
+    }
 
     n = g_instances.size();
     for (size_t i = 0; i < n; ++i) {
@@ -3057,6 +3066,7 @@ static void run_step_phase() {
         l.y += l.vspeed;
     }
 
+    update_camera_follow();
     sweep_dead();
     ++g_frame_counter;
 

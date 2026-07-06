@@ -11,6 +11,7 @@ struct Camera {
     double speed_x = -1, speed_y = -1;
     double angle = 0;
     bool in_use = false;
+    bool script_controlled = false;
 };
 
 extern std::vector<Camera> g_cameras;

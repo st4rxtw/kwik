@@ -76,9 +76,9 @@ surface_resize is unimplemented
 2. There's a soft-lock in the Flowery battle (After he says something about our heart)
 3. Rooms that use the platformer stuff don't load the tiles for the room, only the bg
 4. When queen prints/unprints the sprite it overlays her sprite instead of "going inside" & it's black
-5. When activating the platformer/feather the game camera breaks & renders the regular stuff & the platformer stuff at the same time causing them to flicker and fight over what's supposed to render
-6. Darkworld is asically justbroken rn
-7. Pink's battle is broken
+5. Pink's battle room's are broken
+6. Pink's web thing (I forgot what it was called) only shows one of them instead of all 3-4
+7. You can't collect the hearts in Pink's battle
 
 ## DELTATALE
 
