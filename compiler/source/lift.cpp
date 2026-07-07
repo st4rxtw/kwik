@@ -1259,7 +1259,6 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
         mainf << "    { \"\", nullptr },\n};\n";
         mainf << "static const int g_script_entry_count = " << script_count << ";\n";
     }
-    std::string game_dir = gd.source_dir();
     mainf << "\nint main(int argc, char** argv) {\n";
     mainf << "    kwik_set_program_args(argc, argv);\n";
     mainf << "    kwik_fill_objects();\n";

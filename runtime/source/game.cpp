@@ -3109,6 +3109,21 @@ static void run_step_phase() {
     }
 }
 
+static std::string executable_dir() {
+#ifdef _WIN32
+    wchar_t buf[MAX_PATH];
+    DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    if (n == 0 || n == MAX_PATH) return "";
+    return std::filesystem::path(buf).parent_path().string();
+#else
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) return "";
+    buf[n] = '\0';
+    return std::filesystem::path(buf).parent_path().string();
+#endif
+}
+
 int run_game(const GameTables& tables) {
     g_objects_rt = tables.objects;
     g_object_count_rt = tables.object_count;
@@ -3116,7 +3131,7 @@ int run_game(const GameTables& tables) {
     g_room_count_rt = tables.room_count;
     g_script_entries = tables.scripts;
     g_script_entry_count = tables.script_count;
-    g_game_dir = tables.game_dir ? tables.game_dir : "";
+    g_game_dir = tables.game_dir && *tables.game_dir ? tables.game_dir : executable_dir();
     g_assets_path = tables.assets_path ? tables.assets_path : "Assets.dat";
     if (tables.room_count <= 0) return 1;
 
