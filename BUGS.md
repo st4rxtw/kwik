@@ -46,7 +46,6 @@
 16. Layering issue on the part where pipis are flying and exploding
 17. The machine near the room where you fight spamton neo isn't rendered
 18. Fountain room doesn't look right
-19. 
 
 ## DELTARUNE CHAPTER 3
 
@@ -79,6 +78,7 @@ surface_resize is unimplemented
 5. Pink's battle room's are broken
 6. Pink's web thing (I forgot what it was called) only shows one of them instead of all 3-4
 7. You can't collect the hearts in Pink's battle
+8. Can't act in platformer mode
 
 ## DELTATALE
 
