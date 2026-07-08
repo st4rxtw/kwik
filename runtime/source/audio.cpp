@@ -388,6 +388,19 @@ GMLFN(audio_set_master_gain) {
     return Value();
 }
 
+GMLFN(audio_master_gain) {
+    (void)self;
+    if (ensure_engine() && argc >= 1)
+        ma_engine_set_volume(&g_engine, (float)(double)args[argc - 1]);
+    return Value();
+}
+
+GMLFN(audio_get_master_gain) {
+    (void)self; (void)args; (void)argc;
+    if (!ensure_engine()) return Value(1.0);
+    return Value((double)ma_engine_get_volume(&g_engine));
+}
+
 GMLFN(audio_create_stream) {
     (void)self;
     if (argc < 1) return Value(-1.0);
