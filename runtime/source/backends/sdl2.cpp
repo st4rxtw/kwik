@@ -308,6 +308,11 @@ unsigned int render_upload_texture(const unsigned char* rgba, int w, int h) {
     return tex_register(tex, w, h, false);
 }
 
+unsigned int render_texture_from_surface(int id, int x, int y, int w, int h) {
+    (void)id; (void)x; (void)y; (void)w; (void)h;
+    return 0;
+}
+
 static SDL_Color vcol(unsigned int bgr, double alpha) {
     SDL_Color c;
     if (g_fog_on) {
@@ -378,6 +383,14 @@ void render_draw_glyph_colored(unsigned int tex, double dx, double dy, double dw
 void render_draw_glyph(unsigned int tex, double dx, double dy, double dw, double dh,
                        float u0, float v0, float u1, float v1) {
     render_draw_glyph_colored(tex, dx, dy, dw, dh, u0, v0, u1, v1, g_color_bgr, g_alpha);
+}
+
+void render_draw_glyphs_colored(unsigned int tex, const GlyphQuad* quads, int count,
+                                unsigned int bgr, double alpha) {
+    for (int i = 0; i < count; ++i) {
+        const GlyphQuad& q = quads[i];
+        render_draw_glyph_colored(tex, q.x, q.y, q.w, q.h, q.u0, q.v0, q.u1, q.v1, bgr, alpha);
+    }
 }
 
 static void geometry_fill(const SDL_Vertex* verts, int nverts, const int* idx, int nidx) {

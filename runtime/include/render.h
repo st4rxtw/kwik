@@ -55,6 +55,7 @@ void render_set_fog(bool on, unsigned int bgr);
 void render_set_colorwrite(bool r, bool g, bool b, bool a);
 
 unsigned int render_upload_texture(const unsigned char* rgba, int w, int h);
+unsigned int render_texture_from_surface(int id, int x, int y, int w, int h);
 bool render_app_surface_available();
 unsigned int render_app_texture();
 int render_app_width();
@@ -87,6 +88,14 @@ void render_draw_glyph(unsigned int tex, double dx, double dy, double dw, double
 void render_draw_glyph_colored(unsigned int tex, double dx, double dy, double dw, double dh,
                                float u0, float v0, float u1, float v1, unsigned int bgr,
                                double alpha);
+
+struct GlyphQuad {
+    double x, y, w, h;
+    float u0, v0, u1, v1;
+};
+
+void render_draw_glyphs_colored(unsigned int tex, const GlyphQuad* quads, int count,
+                                unsigned int bgr, double alpha);
 
 void render_draw_rectangle(double x1, double y1, double x2, double y2, bool outline);
 void render_draw_rectangle_color(double x1, double y1, double x2, double y2, unsigned int c1,

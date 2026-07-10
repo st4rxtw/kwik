@@ -1,0 +1,3 @@
+cmake -S out_dir -B out_dir/build-vita -DCMAKE_TOOLCHAIN_FILE=$VITASDK/share/vita.toolchain.cmake
+
+cmake -B buildpsv -DCMAKE_TOOLCHAIN_FILE=$VITASDK/share/vita.toolchain.cmake && cmake --build buildpsv -j$(nproc)

@@ -134,9 +134,14 @@ bool gml_truthy(const Value& a) {
     }
 }
 
-Value& global_var(const std::string& name) {
-    static std::unordered_map<std::string, Value> globals;
-    return globals[name];
+static KwikStrMap<Value> g_globals;
+
+Value& global_var(const std::string& name) { return g_globals[name]; }
+
+Value& global_var(const char* name) {
+    auto it = g_globals.find(KWIK_STR_KEY(name));
+    if (it != g_globals.end()) return it->second;
+    return g_globals.emplace(name, Value()).first->second;
 }
 
 static int64_t g_array_owner = 0;
