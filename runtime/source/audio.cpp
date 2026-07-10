@@ -3,6 +3,10 @@
 
 #define MINIAUDIO_IMPLEMENTATION
 #define MA_NO_ENCODING
+#define MA_NO_RUNTIME_LINKING
+#ifdef __vita__
+#define MA_NO_NEON
+#endif
 #include "miniaudio.h"
 
 #include <cstdio>
@@ -20,6 +24,7 @@ static const int kStreamBase = 200000;
 static const int kHandleBase = 300000;
 
 static ma_engine g_engine;
+static ma_context g_context;
 static bool g_engine_ok = false;
 static bool g_engine_tried = false;
 
@@ -55,7 +60,17 @@ static std::vector<Voice*> g_voices;
 static bool ensure_engine() {
     if (g_engine_tried) return g_engine_ok;
     g_engine_tried = true;
-    g_engine_ok = ma_engine_init(nullptr, &g_engine) == MA_SUCCESS;
+
+    ma_context_config ctx_cfg = ma_context_config_init();
+    ctx_cfg.threadStackSize = 256 * 1024;
+    if (ma_context_init(nullptr, 0, &ctx_cfg, &g_context) != MA_SUCCESS) {
+        std::fprintf(stderr, "[audio] context init failed\n");
+        return false;
+    }
+
+    ma_engine_config eng_cfg = ma_engine_config_init();
+    eng_cfg.pContext = &g_context;
+    g_engine_ok = ma_engine_init(&eng_cfg, &g_engine) == MA_SUCCESS;
     if (!g_engine_ok) std::fprintf(stderr, "[audio] engine init failed\n");
     return g_engine_ok;
 }
@@ -149,10 +164,18 @@ static Voice* start_voice(int what, bool loop) {
         std::vector<unsigned char> bytes;
         if (path) {
             if (!read_file_bytes(*path, bytes)) {
-                size_t slash = path->find_last_of('/');
-                std::string base = slash == std::string::npos ? *path : path->substr(slash + 1);
-                if (!read_file_bytes("mus/" + base, bytes))
-                    if (!read_file_bytes("../mus/" + base, bytes)) read_file_bytes(base, bytes);
+                std::string norm = *path;
+                for (char& c : norm)
+                    if (c == '\\') c = '/';
+                size_t slash = norm.find_last_of('/');
+                std::string base = slash == std::string::npos ? norm : norm.substr(slash + 1);
+                std::string dir = g_game_dir.empty() ? "" : g_game_dir + "/";
+                const std::string candidates[] = {
+                    "mus/" + base, "snd/" + base, "../mus/" + base, "../snd/" + base,
+                    dir + "mus/" + base, dir + "snd/" + base, base,
+                };
+                for (const std::string& c : candidates)
+                    if (read_file_bytes(c, bytes)) break;
             }
             if (!bytes.empty())
                 ok = init_voice_pcm(v, bytes.data(), (unsigned)bytes.size(), 0);
@@ -386,6 +409,19 @@ GMLFN(audio_set_master_gain) {
     if (ensure_engine() && argc >= 1)
         ma_engine_set_volume(&g_engine, (float)(double)args[argc - 1]);
     return Value();
+}
+
+GMLFN(audio_master_gain) {
+    (void)self;
+    if (ensure_engine() && argc >= 1)
+        ma_engine_set_volume(&g_engine, (float)(double)args[argc - 1]);
+    return Value();
+}
+
+GMLFN(audio_get_master_gain) {
+    (void)self; (void)args; (void)argc;
+    if (!ensure_engine()) return Value(1.0);
+    return Value((double)ma_engine_get_volume(&g_engine));
 }
 
 GMLFN(audio_create_stream) {

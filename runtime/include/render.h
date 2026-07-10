@@ -88,6 +88,14 @@ void render_draw_glyph_colored(unsigned int tex, double dx, double dy, double dw
                                float u0, float v0, float u1, float v1, unsigned int bgr,
                                double alpha);
 
+struct GlyphQuad {
+    double x, y, w, h;
+    float u0, v0, u1, v1;
+};
+
+void render_draw_glyphs_colored(unsigned int tex, const GlyphQuad* quads, int count,
+                                unsigned int bgr, double alpha);
+
 void render_draw_rectangle(double x1, double y1, double x2, double y2, bool outline);
 void render_draw_rectangle_color(double x1, double y1, double x2, double y2, unsigned int c1,
                                  unsigned int c2, unsigned int c3, unsigned int c4, bool outline);

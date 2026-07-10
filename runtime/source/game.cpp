@@ -721,77 +721,114 @@ Value kwik_call_method(Instance* self, const Value& fnval, const Value& target,
     return Value();
 }
 
+enum class SpecialVar : unsigned char {
+    None, X, Y, Id, ObjectIndex, Visible, Persistent, Depth, XPrevious, YPrevious, XStart, YStart,
+    Speed, Direction, HSpeed, VSpeed, BboxLeft, BboxRight, BboxTop, BboxBottom, SpriteWidth,
+    SpriteHeight, SpriteXOffset, SpriteYOffset, ImageNumber,
+};
+
+static SpecialVar lookup_special_var(const char* name) {
+    static const std::unordered_map<std::string, SpecialVar> table = {
+        {"x", SpecialVar::X}, {"y", SpecialVar::Y}, {"id", SpecialVar::Id},
+        {"object_index", SpecialVar::ObjectIndex}, {"visible", SpecialVar::Visible},
+        {"persistent", SpecialVar::Persistent}, {"depth", SpecialVar::Depth},
+        {"xprevious", SpecialVar::XPrevious}, {"yprevious", SpecialVar::YPrevious},
+        {"xstart", SpecialVar::XStart}, {"ystart", SpecialVar::YStart},
+        {"speed", SpecialVar::Speed}, {"direction", SpecialVar::Direction},
+        {"hspeed", SpecialVar::HSpeed}, {"vspeed", SpecialVar::VSpeed},
+        {"bbox_left", SpecialVar::BboxLeft}, {"bbox_right", SpecialVar::BboxRight},
+        {"bbox_top", SpecialVar::BboxTop}, {"bbox_bottom", SpecialVar::BboxBottom},
+        {"sprite_width", SpecialVar::SpriteWidth}, {"sprite_height", SpecialVar::SpriteHeight},
+        {"sprite_xoffset", SpecialVar::SpriteXOffset}, {"sprite_yoffset", SpecialVar::SpriteYOffset},
+        {"image_number", SpecialVar::ImageNumber},
+    };
+    auto it = table.find(name);
+    return it == table.end() ? SpecialVar::None : it->second;
+}
+
 static Value scope_get_special(Instance* inst, const char* name, bool& handled) {
     handled = true;
-    if (!std::strcmp(name, "x")) return Value(inst->x);
-    if (!std::strcmp(name, "y")) return Value(inst->y);
-    if (!std::strcmp(name, "id")) return kwik_this(inst);
-    if (!std::strcmp(name, "object_index")) return Value((double)inst->object_index);
-    if (!std::strcmp(name, "visible")) return Value(inst->visible);
-    if (!std::strcmp(name, "persistent")) return Value(inst->persistent);
-    if (!std::strcmp(name, "depth")) return Value(inst->depth);
-    if (!std::strcmp(name, "xprevious")) return Value(inst->xprevious);
-    if (!std::strcmp(name, "yprevious")) return Value(inst->yprevious);
-    if (!std::strcmp(name, "xstart")) return Value(inst->xstart);
-    if (!std::strcmp(name, "ystart")) return Value(inst->ystart);
-    if (!std::strcmp(name, "speed")) return Value(inst->m_speed);
-    if (!std::strcmp(name, "direction")) return Value(inst->m_dir);
-    if (!std::strcmp(name, "hspeed")) return Value(inst->m_hs);
-    if (!std::strcmp(name, "vspeed")) return Value(inst->m_vs);
-    if (!std::strcmp(name, "bbox_left") || !std::strcmp(name, "bbox_right") ||
-        !std::strcmp(name, "bbox_top") || !std::strcmp(name, "bbox_bottom")) {
-        double l, t, r, b;
-        if (!inst_bbox(inst, inst->x, inst->y, l, t, r, b)) return Value(inst->x);
-        if (!std::strcmp(name, "bbox_left")) return Value(l);
-        if (!std::strcmp(name, "bbox_right")) return Value(r - 1);
-        if (!std::strcmp(name, "bbox_top")) return Value(t);
-        return Value(b - 1);
-    }
-    if (!std::strcmp(name, "sprite_width") || !std::strcmp(name, "sprite_height")) {
-        int spr = inst_sprite(inst);
-        double xs = 1, ys = 1;
-        auto ix = inst->vars.find("image_xscale");
-        auto iy = inst->vars.find("image_yscale");
-        if (ix != inst->vars.end()) xs = (double)ix->second;
-        if (iy != inst->vars.end()) ys = (double)iy->second;
-        if (const KwikSprite* sd = kwik_sprite_at(spr)) {
-            if (!std::strcmp(name, "sprite_width")) return Value(sd->width * xs);
-            return Value(sd->height * ys);
+    switch (lookup_special_var(name)) {
+        case SpecialVar::X: return Value(inst->x);
+        case SpecialVar::Y: return Value(inst->y);
+        case SpecialVar::Id: return kwik_this(inst);
+        case SpecialVar::ObjectIndex: return Value((double)inst->object_index);
+        case SpecialVar::Visible: return Value(inst->visible);
+        case SpecialVar::Persistent: return Value(inst->persistent);
+        case SpecialVar::Depth: return Value(inst->depth);
+        case SpecialVar::XPrevious: return Value(inst->xprevious);
+        case SpecialVar::YPrevious: return Value(inst->yprevious);
+        case SpecialVar::XStart: return Value(inst->xstart);
+        case SpecialVar::YStart: return Value(inst->ystart);
+        case SpecialVar::Speed: return Value(inst->m_speed);
+        case SpecialVar::Direction: return Value(inst->m_dir);
+        case SpecialVar::HSpeed: return Value(inst->m_hs);
+        case SpecialVar::VSpeed: return Value(inst->m_vs);
+        case SpecialVar::BboxLeft:
+        case SpecialVar::BboxRight:
+        case SpecialVar::BboxTop:
+        case SpecialVar::BboxBottom: {
+            double l, t, r, b;
+            if (!inst_bbox(inst, inst->x, inst->y, l, t, r, b)) return Value(inst->x);
+            switch (lookup_special_var(name)) {
+                case SpecialVar::BboxLeft: return Value(l);
+                case SpecialVar::BboxRight: return Value(r - 1);
+                case SpecialVar::BboxTop: return Value(t);
+                default: return Value(b - 1);
+            }
         }
-        return Value(0.0);
-    }
-    if (!std::strcmp(name, "sprite_xoffset") || !std::strcmp(name, "sprite_yoffset")) {
-        int spr = inst_sprite(inst);
-        if (const KwikSprite* sd = kwik_sprite_at(spr)) {
-            if (!std::strcmp(name, "sprite_xoffset")) return Value((double)sd->origin_x);
-            return Value((double)sd->origin_y);
+        case SpecialVar::SpriteWidth:
+        case SpecialVar::SpriteHeight: {
+            int spr = inst_sprite(inst);
+            double xs = 1, ys = 1;
+            auto ix = inst->vars.find("image_xscale");
+            auto iy = inst->vars.find("image_yscale");
+            if (ix != inst->vars.end()) xs = (double)ix->second;
+            if (iy != inst->vars.end()) ys = (double)iy->second;
+            if (const KwikSprite* sd = kwik_sprite_at(spr)) {
+                if (lookup_special_var(name) == SpecialVar::SpriteWidth) return Value(sd->width * xs);
+                return Value(sd->height * ys);
+            }
+            return Value(0.0);
         }
-        return Value(0.0);
-    }
-    if (!std::strcmp(name, "image_number")) {
-        int spr = inst_sprite(inst);
-        if (const KwikSprite* sd = kwik_sprite_at(spr)) return Value((double)sd->frame_count);
-        return Value(0.0);
+        case SpecialVar::SpriteXOffset:
+        case SpecialVar::SpriteYOffset: {
+            int spr = inst_sprite(inst);
+            if (const KwikSprite* sd = kwik_sprite_at(spr)) {
+                if (lookup_special_var(name) == SpecialVar::SpriteXOffset)
+                    return Value((double)sd->origin_x);
+                return Value((double)sd->origin_y);
+            }
+            return Value(0.0);
+        }
+        case SpecialVar::ImageNumber: {
+            int spr = inst_sprite(inst);
+            if (const KwikSprite* sd = kwik_sprite_at(spr)) return Value((double)sd->frame_count);
+            return Value(0.0);
+        }
+        default: break;
     }
     handled = false;
     return Value();
 }
 
 static bool scope_set_special(Instance* inst, const char* name, const Value& v) {
-    if (!std::strcmp(name, "x")) { inst->x = (double)v; return true; }
-    if (!std::strcmp(name, "y")) { inst->y = (double)v; return true; }
-    if (!std::strcmp(name, "visible")) { inst->visible = gml_truthy(v); return true; }
-    if (!std::strcmp(name, "persistent")) { inst->persistent = gml_truthy(v); return true; }
-    if (!std::strcmp(name, "depth")) { inst->depth = (double)v; return true; }
-    if (!std::strcmp(name, "xprevious")) { inst->xprevious = (double)v; return true; }
-    if (!std::strcmp(name, "yprevious")) { inst->yprevious = (double)v; return true; }
-    if (!std::strcmp(name, "xstart")) { inst->xstart = (double)v; return true; }
-    if (!std::strcmp(name, "ystart")) { inst->ystart = (double)v; return true; }
-    if (!std::strcmp(name, "speed")) { inst->m_speed = (double)v; sync_from_polar(inst); return true; }
-    if (!std::strcmp(name, "direction")) { inst->m_dir = (double)v; sync_from_polar(inst); return true; }
-    if (!std::strcmp(name, "hspeed")) { inst->m_hs = (double)v; sync_from_component(inst); return true; }
-    if (!std::strcmp(name, "vspeed")) { inst->m_vs = (double)v; sync_from_component(inst); return true; }
-    return false;
+    switch (lookup_special_var(name)) {
+        case SpecialVar::X: inst->x = (double)v; return true;
+        case SpecialVar::Y: inst->y = (double)v; return true;
+        case SpecialVar::Visible: inst->visible = gml_truthy(v); return true;
+        case SpecialVar::Persistent: inst->persistent = gml_truthy(v); return true;
+        case SpecialVar::Depth: inst->depth = (double)v; return true;
+        case SpecialVar::XPrevious: inst->xprevious = (double)v; return true;
+        case SpecialVar::YPrevious: inst->yprevious = (double)v; return true;
+        case SpecialVar::XStart: inst->xstart = (double)v; return true;
+        case SpecialVar::YStart: inst->ystart = (double)v; return true;
+        case SpecialVar::Speed: inst->m_speed = (double)v; sync_from_polar(inst); return true;
+        case SpecialVar::Direction: inst->m_dir = (double)v; sync_from_polar(inst); return true;
+        case SpecialVar::HSpeed: inst->m_hs = (double)v; sync_from_component(inst); return true;
+        case SpecialVar::VSpeed: inst->m_vs = (double)v; sync_from_component(inst); return true;
+        default: return false;
+    }
 }
 
 static Value inst_get_raw(Instance* inst, const char* name) {
@@ -3115,6 +3152,8 @@ static std::string executable_dir() {
     DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
     if (n == 0 || n == MAX_PATH) return "";
     return std::filesystem::path(buf).parent_path().string();
+#elif defined(__vita__)
+    return "app0:";
 #else
     char buf[4096];
     ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
@@ -3155,6 +3194,8 @@ int run_game(const GameTables& tables) {
             const char* userprofile = std::getenv("USERPROFILE");
             root = std::string(userprofile ? userprofile : ".") + "\\AppData\\Roaming";
         }
+#elif defined(__vita__)
+        std::string root = "ux0:data";
 #else
         const char* xdg = std::getenv("XDG_DATA_HOME");
         std::string root;

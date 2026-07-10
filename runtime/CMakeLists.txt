@@ -1,12 +1,19 @@
 find_package(Threads REQUIRED)
 
-set(KWIK_BACKEND "glfw" CACHE STRING "render backend: glfw or sdl2")
+if(VITA)
+    set(KWIK_BACKEND_DEFAULT "vitagl")
+else()
+    set(KWIK_BACKEND_DEFAULT "glfw") # change this to sdl2 if u wanna use sdl2 instead
+endif()
+set(KWIK_BACKEND "${KWIK_BACKEND_DEFAULT}" CACHE STRING "render backend: glfw, sdl2, or vitagl")
 
 set(KWIK_THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
 
 if(KWIK_BACKEND STREQUAL "sdl2")
     find_package(SDL2 REQUIRED)
     set(KWIK_BACKEND_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/source/backends/sdl2.cpp)
+elseif(KWIK_BACKEND STREQUAL "vitagl")
+    set(KWIK_BACKEND_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/source/backends/vitagl.cpp)
 else()
     find_package(OpenGL REQUIRED)
     find_package(glfw3 REQUIRED)
@@ -46,6 +53,21 @@ if(KWIK_BACKEND STREQUAL "sdl2")
         target_include_directories(kwik_runtime PRIVATE ${SDL2_INCLUDE_DIRS})
         set(KWIK_WINDOW_LIBS ${SDL2_LIBRARIES})
     endif()
+elseif(KWIK_BACKEND STREQUAL "vitagl")
+    set(KWIK_WINDOW_LIBS
+        vitaGL
+        SceCommonDialog_stub
+        SceGxm_stub
+        SceDisplay_stub
+        SceAppMgr_stub
+        SceCtrl_stub
+        mathneon
+        vitashark
+        SceShaccCgExt
+        taihen_stub
+        SceShaccCg_stub
+        SceKernelDmacMgr_stub
+    )
 else()
     target_include_directories(kwik_runtime PRIVATE ${KWIK_THIRD_PARTY}/glad/include)
     set(KWIK_WINDOW_LIBS glfw OpenGL::GL)
@@ -54,6 +76,9 @@ endif()
 if(WIN32)
     target_link_libraries(kwik_runtime PUBLIC ${KWIK_WINDOW_LIBS} ${CMAKE_DL_LIBS} Threads::Threads)
     target_compile_definitions(kwik_runtime PRIVATE _USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN)
+elseif(VITA)
+    target_link_libraries(kwik_runtime PUBLIC ${KWIK_WINDOW_LIBS} Threads::Threads m)
+    target_compile_definitions(kwik_runtime PRIVATE _GNU_SOURCE)
 else()
     target_link_libraries(kwik_runtime PUBLIC ${KWIK_WINDOW_LIBS} ${CMAKE_DL_LIBS} Threads::Threads m)
 endif()

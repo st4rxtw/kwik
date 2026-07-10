@@ -380,6 +380,14 @@ void render_draw_glyph(unsigned int tex, double dx, double dy, double dw, double
     render_draw_glyph_colored(tex, dx, dy, dw, dh, u0, v0, u1, v1, g_color_bgr, g_alpha);
 }
 
+void render_draw_glyphs_colored(unsigned int tex, const GlyphQuad* quads, int count,
+                                unsigned int bgr, double alpha) {
+    for (int i = 0; i < count; ++i) {
+        const GlyphQuad& q = quads[i];
+        render_draw_glyph_colored(tex, q.x, q.y, q.w, q.h, q.u0, q.v0, q.u1, q.v1, bgr, alpha);
+    }
+}
+
 static void geometry_fill(const SDL_Vertex* verts, int nverts, const int* idx, int nidx) {
     SDL_SetRenderDrawBlendMode(g_renderer, current_blendmode());
     SDL_RenderGeometry(g_renderer, nullptr, verts, nverts, idx, nidx);

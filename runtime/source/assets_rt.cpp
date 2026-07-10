@@ -150,8 +150,10 @@ static LoadedImage& load_image(int index) {
     img.tex = render_upload_texture(pixels, w, h);
     img.w = w;
     img.h = h;
-    img.ok = true;
+    img.ok = img.tex != 0;
     stbi_image_free(pixels);
+    if (!img.ok)
+        std::fprintf(stderr, "[kwik] texture upload failed for image %d (%dx%d)\n", index, w, h);
     return img;
 }
 
@@ -607,6 +609,14 @@ void kwik_draw_text_rt(double x, double y, const std::string& text, double xs, d
     unsigned int col = render_get_color();
     double alpha = render_get_alpha();
 
+    unsigned int batch_tex = 0;
+    std::vector<GlyphQuad> batch;
+    auto flush_batch = [&]() {
+        if (!batch.empty()) render_draw_glyphs_colored(batch_tex, batch.data(),
+                                                        (int)batch.size(), col, alpha);
+        batch.clear();
+    };
+
     for (size_t li = 0; li < lines.size(); ++li) {
         double ox = 0;
         double w = line_width(f, text, lines[li].first, lines[li].second) * xs;
@@ -623,8 +633,10 @@ void kwik_draw_text_rt(double x, double y, const std::string& text, double xs, d
                     double lx = pen + g->offset * xs;
                     double ly = liney;
                     if (angle == 0.0) {
-                        render_draw_glyph_colored(img.tex, x + lx, y + ly, g->w * xs, g->h * ys,
-                                                  g->u0, g->v0, g->u1, g->v1, col, alpha);
+                        if (img.tex != batch_tex) flush_batch();
+                        batch_tex = img.tex;
+                        batch.push_back({x + lx, y + ly, g->w * xs, g->h * ys, g->u0, g->v0, g->u1,
+                                        g->v1});
                     } else {
                         double gx = x + lx * ca + ly * sa;
                         double gy = y - lx * sa + ly * ca;
@@ -636,6 +648,7 @@ void kwik_draw_text_rt(double x, double y, const std::string& text, double xs, d
             pen += g->shift * xs;
         }
     }
+    flush_batch();
 }
 
 }

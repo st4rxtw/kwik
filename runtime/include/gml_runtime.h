@@ -482,7 +482,8 @@ GMLFN(gamepad_is_connected); GMLFN(gamepad_test_mapping);
 GMLFN(audio_create_stream); GMLFN(audio_destroy_stream); GMLFN(audio_group_is_loaded);
 GMLFN(audio_group_load); GMLFN(audio_group_set_gain); GMLFN(audio_is_playing);
 GMLFN(audio_pause_all); GMLFN(audio_pause_sound); GMLFN(audio_play_sound); GMLFN(audio_resume_all);
-GMLFN(audio_resume_sound); GMLFN(audio_set_master_gain); GMLFN(audio_sound_gain);
+GMLFN(audio_resume_sound); GMLFN(audio_set_master_gain); GMLFN(audio_master_gain);
+GMLFN(audio_get_master_gain); GMLFN(audio_sound_gain);
 GMLFN(audio_sound_get_track_position); GMLFN(audio_sound_pitch);
 GMLFN(audio_sound_set_track_position); GMLFN(audio_stop_all); GMLFN(audio_stop_sound);
 

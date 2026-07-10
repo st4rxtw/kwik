@@ -1,7 +1,8 @@
 #include "render.h"
 
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
+#include <vitaGL.h>
+#include <psp2/ctrl.h>
+#include <psp2/kernel/processmgr.h>
 
 #include <algorithm>
 #include <cmath>
@@ -10,7 +11,10 @@
 
 namespace gml {
 
-static GLFWwindow* g_window = nullptr;
+static const int VITA_W = 960;
+static const int VITA_H = 544;
+
+static bool g_inited = false;
 static int g_win_w = 640;
 static int g_win_h = 480;
 static int g_gui_w = 640;
@@ -20,10 +24,7 @@ static int g_room_h = 480;
 static double g_view_x = 0, g_view_y = 0, g_view_w = 640, g_view_h = 480;
 static bool g_fog_on = false;
 static float g_fog_rgb[4] = {0, 0, 0, 1};
-static bool g_fullscreen = false;
-static int g_saved_x = 100, g_saved_y = 100, g_saved_w = 640, g_saved_h = 480;
 
-static float g_color_r = 1.0f, g_color_g = 1.0f, g_color_b = 1.0f;
 static unsigned int g_color_bgr = 0xFFFFFF;
 static float g_alpha = 1.0f;
 static int g_halign = 0;
@@ -43,7 +44,6 @@ static int g_fbo_w = 0;
 static int g_fbo_h = 0;
 
 static bool init_app_surface(int w, int h) {
-    if (!glGenFramebuffers) return false;
     glGenFramebuffers(1, &g_fbo);
     glGenTextures(1, &g_fbo_tex);
     glBindTexture(GL_TEXTURE_2D, g_fbo_tex);
@@ -81,7 +81,7 @@ static std::vector<RtSurface> g_surfaces;
 static std::vector<int> g_target_stack;
 
 int render_surface_create(int w, int h) {
-    if (!glGenFramebuffers || w <= 0 || h <= 0) return -1;
+    if (w <= 0 || h <= 0) return -1;
     RtSurface sf;
     glGenFramebuffers(1, &sf.fbo);
     glGenTextures(1, &sf.tex);
@@ -210,41 +210,62 @@ void render_surface_clear(unsigned int bgr, double alpha) {
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
+struct Vtx {
+    float x, y;
+    float u, v;
+    float r, g, b, a;
+};
+
+static void submit(const Vtx* v, int n, GLenum mode) {
+    glVertexPointer(2, GL_FLOAT, sizeof(Vtx), &v[0].x);
+    glTexCoordPointer(2, GL_FLOAT, sizeof(Vtx), &v[0].u);
+    glColorPointer(4, GL_FLOAT, sizeof(Vtx), &v[0].r);
+    glDrawArrays(mode, 0, n);
+}
+
 static int g_prim_kind = 0;
-static unsigned int g_prim_tex = 0;
+static GLenum g_prim_mode = GL_TRIANGLES;
+static std::vector<Vtx> g_prim_verts;
 
 void render_primitive_begin(int kind, unsigned int tex) {
     g_prim_kind = kind;
-    g_prim_tex = tex;
+    g_prim_verts.clear();
     if (tex) {
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, tex);
     } else {
         glDisable(GL_TEXTURE_2D);
     }
-    GLenum mode = GL_TRIANGLES;
     switch (kind) {
-        case 1: mode = GL_POINTS; break;
-        case 2: mode = GL_LINES; break;
-        case 3: mode = GL_LINE_STRIP; break;
-        case 4: mode = GL_TRIANGLES; break;
-        case 5: mode = GL_TRIANGLE_STRIP; break;
-        case 6: mode = GL_TRIANGLE_FAN; break;
-        default: mode = GL_TRIANGLES; break;
+        case 1: g_prim_mode = GL_POINTS; break;
+        case 2: g_prim_mode = GL_LINES; break;
+        case 3: g_prim_mode = GL_LINE_STRIP; break;
+        case 4: g_prim_mode = GL_TRIANGLES; break;
+        case 5: g_prim_mode = GL_TRIANGLE_STRIP; break;
+        case 6: g_prim_mode = GL_TRIANGLE_FAN; break;
+        default: g_prim_mode = GL_TRIANGLES; break;
     }
-    glBegin(mode);
 }
 
 void render_primitive_vertex(double x, double y, double u, double v, unsigned int color,
                              double alpha, bool textured) {
-    glColor4f((color & 0xFF) / 255.0f, ((color >> 8) & 0xFF) / 255.0f,
-              ((color >> 16) & 0xFF) / 255.0f, (float)alpha);
-    if (textured) glTexCoord2f((float)u, (float)v);
-    glVertex2f((float)x, (float)y);
+    (void)textured;
+    Vtx vtx;
+    vtx.x = (float)x;
+    vtx.y = (float)y;
+    vtx.u = (float)u;
+    vtx.v = (float)v;
+    vtx.r = (color & 0xFF) / 255.0f;
+    vtx.g = ((color >> 8) & 0xFF) / 255.0f;
+    vtx.b = ((color >> 16) & 0xFF) / 255.0f;
+    vtx.a = (float)alpha;
+    g_prim_verts.push_back(vtx);
 }
 
 void render_primitive_end() {
-    glEnd();
+    if (g_prim_verts.size() >= 2 || (g_prim_verts.size() >= 1 && g_prim_kind == 1))
+        submit(g_prim_verts.data(), (int)g_prim_verts.size(), g_prim_mode);
+    g_prim_verts.clear();
     glEnable(GL_TEXTURE_2D);
 }
 
@@ -276,61 +297,38 @@ bool render_app_snapshot(int x, int y, int w, int h, unsigned char* rgba_out) {
     return render_surface_snapshot(0, x, y, w, h, rgba_out);
 }
 
-static bool key_state(int vk) {
-    if (!g_window) return false;
+static bool pad_key_state(int vk) {
+    SceCtrlData pad;
+    if (sceCtrlPeekBufferPositive(0, &pad, 1) < 0) return false;
+    unsigned int b = pad.buttons;
+    // temp until I add the input.ini shit from the 3ds port
     switch (vk) {
-        case 37: return glfwGetKey(g_window, GLFW_KEY_LEFT) == GLFW_PRESS;
-        case 38: return glfwGetKey(g_window, GLFW_KEY_UP) == GLFW_PRESS;
-        case 39: return glfwGetKey(g_window, GLFW_KEY_RIGHT) == GLFW_PRESS;
-        case 40: return glfwGetKey(g_window, GLFW_KEY_DOWN) == GLFW_PRESS;
-        case 32: return glfwGetKey(g_window, GLFW_KEY_SPACE) == GLFW_PRESS;
-        case 13: return glfwGetKey(g_window, GLFW_KEY_ENTER) == GLFW_PRESS ||
-                        glfwGetKey(g_window, GLFW_KEY_KP_ENTER) == GLFW_PRESS;
-        case 27: return glfwGetKey(g_window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
-        case 16: return glfwGetKey(g_window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
-                        glfwGetKey(g_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
-        case 17: return glfwGetKey(g_window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
-                        glfwGetKey(g_window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
-        case 18: return glfwGetKey(g_window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
-                        glfwGetKey(g_window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
-        case 8: return glfwGetKey(g_window, GLFW_KEY_BACKSPACE) == GLFW_PRESS;
-        case 9: return glfwGetKey(g_window, GLFW_KEY_TAB) == GLFW_PRESS;
-        case 46: return glfwGetKey(g_window, GLFW_KEY_DELETE) == GLFW_PRESS;
-        case 45: return glfwGetKey(g_window, GLFW_KEY_INSERT) == GLFW_PRESS;
-        case 36: return glfwGetKey(g_window, GLFW_KEY_HOME) == GLFW_PRESS;
-        case 35: return glfwGetKey(g_window, GLFW_KEY_END) == GLFW_PRESS;
-        case 33: return glfwGetKey(g_window, GLFW_KEY_PAGE_UP) == GLFW_PRESS;
-        case 34: return glfwGetKey(g_window, GLFW_KEY_PAGE_DOWN) == GLFW_PRESS;
-        default:
-            if (vk >= 'A' && vk <= 'Z') return glfwGetKey(g_window, GLFW_KEY_A + (vk - 'A')) == GLFW_PRESS;
-            if (vk >= '0' && vk <= '9') return glfwGetKey(g_window, GLFW_KEY_0 + (vk - '0')) == GLFW_PRESS;
-            if (vk >= 112 && vk <= 123) return glfwGetKey(g_window, GLFW_KEY_F1 + (vk - 112)) == GLFW_PRESS;
-            if (vk >= 96 && vk <= 105) return glfwGetKey(g_window, GLFW_KEY_KP_0 + (vk - 96)) == GLFW_PRESS;
-            return false;
+        case 13: return (b & (SCE_CTRL_CROSS | SCE_CTRL_START)) != 0;   // enter
+        case 27: return (b & SCE_CTRL_CIRCLE) != 0;                     // escape
+        case 32: return (b & SCE_CTRL_SQUARE) != 0;                     // space
+        case 'Y': return (b & SCE_CTRL_TRIANGLE) != 0;
+        case 'Q': return (b & SCE_CTRL_LTRIGGER) != 0;
+        case 'E': return (b & SCE_CTRL_RTRIGGER) != 0;
+        case 37: return (b & SCE_CTRL_LEFT) != 0 || pad.lx < 64;        // left
+        case 38: return (b & SCE_CTRL_UP) != 0 || pad.ly < 64;          // up
+        case 39: return (b & SCE_CTRL_RIGHT) != 0 || pad.lx > 192;      // right
+        case 40: return (b & SCE_CTRL_DOWN) != 0 || pad.ly > 192;       // down
+        default: return false;
     }
 }
 
+static bool key_state(int vk) {
+    if (!g_inited) return false;
+    return pad_key_state(vk);
+}
+
 bool render_init(const char* title, int width, int height, unsigned int bg_color) {
-    if (!glfwInit()) {
-        std::fprintf(stderr, "kwik: glfwInit failed\n");
-        return false;
-    }
+    (void)title;
+    vglInit(0x1400000);
+    vglUseVram(GL_TRUE);
+    g_inited = true;
 
-    g_window = glfwCreateWindow(width, height, title, nullptr, nullptr);
-    if (!g_window) {
-        std::fprintf(stderr, "kwik: window creation failed\n");
-        glfwTerminate();
-        return false;
-    }
-
-    glfwSetScrollCallback(g_window, [](GLFWwindow*, double, double dy) { g_wheel_accum += dy; });
-    glfwMakeContextCurrent(g_window);
-    glfwSwapInterval(1);
-
-    if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
-        std::fprintf(stderr, "kwik: glad load failed\n");
-        return false;
-    }
+    sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
 
     g_win_w = width;
     g_win_h = height;
@@ -346,14 +344,15 @@ bool render_init(const char* title, int width, int height, unsigned int bg_color
     glEnable(GL_TEXTURE_2D);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glEnableClientState(GL_COLOR_ARRAY);
     if (!init_app_surface(width, height))
         std::fprintf(stderr, "kwik: application surface FBO unavailable\n");
     return true;
 }
 
-bool render_should_close() {
-    return g_window == nullptr || glfwWindowShouldClose(g_window);
-}
+bool render_should_close() { return !g_inited; }
 
 void render_begin_frame() {
     g_target_stack.clear();
@@ -362,9 +361,7 @@ void render_begin_frame() {
         glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
         glViewport(0, 0, g_fbo_w, g_fbo_h);
     } else {
-        int fbw = g_win_w, fbh = g_win_h;
-        glfwGetFramebufferSize(g_window, &fbw, &fbh);
-        glViewport(0, 0, fbw, fbh);
+        glViewport(0, 0, VITA_W, VITA_H);
     }
 
     double vw = g_view_w > 0 ? g_view_w : g_room_w;
@@ -387,9 +384,7 @@ void render_begin_gui() {
     glLoadIdentity();
 }
 
-void render_set_title(const char* title) {
-    if (g_window && title) glfwSetWindowTitle(g_window, title);
-}
+void render_set_title(const char*) {}
 
 void render_set_view(double x, double y, double w, double h) {
     g_view_x = x;
@@ -404,13 +399,11 @@ void render_set_view(double x, double y, double w, double h) {
 }
 
 double render_delta_time() { return g_dt; }
-double render_time_ms() { return glfwGetTime() * 1000.0; }
+double render_time_ms() { return sceKernelGetProcessTimeWide() / 1000.0; }
 
-static void blit_fbo_to_window() {
+static void blit_fbo_to_screen() {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    int fbw = g_win_w, fbh = g_win_h;
-    glfwGetFramebufferSize(g_window, &fbw, &fbh);
-    glViewport(0, 0, fbw, fbh);
+    glViewport(0, 0, VITA_W, VITA_H);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     glOrtho(0.0, 1.0, 1.0, 0.0, -1.0, 1.0);
@@ -418,9 +411,9 @@ static void blit_fbo_to_window() {
     glLoadIdentity();
     glClearColor(0.f, 0.f, 0.f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
-    double scale = std::min((double)fbw / g_fbo_w, (double)fbh / g_fbo_h);
-    double dw = g_fbo_w * scale / fbw;
-    double dh = g_fbo_h * scale / fbh;
+    double scale = std::min((double)VITA_W / g_fbo_w, (double)VITA_H / g_fbo_h);
+    double dw = g_fbo_w * scale / VITA_W;
+    double dh = g_fbo_h * scale / VITA_H;
     float x0 = (float)((1.0 - dw) * 0.5);
     float y0 = (float)((1.0 - dh) * 0.5);
     float x1 = x0 + (float)dw;
@@ -428,51 +421,43 @@ static void blit_fbo_to_window() {
     glDisable(GL_BLEND);
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, g_fbo_tex);
-    glColor4f(1.f, 1.f, 1.f, 1.f);
-    glBegin(GL_QUADS);
-    glTexCoord2f(0, 1); glVertex2f(x0, y0);
-    glTexCoord2f(1, 1); glVertex2f(x1, y0);
-    glTexCoord2f(1, 0); glVertex2f(x1, y1);
-    glTexCoord2f(0, 0); glVertex2f(x0, y1);
-    glEnd();
+    Vtx v[4] = {
+        {x0, y0, 0, 1, 1, 1, 1, 1},
+        {x1, y0, 1, 1, 1, 1, 1, 1},
+        {x1, y1, 1, 0, 1, 1, 1, 1},
+        {x0, y1, 0, 0, 1, 1, 1, 1},
+    };
+    submit(v, 4, GL_TRIANGLE_FAN);
     glEnable(GL_BLEND);
 }
 
 void render_present_last() {
-    if (!g_window) return;
-    if (g_fbo) blit_fbo_to_window();
-    glfwSwapBuffers(g_window);
-    glfwPollEvents();
+    if (!g_inited) return;
+    if (g_fbo) blit_fbo_to_screen();
+    vglSwapBuffers(GL_FALSE);
 }
 
 void render_end_frame() {
-    if (g_fbo) blit_fbo_to_window();
-    glfwSwapBuffers(g_window);
-    double now = glfwGetTime();
+    if (g_fbo) blit_fbo_to_screen();
+    vglSwapBuffers(GL_FALSE);
+    double now = sceKernelGetProcessTimeWide() / 1000000.0;
     g_dt = g_last_time > 0.0 ? now - g_last_time : 0.0;
     if (g_dt > 0.25) g_dt = 0.25;
     g_last_time = now;
     for (int i = 0; i < 512; ++i) g_keys_prev[i] = g_keys_now[i];
     for (int i = 0; i < 3; ++i) g_mouse_prev[i] = g_mouse_now[i];
-    glfwPollEvents();
     for (int i = 0; i < 512; ++i) g_keys_now[i] = key_state(i);
     bool any = false;
     for (int i = 2; i < 512; ++i) any = any || g_keys_now[i];
     g_keys_now[1] = any;
     g_keys_now[0] = false;
-    for (int i = 0; i < 3; ++i)
-        g_mouse_now[i] = glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_LEFT + i) == GLFW_PRESS;
-    g_wheel_frame = g_wheel_accum;
-    g_wheel_accum = 0.0;
 }
 
 double render_wheel_delta() { return g_wheel_frame; }
 
-void render_idle() { glfwPollEvents(); }
+void render_idle() {}
 
-bool render_has_focus() {
-    return g_window && glfwGetWindowAttrib(g_window, GLFW_FOCUSED) == GLFW_TRUE;
-}
+bool render_has_focus() { return true; }
 
 bool render_key_down(int vk) {
     if (vk == 0) {
@@ -500,45 +485,13 @@ void render_keyboard_clear(int vk) {
     g_keys_now[vk] = g_keys_prev[vk] = false;
 }
 
-static void mouse_to_gui(double& gx, double& gy) {
-    gx = 0;
-    gy = 0;
-    if (!g_window) return;
-    double mx, my;
-    glfwGetCursorPos(g_window, &mx, &my);
-    int ww, wh;
-    glfwGetWindowSize(g_window, &ww, &wh);
-    if (ww <= 0 || wh <= 0) return;
-    int cw = g_fbo_w > 0 ? g_fbo_w : g_gui_w;
-    int ch = g_fbo_h > 0 ? g_fbo_h : g_gui_h;
-    double scale = std::min((double)ww / cw, (double)wh / ch);
-    if (scale <= 0) return;
-    double ox = (ww - cw * scale) * 0.5;
-    double oy = (wh - ch * scale) * 0.5;
-    gx = (mx - ox) / scale;
-    gy = (my - oy) / scale;
-}
-
-double render_mouse_x() {
-    double gx, gy;
-    mouse_to_gui(gx, gy);
-    return gx;
-}
-double render_mouse_y() {
-    double gx, gy;
-    mouse_to_gui(gx, gy);
-    return gy;
-}
+double render_mouse_x() { return 0.0; }
+double render_mouse_y() { return 0.0; }
 bool render_mouse_down(int b) { return b >= 0 && b < 3 && g_mouse_now[b]; }
 bool render_mouse_pressed(int b) { return b >= 0 && b < 3 && g_mouse_now[b] && !g_mouse_prev[b]; }
 bool render_mouse_released(int b) { return b >= 0 && b < 3 && !g_mouse_now[b] && g_mouse_prev[b]; }
 
-void render_set_color(unsigned int bgr) {
-    g_color_bgr = bgr;
-    g_color_r = static_cast<float>(bgr & 0xFF) / 255.0f;
-    g_color_g = static_cast<float>((bgr >> 8) & 0xFF) / 255.0f;
-    g_color_b = static_cast<float>((bgr >> 16) & 0xFF) / 255.0f;
-}
+void render_set_color(unsigned int bgr) { g_color_bgr = bgr; }
 unsigned int render_get_color() { return g_color_bgr; }
 void render_set_alpha(double alpha) { g_alpha = static_cast<float>(alpha); }
 double render_get_alpha() { return g_alpha; }
@@ -578,11 +531,8 @@ void render_set_blendmode_ext(int src, int dst) {
 }
 
 void render_set_blendmode_sepalpha(int src, int dst, int asrc, int adst) {
-    if (glBlendFuncSeparate)
-        glBlendFuncSeparate(gm_blend_factor(src), gm_blend_factor(dst), gm_blend_factor(asrc),
-                            gm_blend_factor(adst));
-    else
-        glBlendFunc(gm_blend_factor(src), gm_blend_factor(dst));
+    glBlendFuncSeparate(gm_blend_factor(src), gm_blend_factor(dst), gm_blend_factor(asrc),
+                        gm_blend_factor(adst));
 }
 
 void render_set_colorwrite(bool r, bool g, bool b, bool a) {
@@ -646,13 +596,13 @@ void render_draw_quad(unsigned int tex, double x, double y, double dw, double dh
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex);
     apply_fog_env();
-    glColor4f(r, g, b, (float)alpha);
-    glBegin(GL_QUADS);
-    glTexCoord2f(u0, v0); glVertex2f(vx[0], vy[0]);
-    glTexCoord2f(u1, v0); glVertex2f(vx[1], vy[1]);
-    glTexCoord2f(u1, v1); glVertex2f(vx[2], vy[2]);
-    glTexCoord2f(u0, v1); glVertex2f(vx[3], vy[3]);
-    glEnd();
+    Vtx vtx[4] = {
+        {vx[0], vy[0], u0, v0, r, g, b, (float)alpha},
+        {vx[1], vy[1], u1, v0, r, g, b, (float)alpha},
+        {vx[2], vy[2], u1, v1, r, g, b, (float)alpha},
+        {vx[3], vy[3], u0, v1, r, g, b, (float)alpha},
+    };
+    submit(vtx, 4, GL_TRIANGLE_FAN);
 }
 
 void render_draw_glyph_colored(unsigned int tex, double dx, double dy, double dw, double dh,
@@ -663,14 +613,37 @@ void render_draw_glyph_colored(unsigned int tex, double dx, double dy, double dw
     float b = ((bgr >> 16) & 0xFF) / 255.0f;
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex);
-    glColor4f(r, g, b, (float)alpha);
     float x0 = (float)dx, y0 = (float)dy, x1 = (float)(dx + dw), y1 = (float)(dy + dh);
-    glBegin(GL_QUADS);
-    glTexCoord2f(u0, v0); glVertex2f(x0, y0);
-    glTexCoord2f(u1, v0); glVertex2f(x1, y0);
-    glTexCoord2f(u1, v1); glVertex2f(x1, y1);
-    glTexCoord2f(u0, v1); glVertex2f(x0, y1);
-    glEnd();
+    Vtx v[4] = {
+        {x0, y0, u0, v0, r, g, b, (float)alpha},
+        {x1, y0, u1, v0, r, g, b, (float)alpha},
+        {x1, y1, u1, v1, r, g, b, (float)alpha},
+        {x0, y1, u0, v1, r, g, b, (float)alpha},
+    };
+    submit(v, 4, GL_TRIANGLE_FAN);
+}
+
+void render_draw_glyphs_colored(unsigned int tex, const GlyphQuad* quads, int count,
+                                unsigned int bgr, double alpha) {
+    if (count <= 0) return;
+    float r = (bgr & 0xFF) / 255.0f;
+    float g = ((bgr >> 8) & 0xFF) / 255.0f;
+    float b = ((bgr >> 16) & 0xFF) / 255.0f;
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    std::vector<Vtx> v;
+    v.reserve((size_t)count * 6);
+    for (int i = 0; i < count; ++i) {
+        const GlyphQuad& q = quads[i];
+        float x0 = (float)q.x, y0 = (float)q.y, x1 = (float)(q.x + q.w), y1 = (float)(q.y + q.h);
+        Vtx a = {x0, y0, q.u0, q.v0, r, g, b, (float)alpha};
+        Vtx bb = {x1, y0, q.u1, q.v0, r, g, b, (float)alpha};
+        Vtx c = {x1, y1, q.u1, q.v1, r, g, b, (float)alpha};
+        Vtx d = {x0, y1, q.u0, q.v1, r, g, b, (float)alpha};
+        v.push_back(a); v.push_back(bb); v.push_back(c);
+        v.push_back(a); v.push_back(c); v.push_back(d);
+    }
+    submit(v.data(), (int)v.size(), GL_TRIANGLES);
 }
 
 void render_draw_glyph(unsigned int tex, double dx, double dy, double dw, double dh,
@@ -678,17 +651,17 @@ void render_draw_glyph(unsigned int tex, double dx, double dy, double dw, double
     render_draw_glyph_colored(tex, dx, dy, dw, dh, u0, v0, u1, v1, g_color_bgr, g_alpha);
 }
 
-void render_draw_glyphs_colored(unsigned int tex, const GlyphQuad* quads, int count,
-                                unsigned int bgr, double alpha) {
-    for (int i = 0; i < count; ++i) {
-        const GlyphQuad& q = quads[i];
-        render_draw_glyph_colored(tex, q.x, q.y, q.w, q.h, q.u0, q.v0, q.u1, q.v1, bgr, alpha);
-    }
-}
-
-static void set_col(unsigned int bgr) {
-    glColor4f((bgr & 0xFF) / 255.0f, ((bgr >> 8) & 0xFF) / 255.0f, ((bgr >> 16) & 0xFF) / 255.0f,
-              g_alpha);
+static Vtx mkv(double x, double y, unsigned int bgr, float alpha) {
+    Vtx v;
+    v.x = (float)x;
+    v.y = (float)y;
+    v.u = 0;
+    v.v = 0;
+    v.r = (bgr & 0xFF) / 255.0f;
+    v.g = ((bgr >> 8) & 0xFF) / 255.0f;
+    v.b = ((bgr >> 16) & 0xFF) / 255.0f;
+    v.a = alpha;
+    return v;
 }
 
 void render_draw_rectangle(double x1, double y1, double x2, double y2, bool outline) {
@@ -703,12 +676,9 @@ void render_draw_rectangle_color(double x1, double y1, double x2, double y2, uns
         x2 += 1;
         y2 += 1;
     }
-    glBegin(outline ? GL_LINE_LOOP : GL_QUADS);
-    set_col(c1); glVertex2f((float)x1, (float)y1);
-    set_col(c2); glVertex2f((float)x2, (float)y1);
-    set_col(c3); glVertex2f((float)x2, (float)y2);
-    set_col(c4); glVertex2f((float)x1, (float)y2);
-    glEnd();
+    Vtx v[4] = {mkv(x1, y1, c1, g_alpha), mkv(x2, y1, c2, g_alpha), mkv(x2, y2, c3, g_alpha),
+                mkv(x1, y2, c4, g_alpha)};
+    submit(v, 4, outline ? GL_LINE_LOOP : GL_TRIANGLE_FAN);
     glEnable(GL_TEXTURE_2D);
 }
 
@@ -716,21 +686,16 @@ void render_draw_line(double x1, double y1, double x2, double y2, double width, 
                       unsigned int c2) {
     glDisable(GL_TEXTURE_2D);
     if (width <= 1.0) {
-        glBegin(GL_LINES);
-        set_col(c1); glVertex2f((float)(x1 + 0.5), (float)(y1 + 0.5));
-        set_col(c2); glVertex2f((float)(x2 + 0.5), (float)(y2 + 0.5));
-        glEnd();
+        Vtx v[2] = {mkv(x1 + 0.5, y1 + 0.5, c1, g_alpha), mkv(x2 + 0.5, y2 + 0.5, c2, g_alpha)};
+        submit(v, 2, GL_LINES);
     } else {
         double dx = x2 - x1, dy = y2 - y1;
         double len = std::hypot(dx, dy);
         if (len < 1e-9) len = 1;
         double nx = -dy / len * width * 0.5, ny = dx / len * width * 0.5;
-        glBegin(GL_QUADS);
-        set_col(c1); glVertex2f((float)(x1 + nx), (float)(y1 + ny));
-        set_col(c1); glVertex2f((float)(x1 - nx), (float)(y1 - ny));
-        set_col(c2); glVertex2f((float)(x2 - nx), (float)(y2 - ny));
-        set_col(c2); glVertex2f((float)(x2 + nx), (float)(y2 + ny));
-        glEnd();
+        Vtx v[4] = {mkv(x1 + nx, y1 + ny, c1, g_alpha), mkv(x1 - nx, y1 - ny, c1, g_alpha),
+                    mkv(x2 - nx, y2 - ny, c2, g_alpha), mkv(x2 + nx, y2 + ny, c2, g_alpha)};
+        submit(v, 4, GL_TRIANGLE_FAN);
     }
     glEnable(GL_TEXTURE_2D);
 }
@@ -742,23 +707,22 @@ void render_draw_ellipse(double x1, double y1, double x2, double y2, unsigned in
     glDisable(GL_TEXTURE_2D);
     const int seg = 48;
     if (outline) {
-        glBegin(GL_LINE_LOOP);
-        set_col(c2);
+        std::vector<Vtx> v;
+        v.reserve(seg);
         for (int i = 0; i < seg; ++i) {
             double a = i * 2.0 * 3.14159265358979 / seg;
-            glVertex2f((float)(cx + std::cos(a) * rx), (float)(cy + std::sin(a) * ry));
+            v.push_back(mkv(cx + std::cos(a) * rx, cy + std::sin(a) * ry, c2, g_alpha));
         }
-        glEnd();
+        submit(v.data(), (int)v.size(), GL_LINE_LOOP);
     } else {
-        glBegin(GL_TRIANGLE_FAN);
-        set_col(c1);
-        glVertex2f((float)cx, (float)cy);
-        set_col(c2);
+        std::vector<Vtx> v;
+        v.reserve(seg + 2);
+        v.push_back(mkv(cx, cy, c1, g_alpha));
         for (int i = 0; i <= seg; ++i) {
             double a = i * 2.0 * 3.14159265358979 / seg;
-            glVertex2f((float)(cx + std::cos(a) * rx), (float)(cy + std::sin(a) * ry));
+            v.push_back(mkv(cx + std::cos(a) * rx, cy + std::sin(a) * ry, c2, g_alpha));
         }
-        glEnd();
+        submit(v.data(), (int)v.size(), GL_TRIANGLE_FAN);
     }
     glEnable(GL_TEXTURE_2D);
 }
@@ -766,20 +730,15 @@ void render_draw_ellipse(double x1, double y1, double x2, double y2, unsigned in
 void render_draw_triangle(double x1, double y1, double x2, double y2, double x3, double y3,
                           unsigned int c1, unsigned int c2, unsigned int c3, bool outline) {
     glDisable(GL_TEXTURE_2D);
-    glBegin(outline ? GL_LINE_LOOP : GL_TRIANGLES);
-    set_col(c1); glVertex2f((float)x1, (float)y1);
-    set_col(c2); glVertex2f((float)x2, (float)y2);
-    set_col(c3); glVertex2f((float)x3, (float)y3);
-    glEnd();
+    Vtx v[3] = {mkv(x1, y1, c1, g_alpha), mkv(x2, y2, c2, g_alpha), mkv(x3, y3, c3, g_alpha)};
+    submit(v, 3, outline ? GL_LINE_LOOP : GL_TRIANGLES);
     glEnable(GL_TEXTURE_2D);
 }
 
 void render_draw_point(double x, double y, unsigned int c) {
     glDisable(GL_TEXTURE_2D);
-    glBegin(GL_POINTS);
-    set_col(c);
-    glVertex2f((float)(x + 0.5), (float)(y + 0.5));
-    glEnd();
+    Vtx v[1] = {mkv(x + 0.5, y + 0.5, c, g_alpha)};
+    submit(v, 1, GL_POINTS);
     glEnable(GL_TEXTURE_2D);
 }
 
@@ -789,64 +748,21 @@ int render_gui_height() { return g_gui_h; }
 void render_set_window_size(int width, int height) {
     g_win_w = width;
     g_win_h = height;
-    if (g_window && !g_fullscreen) glfwSetWindowSize(g_window, width, height);
 }
+void render_set_fullscreen(bool) {}
+bool render_get_fullscreen() { return true; }
+void render_center_window() {}
 
-void render_set_fullscreen(bool fs) {
-    if (!g_window || fs == g_fullscreen) return;
-    if (fs) {
-        glfwGetWindowPos(g_window, &g_saved_x, &g_saved_y);
-        glfwGetWindowSize(g_window, &g_saved_w, &g_saved_h);
-        GLFWmonitor* mon = glfwGetPrimaryMonitor();
-        const GLFWvidmode* mode = glfwGetVideoMode(mon);
-        glfwSetWindowMonitor(g_window, mon, 0, 0, mode->width, mode->height, mode->refreshRate);
-    } else {
-        glfwSetWindowMonitor(g_window, nullptr, g_saved_x, g_saved_y, g_saved_w, g_saved_h, 0);
-    }
-    g_fullscreen = fs;
-}
-
-bool render_get_fullscreen() { return g_fullscreen; }
-
-void render_center_window() {
-    if (!g_window || g_fullscreen) return;
-    GLFWmonitor* mon = glfwGetPrimaryMonitor();
-    const GLFWvidmode* mode = glfwGetVideoMode(mon);
-    int ww, wh;
-    glfwGetWindowSize(g_window, &ww, &wh);
-    glfwSetWindowPos(g_window, (mode->width - ww) / 2, (mode->height - wh) / 2);
-}
-
-int render_window_width() {
-    int ww = g_win_w, wh;
-    if (g_window) glfwGetWindowSize(g_window, &ww, &wh);
-    return ww;
-}
-int render_window_height() {
-    int ww, wh = g_win_h;
-    if (g_window) glfwGetWindowSize(g_window, &ww, &wh);
-    return wh;
-}
-int render_display_width() {
-    const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
-    return mode ? mode->width : 1920;
-}
-int render_display_height() {
-    const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
-    return mode ? mode->height : 1080;
-}
+int render_window_width() { return g_win_w; }
+int render_window_height() { return g_win_h; }
+int render_display_width() { return VITA_W; }
+int render_display_height() { return VITA_H; }
 
 void render_set_room(int width, int height, unsigned int) {
     g_room_w = width;
     g_room_h = height;
 }
 
-void render_shutdown() {
-    if (g_window) {
-        glfwDestroyWindow(g_window);
-        g_window = nullptr;
-    }
-    glfwTerminate();
-}
+void render_shutdown() { g_inited = false; }
 
 }
