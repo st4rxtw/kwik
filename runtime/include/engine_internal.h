@@ -82,6 +82,8 @@ const uint32_t* kwik_tilemap_grid(int blob, int cells);
 uint32_t* kwik_tilemap_grid_mut(int blob, int cells);
 uint32_t kwik_tileset_frame_index(const KwikTileset& ts, uint32_t idx);
 void kwik_render_tilemap(const RtLayer& tm, double ox, double oy);
+void kwik_render_tilemap_clipped(const RtLayer& tm, double ox, double oy, double cx0, double cy0,
+                                 double cx1, double cy1);
 void kwik_draw_image_part(int image, double sx, double sy, double sw, double sh, double dx,
                           double dy, double xs, double ys, unsigned int blend, double alpha);
 void kwik_draw_image_part_rot(int image, double sx, double sy, double sw, double sh, double dx,

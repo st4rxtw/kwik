@@ -416,11 +416,17 @@ GMLFN(sprite_create_from_surface) {
     if (x + w > sw) w = sw - x;
     if (y + h > sh) h = sh - y;
     if (w <= 0 || h <= 0) return Value(-1.0);
-    std::vector<unsigned char> pixels((size_t)w * h * 4);
-    if (!render_surface_snapshot(id, x, y, w, h, pixels.data())) return Value(-1.0);
-    if (id == 0)
-        for (size_t i = 3; i < pixels.size(); i += 4) pixels[i] = 255;
-    unsigned int tex = render_upload_texture(pixels.data(), w, h);
+    unsigned int tex = render_texture_from_surface(id, x, y, w, h);
+    if (tex) {
+        render_set_colorwrite(g_gpu_colorwrite[0] != 0, g_gpu_colorwrite[1] != 0,
+                              g_gpu_colorwrite[2] != 0, g_gpu_colorwrite[3] != 0);
+    } else {
+        std::vector<unsigned char> pixels((size_t)w * h * 4);
+        if (!render_surface_snapshot(id, x, y, w, h, pixels.data())) return Value(-1.0);
+        if (id == 0)
+            for (size_t i = 3; i < pixels.size(); i += 4) pixels[i] = 255;
+        tex = render_upload_texture(pixels.data(), w, h);
+    }
     int img = kwik_register_dynamic_image(tex, w, h);
     KwikSprite s{};
     s.first_frame = img;

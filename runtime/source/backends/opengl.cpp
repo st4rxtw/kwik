@@ -602,6 +602,11 @@ unsigned int render_upload_texture(const unsigned char* rgba, int w, int h) {
     return tex;
 }
 
+unsigned int render_texture_from_surface(int id, int x, int y, int w, int h) {
+    (void)id; (void)x; (void)y; (void)w; (void)h;
+    return 0;
+}
+
 void render_set_fog(bool on, unsigned int bgr) {
     static bool disabled = std::getenv("KWIK_NO_FOG") != nullptr;
     if (disabled) return;

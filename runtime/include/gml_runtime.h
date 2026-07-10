@@ -3,10 +3,34 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
 namespace gml {
+
+#if defined(__cpp_lib_generic_unordered_lookup) && __cpp_lib_generic_unordered_lookup >= 201811L
+#define KWIK_STR_KEY(s) std::string_view(s)
+struct KwikStrHash {
+    using is_transparent = void;
+    size_t operator()(std::string_view sv) const noexcept {
+        return std::hash<std::string_view>{}(sv);
+    }
+    size_t operator()(const std::string& s) const noexcept {
+        return std::hash<std::string_view>{}(s);
+    }
+    size_t operator()(const char* s) const noexcept {
+        return std::hash<std::string_view>{}(s);
+    }
+};
+
+template <typename V>
+using KwikStrMap = std::unordered_map<std::string, V, KwikStrHash, std::equal_to<>>;
+#else
+#define KWIK_STR_KEY(s) std::string(s)
+template <typename V>
+using KwikStrMap = std::unordered_map<std::string, V>;
+#endif
 
 struct Instance;
 struct GmlArray;
@@ -57,10 +81,16 @@ struct Instance : std::enable_shared_from_this<Instance> {
     bool visible = true;
     double depth = 0.0;
     double m_speed = 0.0, m_dir = 0.0, m_hs = 0.0, m_vs = 0.0;
-    std::unordered_map<std::string, Value> vars;
+    KwikStrMap<Value> vars;
 
     Value& var(const std::string& n) { return vars[n]; }
+    Value& var(const char* n) {
+        auto it = vars.find(KWIK_STR_KEY(n));
+        if (it != vars.end()) return it->second;
+        return vars.emplace(n, Value()).first->second;
+    }
     bool has(const std::string& n) const { return vars.count(n) != 0; }
+    bool has(const char* n) const { return vars.count(KWIK_STR_KEY(n)) != 0; }
 };
 
 struct CollisionHandler {
@@ -266,6 +296,7 @@ Value gml_gt(const Value& a, const Value& b);
 bool gml_truthy(const Value& a);
 
 Value& global_var(const std::string& name);
+Value& global_var(const char* name);
 Value kwik_scope_get(Instance* self, int spec, const char* name);
 void kwik_scope_set(Instance* self, int spec, const char* name, const Value& v);
 Value kwik_inst_get(Instance* self, const Value& who, const char* name);

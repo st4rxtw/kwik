@@ -38,7 +38,7 @@ add_library(kwik_runtime STATIC
     ${KWIK_THIRD_PARTY}/stb/stb_vorbis.c
 )
 
-set_target_properties(kwik_runtime PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+set_target_properties(kwik_runtime PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 
 target_include_directories(kwik_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(kwik_runtime PRIVATE

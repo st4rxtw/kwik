@@ -308,6 +308,11 @@ unsigned int render_upload_texture(const unsigned char* rgba, int w, int h) {
     return tex_register(tex, w, h, false);
 }
 
+unsigned int render_texture_from_surface(int id, int x, int y, int w, int h) {
+    (void)id; (void)x; (void)y; (void)w; (void)h;
+    return 0;
+}
+
 static SDL_Color vcol(unsigned int bgr, double alpha) {
     SDL_Color c;
     if (g_fog_on) {

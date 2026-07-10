@@ -404,8 +404,17 @@ struct RtGlyph {
 
 struct RtFont {
     std::vector<RtGlyph> glyphs;
+    int index[256];
     double line_height = 16;
 };
+
+static void build_glyph_index(RtFont& f) {
+    for (int i = 0; i < 256; ++i) f.index[i] = -1;
+    for (size_t i = 0; i < f.glyphs.size(); ++i) {
+        int ch = f.glyphs[i].ch;
+        if (ch >= 0 && ch < 256 && f.index[ch] < 0) f.index[ch] = (int)i;
+    }
+}
 
 static std::vector<RtFont> g_rt_fonts;
 static std::vector<int> g_asset_font_map;
@@ -443,6 +452,7 @@ static void build_fonts() {
             rf.glyphs.push_back(rg);
         }
         rf.line_height = kf.size > 0 ? kf.size : maxh;
+        build_glyph_index(rf);
         g_asset_font_map[f] = (int)g_rt_fonts.size();
         g_rt_fonts.push_back(std::move(rf));
     }
@@ -477,6 +487,7 @@ int kwik_font_add_sprite(int spr, const std::string& mapping, bool prop, int sep
         rf.glyphs.push_back(rg);
     }
     rf.line_height = maxh;
+    build_glyph_index(rf);
     g_rt_fonts.push_back(std::move(rf));
     return (int)g_rt_fonts.size() - 1;
 }
@@ -489,6 +500,10 @@ void kwik_set_font_rt(int rt_font) {
 int kwik_get_font_rt() { return g_cur_font; }
 
 static const RtGlyph* find_glyph(const RtFont& f, int ch) {
+    if (ch >= 0 && ch < 256) {
+        int i = f.index[ch];
+        return i < 0 ? nullptr : &f.glyphs[i];
+    }
     for (const RtGlyph& g : f.glyphs)
         if (g.ch == ch) return &g;
     return nullptr;

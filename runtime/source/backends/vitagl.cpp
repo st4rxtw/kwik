@@ -7,7 +7,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <vector>
+
+extern "C" {
+int _newlib_heap_size_user = 160 * 1024 * 1024;
+unsigned int sceUserMainThreadStackSize = 4 * 1024 * 1024;
+}
 
 namespace gml {
 
@@ -43,13 +49,24 @@ static GLuint g_fbo_tex = 0;
 static int g_fbo_w = 0;
 static int g_fbo_h = 0;
 
-static bool init_app_surface(int w, int h) {
-    glGenFramebuffers(1, &g_fbo);
-    glGenTextures(1, &g_fbo_tex);
-    glBindTexture(GL_TEXTURE_2D, g_fbo_tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+static void flush_batch();
+
+static GLuint make_target_texture(int w, int h) {
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    std::vector<unsigned char> zero((size_t)w * h * 4, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, zero.data());
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    return tex;
+}
+
+static bool init_app_surface(int w, int h) {
+    glGenFramebuffers(1, &g_fbo);
+    g_fbo_tex = make_target_texture(w, h);
     glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_fbo_tex, 0);
     bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
@@ -84,11 +101,7 @@ int render_surface_create(int w, int h) {
     if (w <= 0 || h <= 0) return -1;
     RtSurface sf;
     glGenFramebuffers(1, &sf.fbo);
-    glGenTextures(1, &sf.tex);
-    glBindTexture(GL_TEXTURE_2D, sf.tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    sf.tex = make_target_texture(w, h);
     GLint prev = 0;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
     glBindFramebuffer(GL_FRAMEBUFFER, sf.fbo);
@@ -156,6 +169,7 @@ int render_surface_height(int id) {
 bool render_surface_set_target(int id) {
     RtSurface* sf = surf_of(id);
     if (!sf && id != 0) return false;
+    flush_batch();
     g_target_stack.push_back(id);
     GLuint fbo = id == 0 ? g_fbo : sf->fbo;
     int w = id == 0 ? g_fbo_w : sf->w;
@@ -173,6 +187,7 @@ bool render_surface_set_target(int id) {
 
 void render_surface_reset_target() {
     if (g_target_stack.empty()) return;
+    flush_batch();
     g_target_stack.pop_back();
     glMatrixMode(GL_PROJECTION);
     glPopMatrix();
@@ -196,6 +211,7 @@ bool render_surface_getpixel(int id, int x, int y, unsigned char* rgba_out) {
     GLuint fbo = id == 0 ? g_fbo : (sf ? sf->fbo : 0);
     int h = id == 0 ? g_fbo_h : (sf ? sf->h : 0);
     if (!fbo && id != 0) return false;
+    flush_batch();
     GLint prev = 0;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -205,6 +221,7 @@ bool render_surface_getpixel(int id, int x, int y, unsigned char* rgba_out) {
 }
 
 void render_surface_clear(unsigned int bgr, double alpha) {
+    flush_batch();
     glClearColor((bgr & 0xFF) / 255.0f, ((bgr >> 8) & 0xFF) / 255.0f,
                  ((bgr >> 16) & 0xFF) / 255.0f, (float)alpha);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -223,11 +240,56 @@ static void submit(const Vtx* v, int n, GLenum mode) {
     glDrawArrays(mode, 0, n);
 }
 
+static int g_env_fog_applied = -1;
+
+static void apply_fog_env(bool fog) {
+    if ((int)fog == g_env_fog_applied) return;
+    if (fog) {
+        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+        glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_REPLACE);
+        glTexEnvi(GL_TEXTURE_ENV, GL_SRC0_RGB, GL_CONSTANT);
+        glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_MODULATE);
+        glTexEnvfv(GL_TEXTURE_ENV, GL_TEXTURE_ENV_COLOR, g_fog_rgb);
+    } else {
+        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    }
+    g_env_fog_applied = (int)fog;
+}
+
+static const size_t kMaxBatchVerts = 6 * 4096;
+static std::vector<Vtx> g_batch;
+static GLuint g_batch_tex = 0;
+static bool g_batch_fog = false;
+
+static void flush_batch() {
+    if (g_batch.empty()) return;
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, g_batch_tex);
+    apply_fog_env(g_batch_fog);
+    submit(g_batch.data(), (int)g_batch.size(), GL_TRIANGLES);
+    g_batch.clear();
+}
+
+static void batch_quad(GLuint tex, const Vtx v[4]) {
+    if (!g_batch.empty() &&
+        (tex != g_batch_tex || g_fog_on != g_batch_fog || g_batch.size() >= kMaxBatchVerts))
+        flush_batch();
+    g_batch_tex = tex;
+    g_batch_fog = g_fog_on;
+    g_batch.push_back(v[0]);
+    g_batch.push_back(v[1]);
+    g_batch.push_back(v[2]);
+    g_batch.push_back(v[0]);
+    g_batch.push_back(v[2]);
+    g_batch.push_back(v[3]);
+}
+
 static int g_prim_kind = 0;
 static GLenum g_prim_mode = GL_TRIANGLES;
 static std::vector<Vtx> g_prim_verts;
 
 void render_primitive_begin(int kind, unsigned int tex) {
+    flush_batch();
     g_prim_kind = kind;
     g_prim_verts.clear();
     if (tex) {
@@ -278,6 +340,7 @@ bool render_surface_snapshot(int id, int x, int y, int w, int h, unsigned char* 
     int fh = id == 0 ? g_fbo_h : (sf ? sf->h : 0);
     if (!fbo && id != 0) return false;
     if (id == 0 && !g_fbo) return false;
+    flush_batch();
     GLint prev = 0;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -297,29 +360,104 @@ bool render_app_snapshot(int x, int y, int w, int h, unsigned char* rgba_out) {
     return render_surface_snapshot(0, x, y, w, h, rgba_out);
 }
 
-static bool pad_key_state(int vk) {
-    SceCtrlData pad;
-    if (sceCtrlPeekBufferPositive(0, &pad, 1) < 0) return false;
-    unsigned int b = pad.buttons;
-    // temp until I add the input.ini shit from the 3ds port
-    switch (vk) {
-        case 13: return (b & (SCE_CTRL_CROSS | SCE_CTRL_START)) != 0;   // enter
-        case 27: return (b & SCE_CTRL_CIRCLE) != 0;                     // escape
-        case 32: return (b & SCE_CTRL_SQUARE) != 0;                     // space
-        case 'Y': return (b & SCE_CTRL_TRIANGLE) != 0;
-        case 'Q': return (b & SCE_CTRL_LTRIGGER) != 0;
-        case 'E': return (b & SCE_CTRL_RTRIGGER) != 0;
-        case 37: return (b & SCE_CTRL_LEFT) != 0 || pad.lx < 64;        // left
-        case 38: return (b & SCE_CTRL_UP) != 0 || pad.ly < 64;          // up
-        case 39: return (b & SCE_CTRL_RIGHT) != 0 || pad.lx > 192;      // right
-        case 40: return (b & SCE_CTRL_DOWN) != 0 || pad.ly > 192;       // down
-        default: return false;
+static void rebind_current_target() {
+    int cur = g_target_stack.empty() ? 0 : g_target_stack.back();
+    if (cur == 0) {
+        if (g_fbo) {
+            glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+            glViewport(0, 0, g_fbo_w, g_fbo_h);
+        } else {
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, VITA_W, VITA_H);
+        }
+    } else {
+        RtSurface* sf = surf_of(cur);
+        if (sf) {
+            glBindFramebuffer(GL_FRAMEBUFFER, sf->fbo);
+            glViewport(0, 0, sf->w, sf->h);
+        }
     }
 }
 
-static bool key_state(int vk) {
-    if (!g_inited) return false;
-    return pad_key_state(vk);
+unsigned int render_texture_from_surface(int id, int x, int y, int w, int h) {
+    RtSurface* sf = surf_of(id);
+    if (id != 0 && !sf) return 0;
+    GLuint src_tex = id == 0 ? g_fbo_tex : sf->tex;
+    int sw = id == 0 ? g_fbo_w : sf->w;
+    int sh = id == 0 ? g_fbo_h : sf->h;
+    if (!src_tex || sw <= 0 || sh <= 0 || w <= 0 || h <= 0) return 0;
+    flush_batch();
+    GLuint tex = make_target_texture(w, h);
+    GLuint fbo = 0;
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        glDeleteFramebuffers(1, &fbo);
+        glDeleteTextures(1, &tex);
+        rebind_current_target();
+        return 0;
+    }
+    glViewport(0, 0, w, h);
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0.0, w, h, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glDisable(GL_BLEND);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, src_tex);
+    apply_fog_env(false);
+    float u0 = (float)x / sw, u1 = (float)(x + w) / sw;
+    float vt = 1.0f - (float)y / sh;
+    float vb = 1.0f - (float)(y + h) / sh;
+    Vtx v[4] = {
+        {0.f, 0.f, u0, vb, 1, 1, 1, 1},
+        {(float)w, 0.f, u1, vb, 1, 1, 1, 1},
+        {(float)w, (float)h, u1, vt, 1, 1, 1, 1},
+        {0.f, (float)h, u0, vt, 1, 1, 1, 1},
+    };
+    submit(v, 4, GL_TRIANGLE_FAN);
+    if (id == 0) {
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
+        glClearColor(0.f, 0.f, 0.f, 1.f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    }
+    glEnable(GL_BLEND);
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glDeleteFramebuffers(1, &fbo);
+    rebind_current_target();
+    return tex;
+}
+
+static void poll_pad() {
+    std::memcpy(g_keys_prev, g_keys_now, sizeof(g_keys_now));
+    std::memset(g_keys_now, 0, sizeof(g_keys_now));
+    SceCtrlData pad;
+    if (g_inited && sceCtrlPeekBufferPositive(0, &pad, 1) >= 0) {
+        unsigned int b = pad.buttons;
+        // temp until I add the input.ini shit from the 3ds port
+        g_keys_now[13] = (b & (SCE_CTRL_CROSS | SCE_CTRL_START)) != 0;   // enter
+        g_keys_now[27] = (b & SCE_CTRL_CIRCLE) != 0;                     // escape
+        g_keys_now[32] = (b & SCE_CTRL_SQUARE) != 0;                     // space
+        g_keys_now['Y'] = (b & SCE_CTRL_TRIANGLE) != 0;
+        g_keys_now['Q'] = (b & SCE_CTRL_LTRIGGER) != 0;
+        g_keys_now['E'] = (b & SCE_CTRL_RTRIGGER) != 0;
+        g_keys_now[37] = (b & SCE_CTRL_LEFT) != 0 || pad.lx < 64;        // left
+        g_keys_now[38] = (b & SCE_CTRL_UP) != 0 || pad.ly < 64;          // up
+        g_keys_now[39] = (b & SCE_CTRL_RIGHT) != 0 || pad.lx > 192;      // right
+        g_keys_now[40] = (b & SCE_CTRL_DOWN) != 0 || pad.ly > 192;       // down
+    }
+    bool any = false;
+    for (int i = 2; i < 512; ++i) any = any || g_keys_now[i];
+    g_keys_now[1] = any;
+    g_keys_now[0] = false;
 }
 
 bool render_init(const char* title, int width, int height, unsigned int bg_color) {
@@ -347,6 +485,8 @@ bool render_init(const char* title, int width, int height, unsigned int bg_color
     glEnableClientState(GL_VERTEX_ARRAY);
     glEnableClientState(GL_TEXTURE_COORD_ARRAY);
     glEnableClientState(GL_COLOR_ARRAY);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    g_batch.reserve(kMaxBatchVerts);
     if (!init_app_surface(width, height))
         std::fprintf(stderr, "kwik: application surface FBO unavailable\n");
     return true;
@@ -355,6 +495,7 @@ bool render_init(const char* title, int width, int height, unsigned int bg_color
 bool render_should_close() { return !g_inited; }
 
 void render_begin_frame() {
+    flush_batch();
     g_target_stack.clear();
     g_fog_on = false;
     if (g_fbo) {
@@ -377,6 +518,7 @@ void render_begin_frame() {
 }
 
 void render_begin_gui() {
+    flush_batch();
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     glOrtho(0.0, g_gui_w, g_gui_h, 0.0, -1.0, 1.0);
@@ -387,6 +529,7 @@ void render_begin_gui() {
 void render_set_title(const char*) {}
 
 void render_set_view(double x, double y, double w, double h) {
+    flush_batch();
     g_view_x = x;
     g_view_y = y;
     if (w > 0) g_view_w = w;
@@ -402,6 +545,8 @@ double render_delta_time() { return g_dt; }
 double render_time_ms() { return sceKernelGetProcessTimeWide() / 1000.0; }
 
 static void blit_fbo_to_screen() {
+    flush_batch();
+    apply_fog_env(false);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, VITA_W, VITA_H);
     glMatrixMode(GL_PROJECTION);
@@ -438,19 +583,15 @@ void render_present_last() {
 }
 
 void render_end_frame() {
+    flush_batch();
     if (g_fbo) blit_fbo_to_screen();
     vglSwapBuffers(GL_FALSE);
     double now = sceKernelGetProcessTimeWide() / 1000000.0;
     g_dt = g_last_time > 0.0 ? now - g_last_time : 0.0;
     if (g_dt > 0.25) g_dt = 0.25;
     g_last_time = now;
-    for (int i = 0; i < 512; ++i) g_keys_prev[i] = g_keys_now[i];
     for (int i = 0; i < 3; ++i) g_mouse_prev[i] = g_mouse_now[i];
-    for (int i = 0; i < 512; ++i) g_keys_now[i] = key_state(i);
-    bool any = false;
-    for (int i = 2; i < 512; ++i) any = any || g_keys_now[i];
-    g_keys_now[1] = any;
-    g_keys_now[0] = false;
+    poll_pad();
 }
 
 double render_wheel_delta() { return g_wheel_frame; }
@@ -500,7 +641,28 @@ void render_set_valign(int align) { g_valign = align; }
 int render_get_halign() { return g_halign; }
 int render_get_valign() { return g_valign; }
 
+static int g_blend4[4] = {5, 6, 5, 6};
+
+static bool set_blend4(int s, int d, int as, int ad) {
+    if (s == g_blend4[0] && d == g_blend4[1] && as == g_blend4[2] && ad == g_blend4[3])
+        return false;
+    flush_batch();
+    g_blend4[0] = s;
+    g_blend4[1] = d;
+    g_blend4[2] = as;
+    g_blend4[3] = ad;
+    return true;
+}
+
 void render_set_blendmode(int mode) {
+    int s, d;
+    switch (mode) {
+        case 1: s = 5; d = 2; break;
+        case 2: s = 5; d = 4; break;
+        case 3: s = 1; d = 4; break;
+        default: s = 5; d = 6; break;
+    }
+    if (!set_blend4(s, d, s, d)) return;
     switch (mode) {
         case 1: glBlendFunc(GL_SRC_ALPHA, GL_ONE); break;
         case 2: glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_COLOR); break;
@@ -527,15 +689,18 @@ static GLenum gm_blend_factor(int f) {
 }
 
 void render_set_blendmode_ext(int src, int dst) {
+    if (!set_blend4(src, dst, src, dst)) return;
     glBlendFunc(gm_blend_factor(src), gm_blend_factor(dst));
 }
 
 void render_set_blendmode_sepalpha(int src, int dst, int asrc, int adst) {
+    if (!set_blend4(src, dst, asrc, adst)) return;
     glBlendFuncSeparate(gm_blend_factor(src), gm_blend_factor(dst), gm_blend_factor(asrc),
                         gm_blend_factor(adst));
 }
 
 void render_set_colorwrite(bool r, bool g, bool b, bool a) {
+    flush_batch();
     glColorMask(r ? GL_TRUE : GL_FALSE, g ? GL_TRUE : GL_FALSE, b ? GL_TRUE : GL_FALSE,
                 a ? GL_TRUE : GL_FALSE);
 }
@@ -555,23 +720,17 @@ unsigned int render_upload_texture(const unsigned char* rgba, int w, int h) {
 void render_set_fog(bool on, unsigned int bgr) {
     static bool disabled = std::getenv("KWIK_NO_FOG") != nullptr;
     if (disabled) return;
+    float r = (bgr & 0xFF) / 255.0f;
+    float g = ((bgr >> 8) & 0xFF) / 255.0f;
+    float b = ((bgr >> 16) & 0xFF) / 255.0f;
+    if (on == g_fog_on && r == g_fog_rgb[0] && g == g_fog_rgb[1] && b == g_fog_rgb[2]) return;
+    flush_batch();
+    g_env_fog_applied = -1;
     g_fog_on = on;
-    g_fog_rgb[0] = (bgr & 0xFF) / 255.0f;
-    g_fog_rgb[1] = ((bgr >> 8) & 0xFF) / 255.0f;
-    g_fog_rgb[2] = ((bgr >> 16) & 0xFF) / 255.0f;
+    g_fog_rgb[0] = r;
+    g_fog_rgb[1] = g;
+    g_fog_rgb[2] = b;
     g_fog_rgb[3] = 1.0f;
-}
-
-static void apply_fog_env() {
-    if (g_fog_on) {
-        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
-        glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_REPLACE);
-        glTexEnvi(GL_TEXTURE_ENV, GL_SRC0_RGB, GL_CONSTANT);
-        glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_MODULATE);
-        glTexEnvfv(GL_TEXTURE_ENV, GL_TEXTURE_ENV_COLOR, g_fog_rgb);
-    } else {
-        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-    }
 }
 
 void render_draw_quad(unsigned int tex, double x, double y, double dw, double dh,
@@ -593,16 +752,13 @@ void render_draw_quad(unsigned int tex, double x, double y, double dw, double dh
     float g = ((blend_bgr >> 8) & 0xFF) / 255.0f;
     float b = ((blend_bgr >> 16) & 0xFF) / 255.0f;
 
-    glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    apply_fog_env();
     Vtx vtx[4] = {
         {vx[0], vy[0], u0, v0, r, g, b, (float)alpha},
         {vx[1], vy[1], u1, v0, r, g, b, (float)alpha},
         {vx[2], vy[2], u1, v1, r, g, b, (float)alpha},
         {vx[3], vy[3], u0, v1, r, g, b, (float)alpha},
     };
-    submit(vtx, 4, GL_TRIANGLE_FAN);
+    batch_quad(tex, vtx);
 }
 
 void render_draw_glyph_colored(unsigned int tex, double dx, double dy, double dw, double dh,
@@ -611,8 +767,6 @@ void render_draw_glyph_colored(unsigned int tex, double dx, double dy, double dw
     float r = (bgr & 0xFF) / 255.0f;
     float g = ((bgr >> 8) & 0xFF) / 255.0f;
     float b = ((bgr >> 16) & 0xFF) / 255.0f;
-    glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, tex);
     float x0 = (float)dx, y0 = (float)dy, x1 = (float)(dx + dw), y1 = (float)(dy + dh);
     Vtx v[4] = {
         {x0, y0, u0, v0, r, g, b, (float)alpha},
@@ -620,7 +774,7 @@ void render_draw_glyph_colored(unsigned int tex, double dx, double dy, double dw
         {x1, y1, u1, v1, r, g, b, (float)alpha},
         {x0, y1, u0, v1, r, g, b, (float)alpha},
     };
-    submit(v, 4, GL_TRIANGLE_FAN);
+    batch_quad(tex, v);
 }
 
 void render_draw_glyphs_colored(unsigned int tex, const GlyphQuad* quads, int count,
@@ -629,21 +783,17 @@ void render_draw_glyphs_colored(unsigned int tex, const GlyphQuad* quads, int co
     float r = (bgr & 0xFF) / 255.0f;
     float g = ((bgr >> 8) & 0xFF) / 255.0f;
     float b = ((bgr >> 16) & 0xFF) / 255.0f;
-    glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    std::vector<Vtx> v;
-    v.reserve((size_t)count * 6);
     for (int i = 0; i < count; ++i) {
         const GlyphQuad& q = quads[i];
         float x0 = (float)q.x, y0 = (float)q.y, x1 = (float)(q.x + q.w), y1 = (float)(q.y + q.h);
-        Vtx a = {x0, y0, q.u0, q.v0, r, g, b, (float)alpha};
-        Vtx bb = {x1, y0, q.u1, q.v0, r, g, b, (float)alpha};
-        Vtx c = {x1, y1, q.u1, q.v1, r, g, b, (float)alpha};
-        Vtx d = {x0, y1, q.u0, q.v1, r, g, b, (float)alpha};
-        v.push_back(a); v.push_back(bb); v.push_back(c);
-        v.push_back(a); v.push_back(c); v.push_back(d);
+        Vtx v[4] = {
+            {x0, y0, q.u0, q.v0, r, g, b, (float)alpha},
+            {x1, y0, q.u1, q.v0, r, g, b, (float)alpha},
+            {x1, y1, q.u1, q.v1, r, g, b, (float)alpha},
+            {x0, y1, q.u0, q.v1, r, g, b, (float)alpha},
+        };
+        batch_quad(tex, v);
     }
-    submit(v.data(), (int)v.size(), GL_TRIANGLES);
 }
 
 void render_draw_glyph(unsigned int tex, double dx, double dy, double dw, double dh,
@@ -671,6 +821,7 @@ void render_draw_rectangle(double x1, double y1, double x2, double y2, bool outl
 
 void render_draw_rectangle_color(double x1, double y1, double x2, double y2, unsigned int c1,
                                  unsigned int c2, unsigned int c3, unsigned int c4, bool outline) {
+    flush_batch();
     glDisable(GL_TEXTURE_2D);
     if (!outline) {
         x2 += 1;
@@ -684,6 +835,7 @@ void render_draw_rectangle_color(double x1, double y1, double x2, double y2, uns
 
 void render_draw_line(double x1, double y1, double x2, double y2, double width, unsigned int c1,
                       unsigned int c2) {
+    flush_batch();
     glDisable(GL_TEXTURE_2D);
     if (width <= 1.0) {
         Vtx v[2] = {mkv(x1 + 0.5, y1 + 0.5, c1, g_alpha), mkv(x2 + 0.5, y2 + 0.5, c2, g_alpha)};
@@ -704,6 +856,7 @@ void render_draw_ellipse(double x1, double y1, double x2, double y2, unsigned in
                          unsigned int c2, bool outline) {
     double cx = (x1 + x2) * 0.5, cy = (y1 + y2) * 0.5;
     double rx = std::fabs(x2 - x1) * 0.5, ry = std::fabs(y2 - y1) * 0.5;
+    flush_batch();
     glDisable(GL_TEXTURE_2D);
     const int seg = 48;
     if (outline) {
@@ -729,6 +882,7 @@ void render_draw_ellipse(double x1, double y1, double x2, double y2, unsigned in
 
 void render_draw_triangle(double x1, double y1, double x2, double y2, double x3, double y3,
                           unsigned int c1, unsigned int c2, unsigned int c3, bool outline) {
+    flush_batch();
     glDisable(GL_TEXTURE_2D);
     Vtx v[3] = {mkv(x1, y1, c1, g_alpha), mkv(x2, y2, c2, g_alpha), mkv(x3, y3, c3, g_alpha)};
     submit(v, 3, outline ? GL_LINE_LOOP : GL_TRIANGLES);
@@ -736,6 +890,7 @@ void render_draw_triangle(double x1, double y1, double x2, double y2, double x3,
 }
 
 void render_draw_point(double x, double y, unsigned int c) {
+    flush_batch();
     glDisable(GL_TEXTURE_2D);
     Vtx v[1] = {mkv(x + 0.5, y + 0.5, c, g_alpha)};
     submit(v, 1, GL_POINTS);
