@@ -6,8 +6,14 @@
 #define MA_NO_RUNTIME_LINKING
 #ifdef __vita__
 #define MA_NO_NEON
+#define MA_NO_DEVICE_IO
 #endif
 #include "miniaudio.h"
+
+#ifdef __vita__
+#include <psp2/audioout.h>
+#include <psp2/kernel/threadmgr.h>
+#endif
 
 #include <cstdio>
 #include <cstdlib>
@@ -24,7 +30,9 @@ static const int kStreamBase = 200000;
 static const int kHandleBase = 300000;
 
 static ma_engine g_engine;
+#ifndef __vita__
 static ma_context g_context;
+#endif
 static bool g_engine_ok = false;
 static bool g_engine_tried = false;
 
@@ -57,10 +65,67 @@ struct Voice {
 
 static std::vector<Voice*> g_voices;
 
+#ifdef __vita__
+static const int kVitaGrain = 512;
+static SceUID g_vita_audio_thread = -1;
+static volatile bool g_vita_audio_run = false;
+
+static int vita_audio_thread(SceSize, void*) {
+    int port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM, kVitaGrain, 48000,
+                                   SCE_AUDIO_OUT_MODE_STEREO);
+    if (port < 0) {
+        std::fprintf(stderr, "[audio] sceAudioOutOpenPort failed: 0x%08x\n", port);
+        return 0;
+    }
+    static float fbuf[kVitaGrain * 2];
+    static short sbuf[2][kVitaGrain * 2];
+    int idx = 0;
+    while (g_vita_audio_run) {
+        std::memset(fbuf, 0, sizeof(fbuf));
+        ma_uint64 read = 0;
+        ma_engine_read_pcm_frames(&g_engine, fbuf, kVitaGrain, &read);
+        short* out = sbuf[idx];
+        for (int i = 0; i < kVitaGrain * 2; ++i) {
+            float x = fbuf[i];
+            if (x > 1.0f) x = 1.0f;
+            if (x < -1.0f) x = -1.0f;
+            out[i] = (short)(x * 32767.0f);
+        }
+        sceAudioOutOutput(port, out);
+        idx ^= 1;
+    }
+    sceAudioOutOutput(port, nullptr);
+    sceAudioOutReleasePort(port);
+    return 0;
+}
+#endif
+
 static bool ensure_engine() {
     if (g_engine_tried) return g_engine_ok;
     g_engine_tried = true;
 
+#ifdef __vita__
+    ma_engine_config eng_cfg = ma_engine_config_init();
+    eng_cfg.noDevice = MA_TRUE;
+    eng_cfg.channels = 2;
+    eng_cfg.sampleRate = 48000;
+    g_engine_ok = ma_engine_init(&eng_cfg, &g_engine) == MA_SUCCESS;
+    if (!g_engine_ok) {
+        std::fprintf(stderr, "[audio] engine init failed\n");
+        return false;
+    }
+    g_vita_audio_run = true;
+    g_vita_audio_thread =
+        sceKernelCreateThread("kwik_audio", vita_audio_thread, 0x40, 0x20000, 0, 0, nullptr);
+    if (g_vita_audio_thread >= 0) {
+        sceKernelStartThread(g_vita_audio_thread, 0, nullptr);
+    } else {
+        std::fprintf(stderr, "[audio] audio thread create failed: 0x%08x\n",
+                     (int)g_vita_audio_thread);
+        g_vita_audio_run = false;
+    }
+    return g_engine_ok;
+#else
     ma_context_config ctx_cfg = ma_context_config_init();
     ctx_cfg.threadStackSize = 256 * 1024;
     if (ma_context_init(nullptr, 0, &ctx_cfg, &g_context) != MA_SUCCESS) {
@@ -73,6 +138,7 @@ static bool ensure_engine() {
     g_engine_ok = ma_engine_init(&eng_cfg, &g_engine) == MA_SUCCESS;
     if (!g_engine_ok) std::fprintf(stderr, "[audio] engine init failed\n");
     return g_engine_ok;
+#endif
 }
 
 static void free_voice(Voice* v) {
@@ -507,6 +573,16 @@ void kwik_audio_shutdown() {
             g_voices[i] = nullptr;
         }
     }
+#ifdef __vita__
+    if (g_vita_audio_run) {
+        g_vita_audio_run = false;
+        if (g_vita_audio_thread >= 0) {
+            sceKernelWaitThreadEnd(g_vita_audio_thread, nullptr, nullptr);
+            sceKernelDeleteThread(g_vita_audio_thread);
+            g_vita_audio_thread = -1;
+        }
+    }
+#endif
     if (g_engine_ok) {
         ma_engine_uninit(&g_engine);
         g_engine_ok = false;

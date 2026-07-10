@@ -61,6 +61,7 @@ elseif(KWIK_BACKEND STREQUAL "vitagl")
         SceDisplay_stub
         SceAppMgr_stub
         SceCtrl_stub
+        SceAudio_stub
         mathneon
         vitashark
         SceShaccCgExt

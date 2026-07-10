@@ -1,4 +1,5 @@
 #include "render.h"
+#include "engine_internal.h"
 
 #include <vitaGL.h>
 #include <psp2/ctrl.h>
@@ -8,6 +9,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <strings.h>
 #include <vector>
 
 extern "C" {
@@ -436,26 +439,164 @@ unsigned int render_texture_from_surface(int id, int x, int y, int w, int h) {
     return tex;
 }
 
+static const unsigned int kLsUp = 1u << 22;
+static const unsigned int kLsDown = 1u << 23;
+static const unsigned int kLsLeft = 1u << 24;
+static const unsigned int kLsRight = 1u << 25;
+static const unsigned int kRsUp = 1u << 26;
+static const unsigned int kRsDown = 1u << 27;
+static const unsigned int kRsLeft = 1u << 28;
+static const unsigned int kRsRight = 1u << 29;
+
+struct NamedBit { const char* name; unsigned int mask; };
+static const NamedBit kButtonNames[] = {
+    {"CROSS", SCE_CTRL_CROSS}, {"CIRCLE", SCE_CTRL_CIRCLE},
+    {"SQUARE", SCE_CTRL_SQUARE}, {"TRIANGLE", SCE_CTRL_TRIANGLE},
+    {"L", SCE_CTRL_LTRIGGER}, {"R", SCE_CTRL_RTRIGGER},
+    {"START", SCE_CTRL_START}, {"SELECT", SCE_CTRL_SELECT},
+    {"DPAD_UP", SCE_CTRL_UP}, {"DPAD_DOWN", SCE_CTRL_DOWN},
+    {"DPAD_LEFT", SCE_CTRL_LEFT}, {"DPAD_RIGHT", SCE_CTRL_RIGHT},
+    {"LSTICK_UP", kLsUp}, {"LSTICK_DOWN", kLsDown},
+    {"LSTICK_LEFT", kLsLeft}, {"LSTICK_RIGHT", kLsRight},
+    {"RSTICK_UP", kRsUp}, {"RSTICK_DOWN", kRsDown},
+    {"RSTICK_LEFT", kRsLeft}, {"RSTICK_RIGHT", kRsRight},
+};
+
+struct NamedVk { const char* name; int vk; };
+static const NamedVk kKeyNames[] = {
+    {"enter", 13}, {"escape", 27}, {"space", 32},
+    {"shift", 16}, {"control", 17}, {"ctrl", 17}, {"alt", 18},
+    {"tab", 9}, {"backspace", 8},
+    {"left", 37}, {"up", 38}, {"right", 39}, {"down", 40},
+    {"home", 36}, {"end", 35}, {"pageup", 33}, {"pagedown", 34},
+    {"insert", 45}, {"delete", 46},
+    {"f1", 112}, {"f2", 113}, {"f3", 114}, {"f4", 115},
+    {"f5", 116}, {"f6", 117}, {"f7", 118}, {"f8", 119},
+    {"f9", 120}, {"f10", 121}, {"f11", 122}, {"f12", 123},
+};
+
+static const char* kDefaultInputIni =
+    "; kwik input mapping - Vita button = keyboard key\n"
+    "; buttons: CROSS CIRCLE SQUARE TRIANGLE L R START SELECT\n"
+    ";          DPAD_UP DPAD_DOWN DPAD_LEFT DPAD_RIGHT\n"
+    ";          LSTICK_UP LSTICK_DOWN LSTICK_LEFT LSTICK_RIGHT\n"
+    ";          RSTICK_UP RSTICK_DOWN RSTICK_LEFT RSTICK_RIGHT\n"
+    "; keys: a-z 0-9 enter escape space shift control alt tab backspace\n"
+    ";       left up right down home end pageup pagedown insert delete f1-f12\n"
+    "CROSS = enter\n"
+    "START = enter\n"
+    "CIRCLE = escape\n"
+    "SQUARE = space\n"
+    "TRIANGLE = y\n"
+    "L = q\n"
+    "R = e\n"
+    "DPAD_LEFT = left\n"
+    "DPAD_UP = up\n"
+    "DPAD_RIGHT = right\n"
+    "DPAD_DOWN = down\n"
+    "LSTICK_LEFT = left\n"
+    "LSTICK_UP = up\n"
+    "LSTICK_RIGHT = right\n"
+    "LSTICK_DOWN = down\n";
+
+static unsigned int g_vk_mask[512];
+
+static std::string trim(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) return "";
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return s.substr(a, b - a + 1);
+}
+
+static unsigned int find_button_mask(const std::string& name) {
+    for (auto& b : kButtonNames)
+        if (strcasecmp(b.name, name.c_str()) == 0) return b.mask;
+    return 0;
+}
+
+static bool find_vk(const std::string& name, int* out_vk) {
+    if (name.size() == 1) {
+        char c = name[0];
+        if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+            *out_vk = c;
+            return true;
+        }
+    }
+    for (auto& k : kKeyNames)
+        if (strcasecmp(k.name, name.c_str()) == 0) {
+            *out_vk = k.vk;
+            return true;
+        }
+    return false;
+}
+
+static void parse_input_ini(const std::string& contents) {
+    size_t pos = 0;
+    while (pos <= contents.size()) {
+        size_t nl = contents.find('\n', pos);
+        std::string line =
+            nl == std::string::npos ? contents.substr(pos) : contents.substr(pos, nl - pos);
+        pos = nl == std::string::npos ? contents.size() + 1 : nl + 1;
+
+        line = trim(line);
+        if (line.empty() || line[0] == ';' || line[0] == '#' || line[0] == '[') continue;
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+
+        std::string key = trim(line.substr(0, eq));
+        std::string val = trim(line.substr(eq + 1));
+        unsigned int mask = find_button_mask(key);
+        int vk = 0;
+        if (mask != 0 && find_vk(val, &vk) && vk >= 0 && vk < 512)
+            g_vk_mask[vk] |= mask;
+    }
+}
+
+static void load_input_map() {
+    for (int i = 0; i < 512; ++i) g_vk_mask[i] = 0;
+
+    std::string path = kwik_save_path("input.ini");
+    FILE* f = std::fopen(path.c_str(), "r");
+    if (f) {
+        std::string contents;
+        char buf[256];
+        while (std::fgets(buf, sizeof(buf), f)) contents += buf;
+        std::fclose(f);
+        parse_input_ini(contents);
+    } else {
+        parse_input_ini(kDefaultInputIni);
+        FILE* w = std::fopen(path.c_str(), "w");
+        if (w) {
+            std::fwrite(kDefaultInputIni, 1, std::strlen(kDefaultInputIni), w);
+            std::fclose(w);
+        }
+    }
+}
+
 static void poll_pad() {
     std::memcpy(g_keys_prev, g_keys_now, sizeof(g_keys_now));
     std::memset(g_keys_now, 0, sizeof(g_keys_now));
     SceCtrlData pad;
+    unsigned int ext = 0;
     if (g_inited && sceCtrlPeekBufferPositive(0, &pad, 1) >= 0) {
-        unsigned int b = pad.buttons;
-        // temp until I add the input.ini shit from the 3ds port
-        g_keys_now[13] = (b & (SCE_CTRL_CROSS | SCE_CTRL_START)) != 0;   // enter
-        g_keys_now[27] = (b & SCE_CTRL_CIRCLE) != 0;                     // escape
-        g_keys_now[32] = (b & SCE_CTRL_SQUARE) != 0;                     // space
-        g_keys_now['Y'] = (b & SCE_CTRL_TRIANGLE) != 0;
-        g_keys_now['Q'] = (b & SCE_CTRL_LTRIGGER) != 0;
-        g_keys_now['E'] = (b & SCE_CTRL_RTRIGGER) != 0;
-        g_keys_now[37] = (b & SCE_CTRL_LEFT) != 0 || pad.lx < 64;        // left
-        g_keys_now[38] = (b & SCE_CTRL_UP) != 0 || pad.ly < 64;          // up
-        g_keys_now[39] = (b & SCE_CTRL_RIGHT) != 0 || pad.lx > 192;      // right
-        g_keys_now[40] = (b & SCE_CTRL_DOWN) != 0 || pad.ly > 192;       // down
+        ext = pad.buttons;
+        if (pad.lx < 64) ext |= kLsLeft;
+        if (pad.lx > 192) ext |= kLsRight;
+        if (pad.ly < 64) ext |= kLsUp;
+        if (pad.ly > 192) ext |= kLsDown;
+        if (pad.rx < 64) ext |= kRsLeft;
+        if (pad.rx > 192) ext |= kRsRight;
+        if (pad.ry < 64) ext |= kRsUp;
+        if (pad.ry > 192) ext |= kRsDown;
     }
     bool any = false;
-    for (int i = 2; i < 512; ++i) any = any || g_keys_now[i];
+    if (ext) {
+        for (int i = 2; i < 512; ++i) {
+            g_keys_now[i] = (ext & g_vk_mask[i]) != 0;
+            any = any || g_keys_now[i];
+        }
+    }
     g_keys_now[1] = any;
     g_keys_now[0] = false;
 }
@@ -467,6 +608,7 @@ bool render_init(const char* title, int width, int height, unsigned int bg_color
     g_inited = true;
 
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+    load_input_map();
 
     g_win_w = width;
     g_win_h = height;
