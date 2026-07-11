@@ -158,7 +158,9 @@ void GameData::parse_functions() {
         for (uint32_t k = 0; k < occurrences && addr < data_.size(); ++k) {
             func_by_call_[addr] = name;
             uint32_t raw = u32(addr);
-            uint32_t next = raw & 0x07FFFFFF;
+            uint32_t instr = addr >= 4 ? u32(addr - 4) : 0;
+            bool is_pushref = (instr >> 24) == 0xFF && (instr & 0xFFFF) == 0xFFF5;
+            uint32_t next = raw & (is_pushref ? 0x00FFFFFFu : 0x07FFFFFFu);
             if (next == 0) break;
             addr += next;
         }

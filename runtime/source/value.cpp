@@ -232,6 +232,21 @@ Value kwik_new_array(const Value* args, int argc) {
     return v;
 }
 
+static std::unordered_map<void*, std::shared_ptr<Instance>> g_statics_registry;
+
+std::shared_ptr<Instance> kwik_make_statics(ScriptFn fn) {
+    auto& slot = g_statics_registry[(void*)fn];
+    if (!slot) slot = std::make_shared<Instance>();
+    return slot;
+}
+
+void kwik_copy_static_from(Instance* st, const Value& parent) {
+    if (!st || parent.type != Value::FN || !parent.fn) return;
+    auto it = g_statics_registry.find((void*)parent.fn);
+    if (it == g_statics_registry.end() || !it->second) return;
+    for (const auto& kv : it->second->vars) st->vars[kv.first] = kv.second;
+}
+
 Value kwik_make_fnref(ScriptFn fn, const char* name) {
     Value v;
     v.type = Value::FN;

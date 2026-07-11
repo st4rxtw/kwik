@@ -21,6 +21,7 @@ double render_time_ms();
 
 int render_gui_width();
 int render_gui_height();
+void render_set_gui_size(int w, int h);
 void render_set_window_size(int width, int height);
 void render_set_fullscreen(bool fs);
 bool render_get_fullscreen();

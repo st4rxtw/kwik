@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <utility>
 
 namespace gml {
 
@@ -131,4 +132,97 @@ GMLFN(switch_save_data_commit) { (void)self; (void)args; (void)argc; return Valu
 GMLFN(switch_save_data_mount) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(switch_show_store) { (void)self; (void)args; (void)argc; return Value(); }
 
+
+GMLFN(audio_system_is_available) { (void)self; (void)args; (void)argc; return Value(1.0); }
+
+GMLFN(is_callable) { (void)self; return Value(argc > 0 && args[0].type == Value::FN); }
+GMLFN(is_handle) {
+    (void)self;
+    return Value(argc > 0 && (args[0].type == Value::OBJ || args[0].type == Value::FN));
+}
+GMLFN(os_get_region) { (void)self; (void)args; (void)argc; return Value("US"); }
+GMLFN(struct_get_from_hash) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(device_mouse_dbclick_enable) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(device_mouse_check_button) {
+    (void)self;
+    return Value(render_mouse_down((int)A(args, argc, 1) - 1));
+}
+GMLFN(device_mouse_check_button_pressed) {
+    (void)self;
+    return Value(render_mouse_pressed((int)A(args, argc, 1) - 1));
+}
+GMLFN(device_mouse_x_to_gui) { (void)self; (void)args; (void)argc; return Value(render_mouse_x()); }
+GMLFN(device_mouse_y_to_gui) { (void)self; (void)args; (void)argc; return Value(render_mouse_y()); }
+GMLFN(display_set_gui_size) {
+    (void)self;
+    render_set_gui_size((int)A(args, argc, 0), (int)A(args, argc, 1));
+    return Value();
+}
+GMLFN(display_set_gui_maximize) { (void)self; (void)args; (void)argc; return Value(); }
+
+static Value g_scissor_saved;
+
+GMLFN(gpu_set_scissor) {
+    (void)self;
+    if (argc == 1) {
+        g_scissor_saved = args[0];
+        return Value();
+    }
+    Value v;
+    v.type = Value::ARR;
+    v.arr = std::make_shared<GmlArray>();
+    for (int i = 0; i < argc && i < 4; ++i) v.arr->items.push_back(args[i]);
+    g_scissor_saved = v;
+    return Value();
+}
+GMLFN(gpu_get_scissor) {
+    (void)self; (void)args; (void)argc;
+    if (g_scissor_saved.type == Value::ARR) return g_scissor_saved;
+    Value v;
+    v.type = Value::ARR;
+    v.arr = std::make_shared<GmlArray>();
+    v.arr->items.push_back(Value(0.0));
+    v.arr->items.push_back(Value(0.0));
+    v.arr->items.push_back(Value((double)render_gui_width()));
+    v.arr->items.push_back(Value((double)render_gui_height()));
+    return v;
+}
+GMLFN(array_create_ext) {
+    int n = (int)A(args, argc, 0);
+    Value v;
+    v.type = Value::ARR;
+    v.arr = std::make_shared<GmlArray>();
+    for (int i = 0; i < n; ++i) {
+        Value idx((double)i);
+        v.arr->items.push_back(argc > 1 ? kwik_call_value(self, args[1], &idx, 1) : Value(0.0));
+    }
+    return v;
+}
+GMLFN(array_shuffle) {
+    (void)self;
+    Value v;
+    v.type = Value::ARR;
+    v.arr = std::make_shared<GmlArray>();
+    if (argc > 0 && args[0].type == Value::ARR && args[0].arr) {
+        v.arr->items = args[0].arr->items;
+        for (size_t i = v.arr->items.size(); i > 1; --i) {
+            size_t j = (size_t)(gml_random01() * (double)i);
+            if (j >= i) j = i - 1;
+            std::swap(v.arr->items[i - 1], v.arr->items[j]);
+        }
+    }
+    return v;
+}
+GMLFN(room_get_info) {
+    int rm = (int)A(args, argc, 0, -1);
+    Value v = kwik_new_object(self, nullptr, 0);
+    if (rm >= 0 && rm < g_room_count_rt && v.obj) {
+        const RoomDef& r = g_room_defs_rt[rm];
+        v.obj->var(std::string("name")) = Value(r.name);
+        v.obj->var(std::string("width")) = Value((double)r.width);
+        v.obj->var(std::string("height")) = Value((double)r.height);
+        v.obj->var(std::string("persistent")) = Value((double)r.persistent);
+    }
+    return v;
+}
 }

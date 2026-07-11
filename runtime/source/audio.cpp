@@ -3,7 +3,6 @@
 
 #define MINIAUDIO_IMPLEMENTATION
 #define MA_NO_ENCODING
-#define MA_NO_RUNTIME_LINKING
 #ifdef __vita__
 #define MA_NO_NEON
 #define MA_NO_DEVICE_IO

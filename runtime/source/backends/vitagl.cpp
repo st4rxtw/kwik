@@ -1049,6 +1049,11 @@ void render_draw_point(double x, double y, unsigned int c) {
 int render_gui_width() { return g_gui_w; }
 int render_gui_height() { return g_gui_h; }
 
+void render_set_gui_size(int w, int h) {
+    if (w > 0) g_gui_w = w;
+    if (h > 0) g_gui_h = h;
+}
+
 void render_set_window_size(int width, int height) {
     g_win_w = width;
     g_win_h = height;

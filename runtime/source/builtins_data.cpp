@@ -833,6 +833,20 @@ GMLFN(buffer_delete) {
     if (b) { b->alive = false; b->data.clear(); }
     return Value();
 }
+GMLFN(buffer_seek) {
+    (void)self;
+    Buffer* b = argc > 0 ? buf_of(args[0]) : nullptr;
+    if (!b) return Value();
+    int base = (int)A(args, argc, 1);
+    long long off = (long long)A(args, argc, 2);
+    long long p;
+    if (base == 1) p = (long long)b->pos + off;
+    else if (base == 2) p = (long long)b->data.size() + off;
+    else p = off;
+    if (p < 0) p = 0;
+    b->pos = (size_t)p;
+    return Value();
+}
 GMLFN(buffer_get_size) {
     (void)self;
     Buffer* b = argc > 0 ? buf_of(args[0]) : nullptr;

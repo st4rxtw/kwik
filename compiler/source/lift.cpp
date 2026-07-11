@@ -81,6 +81,7 @@ struct LiftCtx {
     int max_depth = 0;
     int warn_count = 0;
     bool needs_exit_label = false;
+    bool uses_statics = false;
 
     LiftCtx(const GameData& g, const CodeEntry& entry) : gd(g), e(entry) {}
 };
@@ -107,11 +108,16 @@ static std::string read_var_expr(LiftCtx& ctx, int spec, const std::string& name
         if (name == "x") return "Value(self->x)";
         if (name == "y") return "Value(self->y)";
     }
+    if (spec == -16) {
+        ctx.uses_statics = true;
+        return "__statics->var(" + quote(name) + ")";
+    }
     return "kwik_scope_get(self, " + std::to_string(spec) + ", " + quote(name) + ")";
 }
 
 static void emit_write_var(LiftCtx& ctx, std::ostream* out, int spec, const std::string& name,
                            const std::string& val) {
+    if (spec == -16) ctx.uses_statics = true;
     if (!out) {
         int argn;
         if (!is_argument_n(name, argn) && name != "argument_count" && spec == -7)
@@ -134,6 +140,10 @@ static void emit_write_var(LiftCtx& ctx, std::ostream* out, int spec, const std:
     }
     if (spec == -1 && name == "y") {
         *out << "    self->y = (double)" << val << ";\n";
+        return;
+    }
+    if (spec == -16) {
+        *out << "    __statics->var(" << quote(name) << ") = " << val << ";\n";
         return;
     }
     *out << "    kwik_scope_set(self, " << spec << ", " << quote(name) << ", " << val << ");\n";
@@ -603,11 +613,22 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                 if (out) *out << "    " << S(base) << " = kwik_this(self);\n";
             } else if (fn == "@@Other@@") {
                 if (out) *out << "    " << S(base) << " = kwik_other(self);\n";
+            } else if (fn == "@@Global@@") {
+                if (out) *out << "    " << S(base) << " = Value(-5.0);\n";
             } else if (fn == "@@GetInstance@@") {
                 if (out && argcN >= 1 && base != d() - 1)
                     *out << "    " << S(base) << " = " << S(d() - 1) << ";\n";
             } else if (fn == "@@NullObject@@") {
                 if (out) *out << "    " << S(base) << " = Value(-4.0);\n";
+            } else if (fn == "@@SetStatic@@") {
+                ctx.uses_statics = true;
+                if (out)
+                    *out << "    __static_ok = true;\n    " << S(base) << " = Value();\n";
+            } else if (fn == "@@CopyStatic@@") {
+                ctx.uses_statics = true;
+                if (out)
+                    *out << "    kwik_copy_static_from(__statics, " << S(base) << ");\n    "
+                         << S(base) << " = Value();\n";
             } else if (fn == "@@try_hook@@" || fn == "@@try_unhook@@" ||
                        fn == "@@throw@@" || fn == "@@finish_catch@@" ||
                        fn == "@@finish_finally@@") {
@@ -745,10 +766,13 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                     pop(1);
                     break;
                 case -6:
-                    if (out) *out << "    " << S(d()) << " = Value(0.0);\n";
+                    ctx.uses_statics = true;
+                    if (out) *out << "    " << S(d()) << " = Value(__static_ok);\n";
                     push(4);
                     break;
                 case -7:
+                    ctx.uses_statics = true;
+                    if (out) *out << "    __static_ok = true;\n";
                     break;
                 case -8:
                 case -9:
@@ -762,18 +786,16 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                 case -11: {
                     uint32_t atype = (in.extra >> 24) & 0xFF;
                     int32_t aidx = (int32_t)(in.extra & 0x00FFFFFF);
-                    if (atype == 5) {
-                        std::string fn = gd.function_by_index((uint32_t)aidx);
-                        if (!fn.empty()) {
-                            std::string plain =
-                                fn.rfind("gml_Script_", 0) == 0 ? fn.substr(11) : fn;
-                            if (out)
-                                *out << "    " << S(d()) << " = kwik_make_fnref(&"
-                                     << sanitize(fn) << ", " << quote(plain) << ");\n";
-                        } else {
-                            warn(ctx, in.address, "pushref: unknown script index");
-                            if (out) *out << "    " << S(d()) << " = Value();\n";
-                        }
+                    std::string fn = gd.function_at_call(in.address + 4);
+                    if (fn.empty() && atype == 5) fn = gd.function_by_index((uint32_t)aidx);
+                    if (!fn.empty()) {
+                        std::string plain = fn.rfind("gml_Script_", 0) == 0 ? fn.substr(11) : fn;
+                        if (out)
+                            *out << "    " << S(d()) << " = kwik_make_fnref(&" << sanitize(fn)
+                                 << ", " << quote(plain) << ");\n";
+                    } else if (atype == 5) {
+                        warn(ctx, in.address, "pushref: unknown script index");
+                        if (out) *out << "    " << S(d()) << " = Value();\n";
                     } else {
                         if (out) *out << "    " << S(d()) << " = " << aidx << ";\n";
                     }
@@ -847,6 +869,11 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
     out << "    (void)__a; (void)__an;\n";
     for (const std::string& l : ctx.locals) out << "    Value loc_" << sanitize(l) << ";\n";
     out << "    Value __s[" << (ctx.max_depth + 4) << "]; (void)__s;\n";
+    if (ctx.uses_statics)
+        out << "    static std::shared_ptr<Instance> __statics_sp = kwik_make_statics(&"
+            << sanitize(ctx.e.name) << ");\n"
+               "    Instance* __statics = __statics_sp.get(); (void)__statics;\n"
+               "    static bool __static_ok = false; (void)__static_ok;\n";
     out << body.str();
     if (ctx.needs_exit_label) out << "  L_exit: ;\n";
     out << "    return Value();\n";
@@ -1138,33 +1165,59 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
             scripts_code.push_back(&e);
     }
 
-    auto write_unit = [&](const fs::path& path, const std::vector<const CodeEntry*>& entries) {
-        std::ofstream f(path, std::ios::binary);
-        f << "#include \"generated.h\"\n\nusing namespace gml;\n\n";
-        for (const CodeEntry* e : entries)
-            emit_function(f, gd, *e);
+    for (const char* sub : {"objects", "rooms", "scripts"})
+        for (const auto& old : fs::directory_iterator(root / sub, ec))
+            if (old.path().extension() == ".cpp") fs::remove(old.path(), ec);
+
+    const size_t unit_budget = 80 * 1024;
+    const size_t big_fn_threshold = 128 * 1024;
+
+    auto emit_entry = [&](const CodeEntry& e) {
+        std::ostringstream ss;
+        emit_function(ss, gd, e);
+        std::string s = ss.str();
+        if (s.size() > big_fn_threshold) {
+            s = "#if defined(__GNUC__) && !defined(__clang__)\n"
+                "#pragma GCC push_options\n"
+                "#pragma GCC optimize (\"O1\")\n"
+                "#endif\n" +
+                s +
+                "#if defined(__GNUC__) && !defined(__clang__)\n"
+                "#pragma GCC pop_options\n"
+                "#endif\n";
+        }
+        return s;
+    };
+
+    auto write_split = [&](const fs::path& dir, const std::string& prefix, bool numbered,
+                           const std::vector<const CodeEntry*>& entries) {
+        size_t file_idx = 0;
+        size_t cur = 0;
+        std::ofstream f;
+        auto open_next = [&]() {
+            if (f.is_open()) f.close();
+            std::string name = !numbered && file_idx == 0
+                                   ? prefix + ".cpp"
+                                   : prefix + "_" + std::to_string(file_idx) + ".cpp";
+            ++file_idx;
+            f.open(dir / name, std::ios::binary);
+            f << "#include \"generated.h\"\n\nusing namespace gml;\n\n";
+            cur = 0;
+        };
+        open_next();
+        for (const CodeEntry* e : entries) {
+            std::string s = emit_entry(*e);
+            if (cur > 0 && cur + s.size() > unit_budget) open_next();
+            f << s;
+            cur += s.size();
+        }
     };
 
     for (const auto& kv : by_object)
-        write_unit(root / "objects" / (sanitize(kv.first) + ".cpp"), kv.second);
+        write_split(root / "objects", sanitize(kv.first), false, kv.second);
 
-    const size_t chunk_size = 100;
-    for (size_t i = 0; i * chunk_size < rooms_code.size(); ++i) {
-        std::vector<const CodeEntry*> part(
-            rooms_code.begin() + i * chunk_size,
-            rooms_code.begin() + std::min(rooms_code.size(), (i + 1) * chunk_size));
-        write_unit(root / "rooms" / ("rooms_" + std::to_string(i) + ".cpp"), part);
-    }
-    for (size_t i = 0; i * chunk_size < scripts_code.size() || (i == 0 && scripts_code.empty());
-         ++i) {
-        std::vector<const CodeEntry*> part;
-        if (i * chunk_size < scripts_code.size())
-            part.assign(scripts_code.begin() + i * chunk_size,
-                        scripts_code.begin() +
-                            std::min(scripts_code.size(), (i + 1) * chunk_size));
-        write_unit(root / "scripts" / ("scripts_" + std::to_string(i) + ".cpp"), part);
-        if (scripts_code.empty()) break;
-    }
+    write_split(root / "rooms", "rooms", true, rooms_code);
+    write_split(root / "scripts", "scripts", true, scripts_code);
 
     AssetExtraction ex;
     extract_assets(gd, out_dir, ex);
