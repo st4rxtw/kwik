@@ -607,6 +607,12 @@ unsigned int render_texture_from_surface(int id, int x, int y, int w, int h) {
     return 0;
 }
 
+void render_free_texture(unsigned int tex) {
+    if (!tex) return;
+    GLuint t = tex;
+    glDeleteTextures(1, &t);
+}
+
 void render_set_fog(bool on, unsigned int bgr) {
     static bool disabled = std::getenv("KWIK_NO_FOG") != nullptr;
     if (disabled) return;

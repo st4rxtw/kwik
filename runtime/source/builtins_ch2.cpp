@@ -71,6 +71,11 @@ GMLFN(variable_global_set) {
     if (argc >= 2) global_var((std::string)args[0]) = args[1];
     return Value();
 }
+GMLFN(variable_global_get) {
+    (void)self;
+    if (argc < 1) return Value();
+    return global_var((std::string)args[0]);
+}
 GMLFN(variable_instance_get) {
     if (argc < 2) return Value();
     Instance* t = kwik_resolve_target(self, args[0]);

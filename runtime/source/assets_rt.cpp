@@ -194,6 +194,20 @@ int kwik_sprite_frame_image(int spr, int sub) {
     return s->first_frame + ((sub % s->frame_count) + s->frame_count) % s->frame_count;
 }
 
+void kwik_flush_textures() {
+    int n = std::min((int)g_images.size(), g_image_count);
+    for (int i = 0; i < n; ++i) {
+        LoadedImage& img = g_images[i];
+        if (!img.tried) continue;
+        if (img.ok && img.tex) render_free_texture(img.tex);
+        img.tex = 0;
+        img.w = 0;
+        img.h = 0;
+        img.ok = false;
+        img.tried = false;
+    }
+}
+
 unsigned int kwik_image_texture(int image, int& w, int& h) {
     LoadedImage& img = load_image(image);
     w = img.w;

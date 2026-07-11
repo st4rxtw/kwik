@@ -847,6 +847,13 @@ void render_set_colorwrite(bool r, bool g, bool b, bool a) {
                 a ? GL_TRUE : GL_FALSE);
 }
 
+void render_free_texture(unsigned int tex) {
+    if (!tex) return;
+    if (!g_batch.empty() && g_batch_tex == tex) flush_batch();
+    GLuint t = tex;
+    glDeleteTextures(1, &t);
+}
+
 unsigned int render_upload_texture(const unsigned char* rgba, int w, int h) {
     GLuint tex = 0;
     glGenTextures(1, &tex);

@@ -124,5 +124,6 @@ double kwik_voice_gain(int what);
 double kwik_voice_pitch(int what);
 bool kwik_voice_paused(int what);
 unsigned int kwik_image_texture(int image, int& w, int& h);
+void kwik_flush_textures();
 
 }

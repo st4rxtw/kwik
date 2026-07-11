@@ -313,6 +313,14 @@ unsigned int render_texture_from_surface(int id, int x, int y, int w, int h) {
     return 0;
 }
 
+void render_free_texture(unsigned int tex) {
+    RtTexture* t = tex_of(tex);
+    if (!t) return;
+    if (t->tex) SDL_DestroyTexture(t->tex);
+    t->tex = nullptr;
+    t->alive = false;
+}
+
 static SDL_Color vcol(unsigned int bgr, double alpha) {
     SDL_Color c;
     if (g_fog_on) {

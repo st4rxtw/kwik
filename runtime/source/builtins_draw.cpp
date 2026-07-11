@@ -354,6 +354,14 @@ GMLFN(surface_get_height) {
 }
 GMLFN(texture_is_ready) { (void)self; (void)args; (void)argc; return Value(1.0); }
 GMLFN(texture_prefetch) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(texture_flush) {
+    (void)self; (void)args; (void)argc;
+    kwik_flush_textures();
+    return Value();
+}
+GMLFN(ps4_touchpad_mouse_enable) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(mouse_wheel_up) { (void)self; (void)args; (void)argc; return Value(render_wheel_delta() > 0); }
+GMLFN(mouse_wheel_down) { (void)self; (void)args; (void)argc; return Value(render_wheel_delta() < 0); }
 GMLFN(texturegroup_get_textures) {
     (void)self; (void)args; (void)argc;
     return kwik_new_array(nullptr, 0);
