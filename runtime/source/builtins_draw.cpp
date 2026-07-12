@@ -343,6 +343,7 @@ GMLFN(gpu_set_fog) {
     return Value();
 }
 GMLFN(gpu_set_texfilter) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(gpu_set_texfilter_ext) { (void)self; (void)args; (void)argc; return Value(); }
 
 GMLFN(surface_get_width) {
     (void)self;
@@ -634,6 +635,7 @@ GMLFN(layer_background_change) {
     if (l && argc > 1) l->sprite = (int)(double)args[1];
     return Value();
 }
+GMLFN(layer_background_sprite) { return layer_background_change(self, args, argc); }
 GMLFN(layer_background_visible) {
     (void)self;
     RtLayer* l = L(args, argc, 0);
@@ -726,5 +728,16 @@ GMLFN(layer_tile_get_y) { (void)self; (void)args; (void)argc; return Value(0.0);
 GMLFN(layer_tile_visible) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(layer_tile_x) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(layer_tile_y) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(layer_tile_destroy) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(layer_tile_get_xscale) { (void)self; (void)args; (void)argc; return Value(1.0); }
+GMLFN(layer_tile_get_yscale) { (void)self; (void)args; (void)argc; return Value(1.0); }
+GMLFN(layer_tile_get_region) {
+    (void)self; (void)args; (void)argc;
+    Value out;
+    out.type = Value::ARR;
+    out.arr = std::make_shared<GmlArray>();
+    out.arr->items.assign(4, Value(0.0));
+    return out;
+}
 
 }

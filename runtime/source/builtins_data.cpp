@@ -112,6 +112,11 @@ GMLFN(ds_map_size) {
     DsMap* m = argc > 0 ? map_of(args[0]) : nullptr;
     return Value(m ? (double)m->data.size() : 0.0);
 }
+GMLFN(ds_map_empty) {
+    (void)self;
+    DsMap* m = argc > 0 ? map_of(args[0]) : nullptr;
+    return Value(!m || m->data.empty());
+}
 GMLFN(ds_map_find_first) {
     (void)self;
     DsMap* m = argc > 0 ? map_of(args[0]) : nullptr;
@@ -157,6 +162,11 @@ GMLFN(ds_list_size) {
     (void)self;
     DsList* l = argc > 0 ? list_of(args[0]) : nullptr;
     return Value(l ? (double)l->data.size() : 0.0);
+}
+GMLFN(ds_list_empty) {
+    (void)self;
+    DsList* l = argc > 0 ? list_of(args[0]) : nullptr;
+    return Value(!l || l->data.empty());
 }
 GMLFN(ds_list_find_value) {
     (void)self;
@@ -671,6 +681,32 @@ GMLFN(ini_write_string) {
     return Value();
 }
 
+GMLFN(ini_section_exists) {
+    (void)self;
+    return Value(g_ini.find(S(args, argc, 0)) != g_ini.end());
+}
+GMLFN(ini_key_exists) {
+    (void)self;
+    auto s = g_ini.find(S(args, argc, 0));
+    if (s == g_ini.end()) return Value(0.0);
+    return Value(s->second.entries.find(S(args, argc, 1)) != s->second.entries.end());
+}
+GMLFN(ini_section_delete) {
+    (void)self;
+    g_ini.erase(S(args, argc, 0));
+    g_ini_dirty = true;
+    return Value();
+}
+GMLFN(ini_key_delete) {
+    (void)self;
+    auto s = g_ini.find(S(args, argc, 0));
+    if (s != g_ini.end()) {
+        s->second.entries.erase(S(args, argc, 1));
+        g_ini_dirty = true;
+    }
+    return Value();
+}
+
 GMLFN(file_exists) {
     (void)self;
     std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
@@ -1160,6 +1196,11 @@ struct DsGrid {
     bool alive = false;
 };
 static std::vector<DsGrid> g_grids;
+static DsGrid* grid_of(const Value& v) {
+    int i = (int)(double)v;
+    if (i < 0 || (size_t)i >= g_grids.size() || !g_grids[i].alive) return nullptr;
+    return &g_grids[i];
+}
 
 GMLFN(ds_grid_create) {
     (void)self;
@@ -1182,8 +1223,87 @@ GMLFN(ds_grid_destroy) {
     }
     return Value();
 }
+GMLFN(ds_grid_width) {
+    (void)self;
+    DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
+    return Value(g ? (double)g->w : 0.0);
+}
+GMLFN(ds_grid_height) {
+    (void)self;
+    DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
+    return Value(g ? (double)g->h : 0.0);
+}
+GMLFN(ds_grid_clear) {
+    (void)self;
+    DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
+    if (g) {
+        Value v = argc > 1 ? args[1] : Value(0.0);
+        for (auto& c : g->data) c = v;
+    }
+    return Value();
+}
+GMLFN(ds_grid_get) {
+    (void)self;
+    DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
+    if (!g) return Value();
+    int x = (int)A(args, argc, 1), y = (int)A(args, argc, 2);
+    if (x < 0 || x >= g->w || y < 0 || y >= g->h) return Value(0.0);
+    return g->data[(size_t)y * g->w + x];
+}
+GMLFN(ds_grid_set) {
+    (void)self;
+    DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
+    if (!g) return Value();
+    int x = (int)A(args, argc, 1), y = (int)A(args, argc, 2);
+    if (x < 0 || x >= g->w || y < 0 || y >= g->h) return Value();
+    g->data[(size_t)y * g->w + x] = argc > 3 ? args[3] : Value(0.0);
+    return Value();
+}
+GMLFN(ds_grid_add) {
+    (void)self;
+    DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
+    if (!g) return Value();
+    int x = (int)A(args, argc, 1), y = (int)A(args, argc, 2);
+    if (x < 0 || x >= g->w || y < 0 || y >= g->h) return Value();
+    Value& cell = g->data[(size_t)y * g->w + x];
+    cell = gml_add(cell, argc > 3 ? args[3] : Value(0.0));
+    return Value();
+}
+GMLFN(ds_grid_value_x) {
+    (void)self;
+    DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
+    if (!g) return Value(-1.0);
+    int x1 = (int)A(args, argc, 1), y1 = (int)A(args, argc, 2);
+    int x2 = (int)A(args, argc, 3), y2 = (int)A(args, argc, 4);
+    Value val = argc > 5 ? args[5] : Value(0.0);
+    x1 = std::max(x1, 0); y1 = std::max(y1, 0);
+    x2 = std::min(x2, g->w - 1); y2 = std::min(y2, g->h - 1);
+    for (int y = y1; y <= y2; ++y)
+        for (int x = x1; x <= x2; ++x)
+            if ((double)g->data[(size_t)y * g->w + x] == (double)val) return Value((double)x);
+    return Value(-1.0);
+}
+GMLFN(ds_grid_value_y) {
+    (void)self;
+    DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
+    if (!g) return Value(-1.0);
+    int x1 = (int)A(args, argc, 1), y1 = (int)A(args, argc, 2);
+    int x2 = (int)A(args, argc, 3), y2 = (int)A(args, argc, 4);
+    Value val = argc > 5 ? args[5] : Value(0.0);
+    x1 = std::max(x1, 0); y1 = std::max(y1, 0);
+    x2 = std::min(x2, g->w - 1); y2 = std::min(y2, g->h - 1);
+    for (int y = y1; y <= y2; ++y)
+        for (int x = x1; x <= x2; ++x)
+            if ((double)g->data[(size_t)y * g->w + x] == (double)val) return Value((double)y);
+    return Value(-1.0);
+}
 
 static std::vector<DsList> g_stacks;
+static DsList* stack_of(const Value& v) {
+    int i = (int)(double)v;
+    if (i < 0 || (size_t)i >= g_stacks.size() || !g_stacks[i].alive) return nullptr;
+    return &g_stacks[i];
+}
 GMLFN(ds_stack_create) {
     (void)self; (void)args; (void)argc;
     g_stacks.emplace_back();
@@ -1199,7 +1319,120 @@ GMLFN(ds_stack_destroy) {
     }
     return Value();
 }
-GMLFN(ds_queue_destroy) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(ds_stack_clear) {
+    (void)self;
+    DsList* s = argc > 0 ? stack_of(args[0]) : nullptr;
+    if (s) s->data.clear();
+    return Value();
+}
+GMLFN(ds_stack_copy) {
+    (void)self;
+    DsList* dst = argc > 0 ? stack_of(args[0]) : nullptr;
+    DsList* src = argc > 1 ? stack_of(args[1]) : nullptr;
+    if (dst && src) dst->data = src->data;
+    return Value();
+}
+GMLFN(ds_stack_size) {
+    (void)self;
+    DsList* s = argc > 0 ? stack_of(args[0]) : nullptr;
+    return Value(s ? (double)s->data.size() : 0.0);
+}
+GMLFN(ds_stack_empty) {
+    (void)self;
+    DsList* s = argc > 0 ? stack_of(args[0]) : nullptr;
+    return Value(!s || s->data.empty());
+}
+GMLFN(ds_stack_push) {
+    (void)self;
+    DsList* s = argc > 0 ? stack_of(args[0]) : nullptr;
+    if (s) for (int i = 1; i < argc; ++i) s->data.push_back(args[i]);
+    return Value();
+}
+GMLFN(ds_stack_pop) {
+    (void)self;
+    DsList* s = argc > 0 ? stack_of(args[0]) : nullptr;
+    if (!s || s->data.empty()) return Value();
+    Value v = s->data.back();
+    s->data.pop_back();
+    return v;
+}
+GMLFN(ds_stack_top) {
+    (void)self;
+    DsList* s = argc > 0 ? stack_of(args[0]) : nullptr;
+    if (!s || s->data.empty()) return Value();
+    return s->data.back();
+}
+
+static std::vector<DsList> g_queues;
+static DsList* queue_of(const Value& v) {
+    int i = (int)(double)v;
+    if (i < 0 || (size_t)i >= g_queues.size() || !g_queues[i].alive) return nullptr;
+    return &g_queues[i];
+}
+GMLFN(ds_queue_create) {
+    (void)self; (void)args; (void)argc;
+    g_queues.emplace_back();
+    g_queues.back().alive = true;
+    return Value((double)(g_queues.size() - 1));
+}
+GMLFN(ds_queue_destroy) {
+    (void)self;
+    int i = argc > 0 ? (int)(double)args[0] : -1;
+    if (i >= 0 && (size_t)i < g_queues.size()) {
+        g_queues[i].alive = false;
+        g_queues[i].data.clear();
+    }
+    return Value();
+}
+GMLFN(ds_queue_clear) {
+    (void)self;
+    DsList* q = argc > 0 ? queue_of(args[0]) : nullptr;
+    if (q) q->data.clear();
+    return Value();
+}
+GMLFN(ds_queue_copy) {
+    (void)self;
+    DsList* dst = argc > 0 ? queue_of(args[0]) : nullptr;
+    DsList* src = argc > 1 ? queue_of(args[1]) : nullptr;
+    if (dst && src) dst->data = src->data;
+    return Value();
+}
+GMLFN(ds_queue_size) {
+    (void)self;
+    DsList* q = argc > 0 ? queue_of(args[0]) : nullptr;
+    return Value(q ? (double)q->data.size() : 0.0);
+}
+GMLFN(ds_queue_empty) {
+    (void)self;
+    DsList* q = argc > 0 ? queue_of(args[0]) : nullptr;
+    return Value(!q || q->data.empty());
+}
+GMLFN(ds_queue_enqueue) {
+    (void)self;
+    DsList* q = argc > 0 ? queue_of(args[0]) : nullptr;
+    if (q) for (int i = 1; i < argc; ++i) q->data.push_back(args[i]);
+    return Value();
+}
+GMLFN(ds_queue_dequeue) {
+    (void)self;
+    DsList* q = argc > 0 ? queue_of(args[0]) : nullptr;
+    if (!q || q->data.empty()) return Value();
+    Value v = q->data.front();
+    q->data.erase(q->data.begin());
+    return v;
+}
+GMLFN(ds_queue_head) {
+    (void)self;
+    DsList* q = argc > 0 ? queue_of(args[0]) : nullptr;
+    if (!q || q->data.empty()) return Value();
+    return q->data.front();
+}
+GMLFN(ds_queue_tail) {
+    (void)self;
+    DsList* q = argc > 0 ? queue_of(args[0]) : nullptr;
+    if (!q || q->data.empty()) return Value();
+    return q->data.back();
+}
 
 GMLFN(buffer_exists) {
     (void)self;

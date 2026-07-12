@@ -75,6 +75,8 @@ GMLFN(gamepad_axis_value) { (void)self; (void)args; (void)argc; return Value(0.0
 GMLFN(gamepad_get_description) { (void)self; (void)args; (void)argc; return Value(""); }
 GMLFN(gamepad_get_guid) { (void)self; (void)args; (void)argc; return Value("none"); }
 GMLFN(gamepad_test_mapping) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(gamepad_set_vibration) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(gamepad_set_axis_deadzone) { (void)self; (void)args; (void)argc; return Value(); }
 
 GMLFN(os_get_info) { (void)self; (void)args; (void)argc; return ds_map_create(self, nullptr, 0); }
 GMLFN(os_get_language) { (void)self; (void)args; (void)argc; return Value("en"); }

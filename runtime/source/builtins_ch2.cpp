@@ -167,6 +167,13 @@ GMLFN(surface_getpixel_ext) {
     return Value((double)((unsigned)px[0] | ((unsigned)px[1] << 8) | ((unsigned)px[2] << 16) |
                           ((unsigned)px[3] << 24)));
 }
+GMLFN(surface_getpixel) {
+    (void)self;
+    if (argc < 3) return Value(0.0);
+    unsigned char px[4] = {0, 0, 0, 0};
+    render_surface_getpixel((int)A(args, argc, 0), (int)A(args, argc, 1), (int)A(args, argc, 2), px);
+    return Value((double)((unsigned)px[0] | ((unsigned)px[1] << 8) | ((unsigned)px[2] << 16)));
+}
 GMLFN(screen_save) { (void)self; (void)args; (void)argc; return Value(); }
 
 GMLFN(draw_surface) {
@@ -556,9 +563,4 @@ GMLFN(ds_priority_destroy) {
     if (p) { p->alive = false; p->data.clear(); }
     return Value();
 }
-GMLFN(ds_queue_create) {
-    (void)self; (void)args; (void)argc;
-    return Value(-1.0);
-}
-
 }

@@ -140,13 +140,36 @@ static LoadedImage& load_image(int index) {
     img.tried = true;
 
     size_t off = rd32((size_t)g_image_count * 2 + (size_t)index * 4);
-    if (off == 0 || off + 16 > g_assets.size()) return img;
+    static const char* dbg = std::getenv("KWIK_DEBUG");
+    static int dbg_budget = dbg ? 20 : 0;
+    if (off == 0 || off + 16 > g_assets.size()) {
+        if (dbg_budget > 0) {
+            --dbg_budget;
+            std::fprintf(stderr, "[kwik] image %d bad offset off=%zu assets_size=%zu\n", index,
+                         off, g_assets.size());
+        }
+        return img;
+    }
     uint32_t png_size = rd32(off + 12);
-    if (off + 16 + png_size > g_assets.size()) return img;
+    if (off + 16 + png_size > g_assets.size()) {
+        if (dbg_budget > 0) {
+            --dbg_budget;
+            std::fprintf(stderr, "[kwik] image %d bad png_size=%u off=%zu assets_size=%zu\n", index,
+                         png_size, off, g_assets.size());
+        }
+        return img;
+    }
 
     int w, h, ch;
     unsigned char* pixels = stbi_load_from_memory(&g_assets[off + 16], png_size, &w, &h, &ch, 4);
-    if (!pixels) return img;
+    if (!pixels) {
+        if (dbg_budget > 0) {
+            --dbg_budget;
+            std::fprintf(stderr, "[kwik] image %d stbi_load failed png_size=%u reason=%s\n", index,
+                         png_size, stbi_failure_reason());
+        }
+        return img;
+    }
     img.tex = render_upload_texture(pixels, w, h);
     img.w = w;
     img.h = h;
@@ -154,6 +177,11 @@ static LoadedImage& load_image(int index) {
     stbi_image_free(pixels);
     if (!img.ok)
         std::fprintf(stderr, "[kwik] texture upload failed for image %d (%dx%d)\n", index, w, h);
+    else if (dbg_budget > 0) {
+        --dbg_budget;
+        std::fprintf(stderr, "[kwik] image %d loaded ok tex=%u %dx%d ch=%d png_size=%u\n", index,
+                     img.tex, w, h, ch, png_size);
+    }
     return img;
 }
 

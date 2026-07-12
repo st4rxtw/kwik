@@ -483,6 +483,25 @@ GMLFN(audio_master_gain) {
     return Value();
 }
 
+GMLFN(audio_get_listener_count) { (void)self; (void)args; (void)argc; return Value(1.0); }
+
+GMLFN(audio_get_listener_info) {
+    (void)self;
+    Value m = ds_map_create(self, nullptr, 0);
+    auto add = [&](const char* k, double v) {
+        Value c[3] = {m, Value(std::string(k)), Value(v)};
+        ds_map_add(self, c, 3);
+    };
+    add("index", argc > 0 ? (double)args[0] : 0.0);
+    add("isdefault", 1.0);
+    add("flags", 1.0);
+    add("x", 0.0); add("y", 0.0); add("z", 0.0);
+    add("velx", 0.0); add("vely", 0.0); add("velz", 0.0);
+    add("dirx", 0.0); add("diry", 0.0); add("dirz", -1.0);
+    add("upx", 0.0); add("upy", 1.0); add("upz", 0.0);
+    return m;
+}
+
 GMLFN(audio_get_master_gain) {
     (void)self; (void)args; (void)argc;
     if (!ensure_engine()) return Value(1.0);

@@ -709,6 +709,13 @@ void render_draw_rectangle(double x1, double y1, double x2, double y2, bool outl
 
 void render_draw_rectangle_color(double x1, double y1, double x2, double y2, unsigned int c1,
                                  unsigned int c2, unsigned int c3, unsigned int c4, bool outline) {
+    static const char* dbg = std::getenv("KWIK_DEBUG_BIGRECT");
+    static int dbg_budget = dbg ? 40 : 0;
+    if (dbg_budget > 0 && (x2 - x1) > 500 && (y2 - y1) > 300) {
+        --dbg_budget;
+        std::fprintf(stderr, "[bigrect] (%.0f,%.0f)-(%.0f,%.0f) color=0x%06x alpha=%g outline=%d\n",
+                     x1, y1, x2, y2, c1, g_alpha, (int)outline);
+    }
     glDisable(GL_TEXTURE_2D);
     if (!outline) {
         x2 += 1;

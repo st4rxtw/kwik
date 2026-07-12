@@ -59,6 +59,24 @@ void GameData::parse_gen8() {
             break;
         }
     }
+
+    uint32_t room_count = (uint32_t)rooms_.size();
+    if (room_count > 0) {
+        for (uint32_t o = c->offset; o + 4 <= c->offset + c->size; o += 4) {
+            uint32_t cnt = u32(o);
+            if (cnt < room_count || cnt > room_count + 4) continue;
+            if (o + 4 + (size_t)cnt * 4 > c->offset + c->size) continue;
+            bool ok = true;
+            for (uint32_t i = 0; i < cnt; ++i) {
+                int32_t v = i32(o + 4 + i * 4);
+                if (v < 0 || (uint32_t)v >= room_count) { ok = false; break; }
+            }
+            if (ok) {
+                start_room_ = i32(o + 4);
+                break;
+            }
+        }
+    }
 }
 
 void GameData::parse_glob() {

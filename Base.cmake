@@ -27,6 +27,14 @@ if(MSVC)
     set_target_properties(game PROPERTIES LINK_FLAGS "/STACK:8388608")
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Assets.dat")
+    add_custom_command(TARGET game POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/Assets.dat
+                $<TARGET_FILE_DIR:game>/Assets.dat
+        COMMENT "kwik: copying Assets.dat next to game binary")
+endif()
+
 if(VITA)
     include("${VITASDK}/share/vita.cmake" REQUIRED)
 
@@ -41,6 +49,9 @@ if(VITA)
     endif()
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/sce_sys/livearea")
         list(APPEND KWIK_VITA_VPK_FILES FILE "${CMAKE_CURRENT_SOURCE_DIR}/sce_sys/livearea" sce_sys/livearea)
+    endif()
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Assets.dat")
+        list(APPEND KWIK_VITA_VPK_FILES FILE "${CMAKE_CURRENT_SOURCE_DIR}/Assets.dat" Assets.dat)
     endif()
 
     vita_create_vpk(game.vpk ${KWIK_VITA_TITLEID} eboot.bin

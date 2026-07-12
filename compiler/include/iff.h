@@ -133,6 +133,7 @@ public:
     int window_w() const { return window_w_; }
     int window_h() const { return window_h_; }
     int game_fps() const { return game_fps_; }
+    int start_room() const { return start_room_; }
     const std::string& game_name() const { return game_name_; }
     const std::string& display_name() const { return display_name_; }
 
@@ -178,6 +179,7 @@ private:
     int window_w_ = 640;
     int window_h_ = 480;
     int game_fps_ = 30;
+    int start_room_ = 0;
     std::string game_name_ = "kwik_game";
     std::string display_name_;
 };

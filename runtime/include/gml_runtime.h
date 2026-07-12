@@ -120,6 +120,7 @@ struct ObjectDef {
     ScriptFn draw_resize = nullptr;
     ScriptFn async_save_load = nullptr, async_system = nullptr, async_web = nullptr;
     ScriptFn outside_room = nullptr, path_ended = nullptr;
+    ScriptFn outside_view[8] = {}, boundary_view[8] = {};
     ScriptFn user[16] = {};
     const CollisionHandler* collisions = nullptr;
     int collision_count = 0;
@@ -259,6 +260,7 @@ struct GameTables {
     int window_w;
     int window_h;
     int game_fps;
+    int start_room;
 };
 
 extern const KwikSprite* g_sprites;
@@ -408,14 +410,17 @@ GMLFN(array_pop); GMLFN(array_resize); GMLFN(array_copy); GMLFN(array_delete); G
 
 GMLFN(ds_exists); GMLFN(ds_list_add); GMLFN(ds_list_create); GMLFN(ds_list_destroy);
 GMLFN(ds_list_find_value); GMLFN(ds_list_read); GMLFN(ds_list_size); GMLFN(ds_list_write);
+GMLFN(ds_list_empty);
 GMLFN(ds_list_clear); GMLFN(ds_list_delete_fn); GMLFN(ds_map_add); GMLFN(ds_map_create);
 GMLFN(ds_map_delete); GMLFN(ds_map_destroy); GMLFN(ds_map_exists); GMLFN(ds_map_find_first);
+GMLFN(ds_map_empty);
 GMLFN(ds_map_find_next); GMLFN(ds_map_find_value); GMLFN(ds_map_keys_to_array); GMLFN(ds_map_set);
 GMLFN(ds_map_set_post); GMLFN(ds_map_size); GMLFN(json_decode); GMLFN(json_encode);
 GMLFN(json_parse); GMLFN(json_stringify);
 
 GMLFN(ini_open); GMLFN(ini_open_from_string); GMLFN(ini_close); GMLFN(ini_read_real);
 GMLFN(ini_read_string); GMLFN(ini_write_real); GMLFN(ini_write_string);
+GMLFN(ini_section_exists); GMLFN(ini_key_exists); GMLFN(ini_section_delete); GMLFN(ini_key_delete);
 GMLFN(file_exists); GMLFN(file_copy); GMLFN(file_delete); GMLFN(file_text_open_read);
 GMLFN(file_text_open_write); GMLFN(file_text_close); GMLFN(file_text_eof);
 GMLFN(file_text_read_real); GMLFN(file_text_read_string); GMLFN(file_text_readln);
@@ -428,8 +433,9 @@ GMLFN(buffer_async_group_begin); GMLFN(buffer_async_group_end); GMLFN(buffer_asy
 GMLFN(instance_exists); GMLFN(instance_find); GMLFN(instance_number); GMLFN(instance_create_depth);
 GMLFN(instance_create_layer); GMLFN(instance_destroy); GMLFN(instance_activate_all);
 GMLFN(instance_activate_object); GMLFN(instance_deactivate_all); GMLFN(instance_deactivate_object);
+GMLFN(instance_activate_region); GMLFN(instance_deactivate_region);
 GMLFN(place_meeting); GMLFN(place_free); GMLFN(position_meeting); GMLFN(instance_place);
-GMLFN(instance_position); GMLFN(instance_nearest); GMLFN(collision_line); GMLFN(collision_point);
+GMLFN(instance_position); GMLFN(instance_nearest); GMLFN(instance_furthest); GMLFN(collision_line); GMLFN(collision_point);
 GMLFN(collision_rectangle); GMLFN(collision_circle); GMLFN(distance_to_object); GMLFN(distance_to_point);
 GMLFN(point_in_rectangle); GMLFN(move_towards_point); GMLFN(motion_set); GMLFN(motion_add);
 
@@ -465,6 +471,7 @@ GMLFN(make_color_hsv); GMLFN(make_color_rgb); GMLFN(merge_color); GMLFN(color_ge
 GMLFN(color_get_green); GMLFN(color_get_blue);
 
 GMLFN(gpu_set_blendenable); GMLFN(gpu_set_blendmode); GMLFN(gpu_set_fog); GMLFN(gpu_set_texfilter);
+GMLFN(gpu_set_texfilter_ext);
 GMLFN(surface_get_width); GMLFN(surface_get_height); GMLFN(texture_is_ready);
 GMLFN(texture_prefetch); GMLFN(texturegroup_get_textures); GMLFN(application_surface_draw_enable);
 GMLFN(application_surface_enable); GMLFN(vertex_create_buffer); GMLFN(vertex_format_add_colour);
@@ -472,6 +479,7 @@ GMLFN(vertex_format_add_normal); GMLFN(vertex_format_add_position_3d);
 GMLFN(vertex_format_add_textcoord); GMLFN(vertex_format_begin); GMLFN(vertex_format_end);
 
 GMLFN(layer_background_alpha); GMLFN(layer_background_blend); GMLFN(layer_background_change);
+GMLFN(layer_background_sprite);
 GMLFN(layer_background_create); GMLFN(layer_background_exists); GMLFN(layer_background_get_alpha);
 GMLFN(layer_background_get_blend); GMLFN(layer_background_get_htiled);
 GMLFN(layer_background_get_index); GMLFN(layer_background_get_sprite);
@@ -486,6 +494,8 @@ GMLFN(layer_get_visible); GMLFN(layer_get_vspeed); GMLFN(layer_get_x); GMLFN(lay
 GMLFN(layer_hspeed); GMLFN(layer_set_visible); GMLFN(layer_sprite_destroy);
 GMLFN(layer_sprite_get_sprite); GMLFN(layer_tile_alpha); GMLFN(layer_tile_get_x);
 GMLFN(layer_tile_get_y); GMLFN(layer_tile_visible); GMLFN(layer_tile_x); GMLFN(layer_tile_y);
+GMLFN(layer_tile_destroy); GMLFN(layer_tile_get_xscale); GMLFN(layer_tile_get_yscale);
+GMLFN(layer_tile_get_region);
 GMLFN(layer_vspeed); GMLFN(layer_x); GMLFN(layer_y);
 
 GMLFN(camera_create); GMLFN(camera_get_view_angle); GMLFN(camera_get_view_border_x);
@@ -511,12 +521,14 @@ GMLFN(mouse_check_button); GMLFN(mouse_check_button_pressed);
 GMLFN(mouse_wheel_up); GMLFN(mouse_wheel_down);
 GMLFN(gamepad_axis_value); GMLFN(gamepad_button_check); GMLFN(gamepad_button_check_pressed);
 GMLFN(gamepad_get_description); GMLFN(gamepad_get_device_count); GMLFN(gamepad_get_guid);
-GMLFN(gamepad_is_connected); GMLFN(gamepad_test_mapping);
+GMLFN(gamepad_is_connected); GMLFN(gamepad_test_mapping); GMLFN(gamepad_set_vibration);
+GMLFN(gamepad_set_axis_deadzone);
 
 GMLFN(audio_create_stream); GMLFN(audio_destroy_stream); GMLFN(audio_group_is_loaded);
 GMLFN(audio_group_load); GMLFN(audio_group_set_gain); GMLFN(audio_is_playing);
 GMLFN(audio_pause_all); GMLFN(audio_pause_sound); GMLFN(audio_play_sound); GMLFN(audio_resume_all);
 GMLFN(audio_resume_sound); GMLFN(audio_set_master_gain); GMLFN(audio_master_gain);
+GMLFN(audio_get_listener_count); GMLFN(audio_get_listener_info);
 GMLFN(audio_get_master_gain); GMLFN(audio_sound_gain);
 GMLFN(audio_sound_get_track_position); GMLFN(audio_sound_pitch);
 GMLFN(audio_sound_set_track_position); GMLFN(audio_stop_all); GMLFN(audio_stop_sound);
@@ -537,6 +549,7 @@ GMLFN(draw_sprite_stretched_ext); GMLFN(draw_sprite_tiled); GMLFN(draw_surface);
 GMLFN(draw_text_ext); GMLFN(draw_text_ext_transformed); GMLFN(draw_tilemap);
 GMLFN(surface_create); GMLFN(surface_exists); GMLFN(surface_free); GMLFN(surface_set_target);
 GMLFN(surface_reset_target); GMLFN(surface_get_texture); GMLFN(surface_getpixel_ext);
+GMLFN(surface_getpixel);
 GMLFN(shader_set); GMLFN(shader_reset); GMLFN(shader_get_uniform);
 GMLFN(shader_set_uniform_f); GMLFN(shader_get_sampler_index); GMLFN(texture_set_stage);
 GMLFN(texture_get_texel_width); GMLFN(texture_get_texel_height);
@@ -667,6 +680,9 @@ GMLFN(draw_vertex_texture);
 GMLFN(draw_vertex_texture_colour);
 GMLFN(ds_grid_create);
 GMLFN(ds_grid_destroy);
+GMLFN(ds_grid_width); GMLFN(ds_grid_height); GMLFN(ds_grid_clear);
+GMLFN(ds_grid_get); GMLFN(ds_grid_set); GMLFN(ds_grid_add);
+GMLFN(ds_grid_value_x); GMLFN(ds_grid_value_y);
 GMLFN(ds_list_insert);
 GMLFN(ds_list_replace);
 GMLFN(ds_list_set);
@@ -674,8 +690,12 @@ GMLFN(ds_list_sort);
 GMLFN(ds_priority_delete_max);
 GMLFN(ds_priority_destroy);
 GMLFN(ds_queue_destroy);
+GMLFN(ds_queue_clear); GMLFN(ds_queue_copy); GMLFN(ds_queue_size); GMLFN(ds_queue_empty);
+GMLFN(ds_queue_enqueue); GMLFN(ds_queue_dequeue); GMLFN(ds_queue_head); GMLFN(ds_queue_tail);
 GMLFN(ds_stack_create);
 GMLFN(ds_stack_destroy);
+GMLFN(ds_stack_clear); GMLFN(ds_stack_copy); GMLFN(ds_stack_size); GMLFN(ds_stack_empty);
+GMLFN(ds_stack_push); GMLFN(ds_stack_pop); GMLFN(ds_stack_top);
 GMLFN(get_integer);
 GMLFN(gif_add_image);
 GMLFN(gif_add_surface);
@@ -782,6 +802,7 @@ GMLFN(part_type_speed);
 GMLFN(part_type_sprite);
 GMLFN(point_distance_3d);
 GMLFN(rectangle_in_rectangle);
+GMLFN(rectangle_in_triangle);
 GMLFN(room_get_camera);
 GMLFN(shader_current);
 GMLFN(shader_is_compiled);
@@ -833,6 +854,7 @@ GMLFN(tile_set_flip);
 GMLFN(tile_set_index);
 GMLFN(tile_set_mirror);
 GMLFN(tile_set_rotate);
+GMLFN(tile_set_empty);
 GMLFN(variable_struct_get_names);
 GMLFN(vertex_begin);
 GMLFN(vertex_color);

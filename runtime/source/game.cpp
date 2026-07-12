@@ -552,7 +552,8 @@ enum EvKind {
     EVK_DRAW, EVK_DRAW_GUI, EVK_DRAW_BEGIN, EVK_DRAW_END, EVK_DRAW_GUI_BEGIN, EVK_DRAW_GUI_END,
     EVK_DRAW_PRE, EVK_DRAW_POST, EVK_ALARM, EVK_ROOM_START, EVK_ROOM_END, EVK_ANIM_END,
     EVK_GAME_START, EVK_USER, EVK_PRE_CREATE, EVK_DRAW_RESIZE, EVK_ASYNC_SAVE_LOAD,
-    EVK_ASYNC_SYSTEM, EVK_ASYNC_WEB, EVK_OUTSIDE_ROOM, EVK_PATH_ENDED
+    EVK_ASYNC_SYSTEM, EVK_ASYNC_WEB, EVK_OUTSIDE_ROOM, EVK_PATH_ENDED,
+    EVK_OUTSIDE_VIEW, EVK_BOUNDARY_VIEW
 };
 
 static ScriptFn find_event(int obj, int kind, int sub, int* owner_out = nullptr) {
@@ -587,6 +588,8 @@ static ScriptFn find_event(int obj, int kind, int sub, int* owner_out = nullptr)
             case EVK_ASYNC_WEB: fn = d.async_web; break;
             case EVK_OUTSIDE_ROOM: fn = d.outside_room; break;
             case EVK_PATH_ENDED: fn = d.path_ended; break;
+            case EVK_OUTSIDE_VIEW: fn = (sub >= 0 && sub < 8) ? d.outside_view[sub] : nullptr; break;
+            case EVK_BOUNDARY_VIEW: fn = (sub >= 0 && sub < 8) ? d.boundary_view[sub] : nullptr; break;
             case EVK_USER: fn = (sub >= 0 && sub < 16) ? d.user[sub] : nullptr; break;
         }
         if (fn) {
@@ -696,6 +699,14 @@ Value kwik_create_instance(int obj_index, double x, double y, double depth, bool
 
 void kwik_destroy_instance(Instance* inst, bool run_event) {
     if (!inst || inst->dead) return;
+    static const char* dbg = std::getenv("KWIK_DEBUG_DESTROY");
+    if (dbg && inst->object_index >= 0 && inst->object_index < g_object_count_rt) {
+        const char* nm = g_objects_rt[inst->object_index].name;
+        if (std::strstr(nm, "player") || std::strstr(nm, "camera"))
+            std::fprintf(stderr, "[destroy] #%d %s (%.0f,%.0f) room=%d persistent=%d frame=%llu\n",
+                         inst->id, nm, inst->x, inst->y, g_current_room, (int)inst->persistent,
+                         g_frame_counter);
+    }
     if (run_event) fire(inst, EVK_DESTROY, 0);
     fire(inst, EVK_CLEANUP, 0);
     inst->dead = true;
@@ -1428,6 +1439,39 @@ GMLFN(instance_deactivate_object) {
     return Value();
 }
 
+GMLFN(instance_activate_region) {
+    (void)self;
+    if (argc < 5) return Value();
+    double rx = (double)args[0], ry = (double)args[1];
+    double rw = (double)args[2], rh = (double)args[3];
+    bool inside = gml_truthy(args[4]);
+    for (auto& sp : g_instances) {
+        if (sp->dead) continue;
+        double l, t, r, b;
+        if (!inst_bbox(sp.get(), sp->x, sp->y, l, t, r, b)) { l = r = sp->x; t = b = sp->y; }
+        bool overlaps = !(r < rx || l > rx + rw || b < ry || t > ry + rh);
+        if (overlaps == inside) sp->active = true;
+    }
+    return Value();
+}
+
+GMLFN(instance_deactivate_region) {
+    if (argc < 5) return Value();
+    double rx = (double)args[0], ry = (double)args[1];
+    double rw = (double)args[2], rh = (double)args[3];
+    bool inside = gml_truthy(args[4]);
+    bool notme = argc > 5 && gml_truthy(args[5]);
+    for (auto& sp : g_instances) {
+        if (sp->dead) continue;
+        if (notme && sp.get() == self) continue;
+        double l, t, r, b;
+        if (!inst_bbox(sp.get(), sp->x, sp->y, l, t, r, b)) { l = r = sp->x; t = b = sp->y; }
+        bool overlaps = !(r < rx || l > rx + rw || b < ry || t > ry + rh);
+        if (overlaps == inside) sp->active = false;
+    }
+    return Value();
+}
+
 GMLFN(place_meeting) {
     if (argc < 3) return Value(0.0);
     Instance* hit = collision_at(self, (double)args[0], (double)args[1], (int)(double)args[2], false);
@@ -1481,6 +1525,20 @@ GMLFN(instance_nearest) {
         if (sp.get() == self || !inst_matches(sp.get(), who)) continue;
         double d = std::hypot(sp->x - px, sp->y - py);
         if (d < bd) { bd = d; best = sp.get(); }
+    }
+    return Value(best ? (double)best->id : -4.0);
+}
+
+GMLFN(instance_furthest) {
+    if (argc < 3) return Value(-4.0);
+    double px = (double)args[0], py = (double)args[1];
+    int who = (int)(double)args[2];
+    Instance* best = nullptr;
+    double bd = -1.0;
+    for (auto& sp : g_instances) {
+        if (sp.get() == self || !inst_matches(sp.get(), who)) continue;
+        double d = std::hypot(sp->x - px, sp->y - py);
+        if (d > bd) { bd = d; best = sp.get(); }
     }
     return Value(best ? (double)best->id : -4.0);
 }
@@ -2709,6 +2767,11 @@ static void load_room(int index, bool clear_persistent) {
     cam.script_controlled = false;
 
     render_set_room(room.width, room.height, room.bg_color);
+    if (std::getenv("KWIK_DEBUG"))
+        std::fprintf(stderr,
+                     "[kwik] room dims %dx%d cam=(%.1f,%.1f %gx%g) border=(%g,%g) speed=(%g,%g) target=%d\n",
+                     room.width, room.height, cam.x, cam.y, cam.w, cam.h, cam.border_x,
+                     cam.border_y, cam.speed_x, cam.speed_y, cam.target);
 
     g_rt_layers.clear();
     for (int i = 0; i < room.layer_count; ++i) {
@@ -3196,6 +3259,29 @@ static void run_step_phase() {
             fire(inst, EVK_OUTSIDE_ROOM, 0);
     }
 
+    n = g_instances.size();
+    for (size_t i = 0; i < n; ++i) {
+        Instance* inst = g_instances[i].get();
+        if (inst->dead || !inst->active) continue;
+        double l, t, r, b;
+        bool have_bbox = inst_bbox(inst, inst->x, inst->y, l, t, r, b);
+        if (!have_bbox) { l = r = inst->x; t = b = inst->y; }
+        for (int v = 0; v < 8; ++v) {
+            bool has_outside = find_event(inst->object_index, EVK_OUTSIDE_VIEW, v);
+            bool has_boundary = find_event(inst->object_index, EVK_BOUNDARY_VIEW, v);
+            if (!has_outside && !has_boundary) continue;
+            Camera& cam = g_cameras[g_view_camera[v]];
+            if (has_outside &&
+                (r < cam.x || l > cam.x + cam.w || b < cam.y || t > cam.y + cam.h))
+                fire(inst, EVK_OUTSIDE_VIEW, v);
+            if (has_boundary) {
+                bool overlaps = !(r < cam.x || l > cam.x + cam.w || b < cam.y || t > cam.y + cam.h);
+                bool contained = l >= cam.x && r <= cam.x + cam.w && t >= cam.y && b <= cam.y + cam.h;
+                if (overlaps && !contained) fire(inst, EVK_BOUNDARY_VIEW, v);
+            }
+        }
+    }
+
     run_collisions();
 
     n = g_instances.size();
@@ -3255,7 +3341,9 @@ static void run_step_phase() {
 
     static bool dbg_inst = std::getenv("KWIK_DEBUG_INST") != nullptr;
     if (dbg_inst && g_frame_counter % 90 == 0) {
-        std::fprintf(stderr, "[inst] frame %llu:\n", g_frame_counter);
+        Camera& dc = g_cameras[g_view_camera[0]];
+        std::fprintf(stderr, "[inst] frame %llu: cam=(%.1f,%.1f %gx%g) target=%d\n", g_frame_counter,
+                     dc.x, dc.y, dc.w, dc.h, dc.target);
         for (auto& sp : g_instances) {
             Instance* in = sp.get();
             const char* nm = in->object_index >= 0 && in->object_index < g_object_count_rt
@@ -3374,7 +3462,10 @@ int run_game(const GameTables& tables) {
         g_room_speed_v = tables.game_fps;
     }
 
-    const RoomDef& first = tables.rooms[0];
+    const RoomDef& first =
+        tables.rooms[tables.start_room >= 0 && tables.start_room < tables.room_count
+                          ? tables.start_room
+                          : 0];
     int win_w = tables.window_w > 0 ? tables.window_w : (first.view_w > 0 ? first.view_w : first.width);
     int win_h = tables.window_h > 0 ? tables.window_h : (first.view_h > 0 ? first.view_h : first.height);
     if (!render_init(tables.game_name && *tables.game_name ? tables.game_name : first.name, win_w,
@@ -3400,7 +3491,10 @@ restart_game:
     for (int i = 0; i < tables.global_init_count; ++i)
         if (tables.global_init[i]) tables.global_init[i](g_dummy_instance, nullptr, 0);
 
-    load_room(0, true);
+    load_room(tables.start_room >= 0 && tables.start_room < tables.room_count
+                  ? tables.start_room
+                  : 0,
+              true);
 
     double step_time = 1.0 / g_room_speed_v;
     double accumulator = 0.0;

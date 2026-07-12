@@ -58,6 +58,62 @@ GMLFN(rectangle_in_rectangle) {
     return Value(0.0);
 }
 
+static double tri_sign(double px, double py, double ax, double ay, double bx, double by) {
+    return (px - bx) * (ay - by) - (ax - bx) * (py - by);
+}
+static bool point_in_triangle(double px, double py, double x1, double y1, double x2, double y2,
+                              double x3, double y3) {
+    double d1 = tri_sign(px, py, x1, y1, x2, y2);
+    double d2 = tri_sign(px, py, x2, y2, x3, y3);
+    double d3 = tri_sign(px, py, x3, y3, x1, y1);
+    bool has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+    bool has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+    return !(has_neg && has_pos);
+}
+static bool segments_intersect(double ax, double ay, double bx, double by, double cx, double cy,
+                               double dx, double dy) {
+    auto cross = [](double ox, double oy, double ax_, double ay_, double bx_, double by_) {
+        return (ax_ - ox) * (by_ - oy) - (ay_ - oy) * (bx_ - ox);
+    };
+    double d1 = cross(cx, cy, dx, dy, ax, ay);
+    double d2 = cross(cx, cy, dx, dy, bx, by);
+    double d3 = cross(ax, ay, bx, by, cx, cy);
+    double d4 = cross(ax, ay, bx, by, dx, dy);
+    return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0));
+}
+GMLFN(rectangle_in_triangle) {
+    (void)self;
+    double rx1 = A(args, argc, 0), ry1 = A(args, argc, 1), rx2 = A(args, argc, 2),
+           ry2 = A(args, argc, 3);
+    double x1 = A(args, argc, 4), y1 = A(args, argc, 5);
+    double x2 = A(args, argc, 6), y2 = A(args, argc, 7);
+    double x3 = A(args, argc, 8), y3 = A(args, argc, 9);
+    double cxs[4] = {rx1, rx2, rx2, rx1};
+    double cys[4] = {ry1, ry1, ry2, ry2};
+    int inside_count = 0;
+    for (int i = 0; i < 4; ++i)
+        if (point_in_triangle(cxs[i], cys[i], x1, y1, x2, y2, x3, y3)) ++inside_count;
+    if (inside_count == 4) return Value(1.0);
+    if (inside_count > 0) return Value(2.0);
+    if (point_in_triangle(x1, y1, rx1, ry1, rx2, ry1, rx2, ry2) ||
+        point_in_triangle(x1, y1, rx1, ry1, rx2, ry2, rx1, ry2) ||
+        (x1 >= rx1 && x1 <= rx2 && y1 >= ry1 && y1 <= ry2) ||
+        (x2 >= rx1 && x2 <= rx2 && y2 >= ry1 && y2 <= ry2) ||
+        (x3 >= rx1 && x3 <= rx2 && y3 >= ry1 && y3 <= ry2))
+        return Value(2.0);
+    double trix[3] = {x1, x2, x3}, triy[3] = {y1, y2, y3};
+    for (int i = 0; i < 3; ++i) {
+        double ex1 = trix[i], ey1 = triy[i];
+        double ex2 = trix[(i + 1) % 3], ey2 = triy[(i + 1) % 3];
+        for (int j = 0; j < 4; ++j) {
+            double sx1 = cxs[j], sy1 = cys[j];
+            double sx2 = cxs[(j + 1) % 4], sy2 = cys[(j + 1) % 4];
+            if (segments_intersect(ex1, ey1, ex2, ey2, sx1, sy1, sx2, sy2)) return Value(2.0);
+        }
+    }
+    return Value(0.0);
+}
+
 GMLFN(is_numeric) {
     (void)self;
     return Value(argc > 0 && args[0].type == Value::REAL ? 1.0 : 0.0);
@@ -871,6 +927,11 @@ GMLFN(tile_set_rotate) {
     uint32_t cell = (uint32_t)(long long)A(args, argc, 0);
     return Value((double)(gml_truthy(argc > 1 ? args[1] : Value()) ? (cell | 0x40000000u)
                                                                    : (cell & ~0x40000000u)));
+}
+GMLFN(tile_set_empty) {
+    (void)self;
+    uint32_t cell = (uint32_t)(long long)A(args, argc, 0);
+    return Value((double)(cell & ~0x0007FFFFu));
 }
 
 GMLFN(sprite_get_info) {

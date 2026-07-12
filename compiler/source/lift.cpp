@@ -889,6 +889,7 @@ struct ObjectSlots {
     std::string room_start, room_end, anim_end, game_start;
     std::string draw_resize, async_save_load, async_system, async_web;
     std::string outside_room, path_ended;
+    std::string outside_view[8], boundary_view[8];
     std::string user[16];
     std::vector<std::pair<std::string, std::string>> collisions;
     std::vector<std::pair<int, std::string>> keypress;
@@ -963,6 +964,8 @@ static void assign_event(const GameData& gd, const std::string& code_name,
     else if (event == "Other" && sub == 72) s.async_save_load = fn;
     else if (event == "Other" && sub == 75) s.async_system = fn;
     else if (event == "Other" && sub >= 10 && sub <= 25) s.user[sub - 10] = fn;
+    else if (event == "Other" && sub >= 40 && sub <= 47) s.outside_view[sub - 40] = fn;
+    else if (event == "Other" && sub >= 50 && sub <= 57) s.boundary_view[sub - 50] = fn;
     else if (event == "KeyPress") s.keypress.emplace_back(sub, fn);
     else if (event == "KeyRelease") s.keyrelease.emplace_back(sub, fn);
     else if (event == "Keyboard") s.keyboard.emplace_back(sub, fn);
@@ -1051,6 +1054,12 @@ static void emit_object_table(std::ostream& os, const GameData& gd) {
             if (!s.alarm[a].empty()) os << " d.alarm[" << a << "] = " << s.alarm[a] << ";";
         for (int u = 0; u < 16; ++u)
             if (!s.user[u].empty()) os << " d.user[" << u << "] = " << s.user[u] << ";";
+        for (int v = 0; v < 8; ++v)
+            if (!s.outside_view[v].empty())
+                os << " d.outside_view[" << v << "] = " << s.outside_view[v] << ";";
+        for (int v = 0; v < 8; ++v)
+            if (!s.boundary_view[v].empty())
+                os << " d.boundary_view[" << v << "] = " << s.boundary_view[v] << ";";
         if (!s.collisions.empty())
             os << " d.collisions = g_coll_" << i << "; d.collision_count = "
                << s.collisions.size() << ";";
@@ -1334,6 +1343,7 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     mainf << "    t.window_w = " << gd.window_w() << ";\n";
     mainf << "    t.window_h = " << gd.window_h() << ";\n";
     mainf << "    t.game_fps = " << gd.game_fps() << ";\n";
+    mainf << "    t.start_room = " << gd.start_room() << ";\n";
     mainf << "    return gml::run_game(t);\n";
     mainf << "}\n";
     mainf.close();
