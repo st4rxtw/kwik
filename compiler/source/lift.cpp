@@ -851,15 +851,25 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
         }
     }
 
-    std::ostringstream body;
+    std::vector<std::string> pieces;
+    std::vector<uint32_t> piece_addr;
+    std::vector<bool> piece_is_label;
+    size_t body_size = 0;
     for (size_t i = 0; i < n; ++i) {
         if (!ctx.reachable[i]) continue;
-        if (ctx.labels.count(ctx.instrs[i].address))
-            body << "  L_" << std::hex << ctx.instrs[i].address << std::dec << ": ;\n";
+        std::ostringstream piece;
+        bool is_label = ctx.labels.count(ctx.instrs[i].address) != 0;
+        if (is_label)
+            piece << "  L_" << std::hex << ctx.instrs[i].address << std::dec << ": ;\n";
         StackState st = ctx.before[i];
         std::vector<Succ> succ;
         bool falls;
-        exec_instr(ctx, i, st, &body, succ, falls);
+        exec_instr(ctx, i, st, &piece, succ, falls);
+        std::string s = piece.str();
+        body_size += s.size();
+        piece_addr.push_back(ctx.instrs[i].address);
+        piece_is_label.push_back(is_label);
+        pieces.push_back(std::move(s));
     }
 
     std::ostringstream out;
@@ -874,8 +884,77 @@ std::string lift_code_entry(const GameData& gd, const CodeEntry& e) {
             << sanitize(ctx.e.name) << ");\n"
                "    Instance* __statics = __statics_sp.get(); (void)__statics;\n"
                "    static bool __static_ok = false; (void)__static_ok;\n";
-    out << body.str();
-    if (ctx.needs_exit_label) out << "  L_exit: ;\n";
+
+    const size_t chunk_split_threshold = 200 * 1024;
+    if (body_size <= chunk_split_threshold) {
+        for (const std::string& s : pieces) out << s;
+        if (ctx.needs_exit_label) out << "  L_exit: ;\n";
+        out << "    return Value();\n";
+        return out.str();
+    }
+
+    std::vector<int> piece_chunk(pieces.size());
+    std::unordered_map<uint32_t, int> addr_chunk;
+    int cur_chunk = 0;
+    for (size_t p = 0; p < pieces.size(); ++p) {
+        if (p > 0 && piece_is_label[p]) ++cur_chunk;
+        piece_chunk[p] = cur_chunk;
+        if (piece_is_label[p]) addr_chunk[piece_addr[p]] = cur_chunk;
+    }
+    int num_chunks = cur_chunk + 1;
+    int epilogue_chunk = num_chunks;
+
+    std::vector<std::ostringstream> chunk_text(num_chunks);
+    for (size_t p = 0; p < pieces.size(); ++p) {
+        std::string s = pieces[p];
+        size_t pos = 0;
+        while ((pos = s.find("    return ", pos)) != std::string::npos) {
+            size_t expr_start = pos + 11;
+            size_t end = s.find(';', expr_start);
+            if (end == std::string::npos) break;
+            std::string expr = s.substr(expr_start, end - expr_start);
+            std::string repl = "    __retval = " + expr + "; return -1";
+            s.replace(pos, end - pos, repl);
+            pos += repl.size();
+        }
+        pos = 0;
+        while ((pos = s.find("goto L_", pos)) != std::string::npos) {
+            size_t label_start = pos + 5;
+            size_t end = s.find(';', label_start);
+            if (end == std::string::npos) break;
+            std::string label_tok = s.substr(label_start, end - label_start);
+            int target_chunk;
+            if (label_tok == "L_exit") {
+                target_chunk = epilogue_chunk;
+            } else {
+                uint32_t addr = (uint32_t)std::strtoul(label_tok.c_str() + 2, nullptr, 16);
+                auto it = addr_chunk.find(addr);
+                target_chunk = it != addr_chunk.end() ? it->second : epilogue_chunk;
+            }
+            if (target_chunk != piece_chunk[p]) {
+                std::string repl = "return " + std::to_string(target_chunk);
+                s.replace(pos, end - pos, repl);
+                pos += repl.size();
+            } else {
+                pos = end;
+            }
+        }
+        chunk_text[piece_chunk[p]] << s;
+    }
+
+    out << "    Value __retval;\n";
+    out << "    int __pc = 0;\n";
+    out << "    while (__pc >= 0) {\n";
+    out << "        switch (__pc) {\n";
+    for (int c = 0; c < num_chunks; ++c) {
+        out << "        case " << c << ": { auto __chunk = [&]() -> int {\n"
+            << chunk_text[c].str() << "    return " << (c + 1) << ";\n"
+            << "        }; __pc = __chunk(); break; }\n";
+    }
+    out << "        default: return Value();\n";
+    out << "        }\n";
+    out << "    }\n";
+    out << "    if (__pc == -1) return __retval;\n";
     out << "    return Value();\n";
     return out.str();
 }
@@ -1183,15 +1262,19 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
 
     const size_t unit_budget = 80 * 1024;
     const size_t big_fn_threshold = 128 * 1024;
+    const size_t huge_fn_threshold = 512 * 1024;
 
     auto emit_entry = [&](const CodeEntry& e) {
         std::ostringstream ss;
         emit_function(ss, gd, e);
         std::string s = ss.str();
         if (s.size() > big_fn_threshold) {
+            const char* level = s.size() > huge_fn_threshold ? "O0" : "O1";
             s = "#if defined(__GNUC__) && !defined(__clang__)\n"
                 "#pragma GCC push_options\n"
-                "#pragma GCC optimize (\"O1\")\n"
+                "#pragma GCC optimize (\"" +
+                std::string(level) +
+                "\")\n"
                 "#endif\n" +
                 s +
                 "#if defined(__GNUC__) && !defined(__clang__)\n"
