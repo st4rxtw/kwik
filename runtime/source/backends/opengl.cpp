@@ -850,6 +850,19 @@ int render_window_height() {
     if (g_window) glfwGetWindowSize(g_window, &ww, &wh);
     return wh;
 }
+int render_window_x() {
+    int wx = 0, wy;
+    if (g_window) glfwGetWindowPos(g_window, &wx, &wy);
+    return wx;
+}
+int render_window_y() {
+    int wx, wy = 0;
+    if (g_window) glfwGetWindowPos(g_window, &wx, &wy);
+    return wy;
+}
+void render_set_window_position(int x, int y) {
+    if (g_window && !g_fullscreen) glfwSetWindowPos(g_window, x, y);
+}
 int render_display_width() {
     const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
     return mode ? mode->width : 1920;

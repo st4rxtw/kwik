@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <vector>
 
@@ -712,6 +713,19 @@ GMLFN(file_exists) {
     std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
     if (f) { std::fclose(f); return Value(1.0); }
     return Value(0.0);
+}
+
+GMLFN(directory_exists) {
+    (void)self;
+    std::error_code ec;
+    return Value(std::filesystem::is_directory(kwik_resolve_read(S(args, argc, 0)), ec));
+}
+
+GMLFN(directory_create) {
+    (void)self;
+    std::error_code ec;
+    std::filesystem::create_directories(kwik_save_path(S(args, argc, 0)), ec);
+    return Value();
 }
 
 GMLFN(file_delete) {

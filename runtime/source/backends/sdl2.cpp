@@ -947,6 +947,19 @@ int render_window_height() {
     if (g_window) SDL_GetWindowSize(g_window, &ww, &wh);
     return wh;
 }
+int render_window_x() {
+    int wx = 0, wy;
+    if (g_window) SDL_GetWindowPosition(g_window, &wx, &wy);
+    return wx;
+}
+int render_window_y() {
+    int wx, wy = 0;
+    if (g_window) SDL_GetWindowPosition(g_window, &wx, &wy);
+    return wy;
+}
+void render_set_window_position(int x, int y) {
+    if (g_window && !g_fullscreen) SDL_SetWindowPosition(g_window, x, y);
+}
 int render_display_width() {
     SDL_DisplayMode mode;
     if (SDL_GetDesktopDisplayMode(0, &mode) == 0) return mode.w;

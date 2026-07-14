@@ -131,6 +131,27 @@ int kwik_register_dynamic_image(unsigned int tex, int w, int h) {
     return (int)g_images.size() - 1;
 }
 
+bool kwik_sprite_append_frame(int spr, unsigned int tex, int w, int h) {
+    KwikSprite* s = sprite_mutable(spr);
+    if (!s) return false;
+    if (s->first_frame + s->frame_count != (int)g_images.size()) {
+        int old_first = s->first_frame;
+        int old_count = s->frame_count;
+        int new_first = (int)g_images.size();
+        for (int i = 0; i < old_count; ++i) g_images.push_back(g_images[old_first + i]);
+        s->first_frame = new_first;
+    }
+    LoadedImage img;
+    img.tex = tex;
+    img.w = w;
+    img.h = h;
+    img.tried = true;
+    img.ok = tex != 0;
+    g_images.push_back(img);
+    s->frame_count += 1;
+    return true;
+}
+
 static LoadedImage& load_image(int index) {
     ensure_assets();
     static LoadedImage dummy;

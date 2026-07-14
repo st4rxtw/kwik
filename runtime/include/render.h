@@ -28,6 +28,9 @@ bool render_get_fullscreen();
 void render_center_window();
 int render_window_width();
 int render_window_height();
+int render_window_x();
+int render_window_y();
+void render_set_window_position(int x, int y);
 int render_display_width();
 int render_display_height();
 

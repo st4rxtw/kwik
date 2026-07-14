@@ -453,6 +453,31 @@ GMLFN(sprite_create_from_surface) {
     s.name = "dyn_sprite";
     return Value((double)kwik_register_dynamic_sprite(s));
 }
+GMLFN(sprite_add_from_surface) {
+    (void)self;
+    if (argc < 6) return Value(0.0);
+    int spr = (int)A(args, argc, 0);
+    int id = (int)A(args, argc, 1);
+    int sw = render_surface_width(id), sh = render_surface_height(id);
+    if (sw <= 0 || sh <= 0) return Value(0.0);
+    int x = (int)A(args, argc, 2), y = (int)A(args, argc, 3);
+    int w = (int)A(args, argc, 4), h = (int)A(args, argc, 5);
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > sw) w = sw - x;
+    if (y + h > sh) h = sh - y;
+    if (w <= 0 || h <= 0) return Value(0.0);
+    unsigned int tex = render_texture_from_surface(id, x, y, w, h);
+    if (tex) {
+        render_set_colorwrite(g_gpu_colorwrite[0] != 0, g_gpu_colorwrite[1] != 0,
+                              g_gpu_colorwrite[2] != 0, g_gpu_colorwrite[3] != 0);
+    } else {
+        std::vector<unsigned char> pixels((size_t)w * h * 4);
+        if (!render_surface_snapshot(id, x, y, w, h, pixels.data())) return Value(0.0);
+        tex = render_upload_texture(pixels.data(), w, h);
+    }
+    return Value(kwik_sprite_append_frame(spr, tex, w, h) ? 1.0 : 0.0);
+}
 GMLFN(sprite_delete) { (void)self; (void)args; (void)argc; return Value(1.0); }
 
 GMLFN(window_set_size) {

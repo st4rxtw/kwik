@@ -551,7 +551,7 @@ enum EvKind {
     EVK_CREATE, EVK_DESTROY, EVK_CLEANUP, EVK_STEP, EVK_STEP_BEGIN, EVK_STEP_END,
     EVK_DRAW, EVK_DRAW_GUI, EVK_DRAW_BEGIN, EVK_DRAW_END, EVK_DRAW_GUI_BEGIN, EVK_DRAW_GUI_END,
     EVK_DRAW_PRE, EVK_DRAW_POST, EVK_ALARM, EVK_ROOM_START, EVK_ROOM_END, EVK_ANIM_END,
-    EVK_GAME_START, EVK_USER, EVK_PRE_CREATE, EVK_DRAW_RESIZE, EVK_ASYNC_SAVE_LOAD,
+    EVK_GAME_START, EVK_GAME_END, EVK_USER, EVK_PRE_CREATE, EVK_DRAW_RESIZE, EVK_ASYNC_SAVE_LOAD,
     EVK_ASYNC_SYSTEM, EVK_ASYNC_WEB, EVK_OUTSIDE_ROOM, EVK_PATH_ENDED,
     EVK_OUTSIDE_VIEW, EVK_BOUNDARY_VIEW
 };
@@ -582,6 +582,7 @@ static ScriptFn find_event(int obj, int kind, int sub, int* owner_out = nullptr)
             case EVK_ROOM_END: fn = d.room_end; break;
             case EVK_ANIM_END: fn = d.anim_end; break;
             case EVK_GAME_START: fn = d.game_start; break;
+            case EVK_GAME_END: fn = d.game_end; break;
             case EVK_DRAW_RESIZE: fn = d.draw_resize; break;
             case EVK_ASYNC_SAVE_LOAD: fn = d.async_save_load; break;
             case EVK_ASYNC_SYSTEM: fn = d.async_system; break;
@@ -3548,6 +3549,9 @@ restart_game:
             if (wait_s > 0) kwik_sleep_us((long long)(wait_s * 1e6));
         }
     }
+
+    for (auto& inst : g_instances)
+        if (!inst->dead) fire(inst.get(), EVK_GAME_END, 0);
 
     kwik_audio_shutdown();
     render_shutdown();

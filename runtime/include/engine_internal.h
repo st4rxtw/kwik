@@ -50,6 +50,7 @@ const KwikSprite* kwik_sprite_at(int idx);
 int kwik_sprite_total();
 int kwik_register_dynamic_sprite(const KwikSprite& s);
 int kwik_register_dynamic_image(unsigned int tex, int w, int h);
+bool kwik_sprite_append_frame(int spr, unsigned int tex, int w, int h);
 
 struct MaskSet {
     int count = 0;

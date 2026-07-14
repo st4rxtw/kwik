@@ -886,7 +886,7 @@ struct ObjectSlots {
     std::string draw, draw_gui, draw_begin, draw_end, draw_gui_begin, draw_gui_end;
     std::string draw_pre, draw_post;
     std::string alarm[12];
-    std::string room_start, room_end, anim_end, game_start;
+    std::string room_start, room_end, anim_end, game_start, game_end;
     std::string draw_resize, async_save_load, async_system, async_web;
     std::string outside_room, path_ended;
     std::string outside_view[8], boundary_view[8];
@@ -955,11 +955,13 @@ static void assign_event(const GameData& gd, const std::string& code_name,
     else if (event == "Draw" && sub == 65) s.draw_resize = fn;
     else if (event == "Alarm" && sub >= 0 && sub < 12) s.alarm[sub] = fn;
     else if (event == "Other" && sub == 2) s.game_start = fn;
+    else if (event == "Other" && sub == 3) s.game_end = fn;
     else if (event == "Other" && sub == 4) s.room_start = fn;
     else if (event == "Other" && sub == 5) s.room_end = fn;
     else if (event == "Other" && sub == 7) s.anim_end = fn;
     else if (event == "Other" && sub == 0) s.outside_room = fn;
     else if (event == "Other" && sub == 8) s.path_ended = fn;
+    else if (event == "Other" && sub == 62) s.async_web = fn;
     else if (event == "Other" && sub == 70) s.async_web = fn;
     else if (event == "Other" && sub == 72) s.async_save_load = fn;
     else if (event == "Other" && sub == 75) s.async_system = fn;
@@ -1044,6 +1046,7 @@ static void emit_object_table(std::ostream& os, const GameData& gd) {
         set(os, "room_end", s.room_end);
         set(os, "anim_end", s.anim_end);
         set(os, "game_start", s.game_start);
+        set(os, "game_end", s.game_end);
         set(os, "draw_resize", s.draw_resize);
         set(os, "async_save_load", s.async_save_load);
         set(os, "async_system", s.async_system);

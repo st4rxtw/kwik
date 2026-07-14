@@ -1064,6 +1064,9 @@ void render_center_window() {}
 
 int render_window_width() { return g_win_w; }
 int render_window_height() { return g_win_h; }
+int render_window_x() { return 0; }
+int render_window_y() { return 0; }
+void render_set_window_position(int, int) {}
 int render_display_width() { return VITA_W; }
 int render_display_height() { return VITA_H; }
 

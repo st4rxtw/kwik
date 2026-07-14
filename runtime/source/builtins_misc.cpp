@@ -81,6 +81,11 @@ GMLFN(gamepad_set_axis_deadzone) { (void)self; (void)args; (void)argc; return Va
 GMLFN(os_get_info) { (void)self; (void)args; (void)argc; return ds_map_create(self, nullptr, 0); }
 GMLFN(os_get_language) { (void)self; (void)args; (void)argc; return Value("en"); }
 GMLFN(os_is_paused) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(os_check_permission) { (void)self; (void)args; (void)argc; return Value(1.0); }
+GMLFN(os_request_permission) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(show_debug_overlay) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(extension_stubfunc_real) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(extension_stubfunc_string) { (void)self; (void)args; (void)argc; return Value(""); }
 GMLFN(environment_get_variable) {
     (void)self;
     const char* v = argc > 0 ? std::getenv(((std::string)args[0]).c_str()) : nullptr;
@@ -136,6 +141,7 @@ GMLFN(switch_show_store) { (void)self; (void)args; (void)argc; return Value(); }
 
 
 GMLFN(audio_system_is_available) { (void)self; (void)args; (void)argc; return Value(1.0); }
+GMLFN(shaders_are_supported) { (void)self; (void)args; (void)argc; return Value(1.0); }
 
 GMLFN(is_callable) { (void)self; return Value(argc > 0 && args[0].type == Value::FN); }
 GMLFN(is_handle) {
@@ -161,6 +167,14 @@ GMLFN(display_set_gui_size) {
     return Value();
 }
 GMLFN(display_set_gui_maximize) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(window_has_focus) { (void)self; (void)args; (void)argc; return Value(render_has_focus()); }
+GMLFN(window_get_x) { (void)self; (void)args; (void)argc; return Value((double)render_window_x()); }
+GMLFN(window_get_y) { (void)self; (void)args; (void)argc; return Value((double)render_window_y()); }
+GMLFN(window_set_position) {
+    (void)self;
+    render_set_window_position((int)A(args, argc, 0), (int)A(args, argc, 1));
+    return Value();
+}
 
 static Value g_scissor_saved;
 
