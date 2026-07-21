@@ -131,6 +131,12 @@ GMLFN(string) {
     if (argc < 1) return Value("");
     return Value((std::string)args[0]);
 }
+GMLFN(__string__) {
+    (void)self;
+    std::string out;
+    for (int i = 0; i < argc; ++i) out += (std::string)args[i];
+    return Value(out);
+}
 GMLFN(string_length) { (void)self; return Value((double)S(args, argc, 0).size()); }
 GMLFN(string_byte_length) { (void)self; return Value((double)S(args, argc, 0).size()); }
 GMLFN(string_char_at) {

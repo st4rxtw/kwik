@@ -182,6 +182,13 @@ GMLFN(string_starts_with) {
     return Value(str.rfind(prefix, 0) == 0 ? 1.0 : 0.0);
 }
 
+GMLFN(string_ends_with) {
+    (void)self;
+    std::string str = S(args, argc, 0), suffix = S(args, argc, 1);
+    if (suffix.size() > str.size()) return Value(0.0);
+    return Value(str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0 ? 1.0 : 0.0);
+}
+
 GMLFN(string_trim_start) {
     (void)self;
     std::string str = S(args, argc, 0);

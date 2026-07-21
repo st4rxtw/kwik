@@ -394,7 +394,7 @@ GMLFN(power); GMLFN(random); GMLFN(random_range); GMLFN(irandom); GMLFN(irandom_
 GMLFN(random_set_seed); GMLFN(randomize); GMLFN(round); GMLFN(sign); GMLFN(sqr); GMLFN(sqrt);
 GMLFN(dsin); GMLFN(dcos); GMLFN(dtan); GMLFN(darcsin); GMLFN(darccos); GMLFN(darctan);
 
-GMLFN(chr); GMLFN(ord); GMLFN(real); GMLFN(string); GMLFN(string_byte_length);
+GMLFN(chr); GMLFN(ord); GMLFN(real); GMLFN(string); GMLFN(__string__); GMLFN(string_byte_length);
 GMLFN(string_char_at); GMLFN(string_copy); GMLFN(string_delete); GMLFN(string_digits);
 GMLFN(string_hash_to_newline); GMLFN(string_insert); GMLFN(string_length); GMLFN(string_letters);
 GMLFN(string_lower); GMLFN(string_pos); GMLFN(string_repeat); GMLFN(string_replace);
@@ -826,6 +826,7 @@ GMLFN(sprite_set_bbox_mode);
 GMLFN(sprite_set_speed);
 GMLFN(string_count);
 GMLFN(string_starts_with);
+GMLFN(string_ends_with);
 GMLFN(string_trim_start);
 GMLFN(surface_copy);
 GMLFN(surface_copy_part);
