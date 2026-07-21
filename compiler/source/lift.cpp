@@ -1041,6 +1041,7 @@ static void assign_event(const GameData& gd, const std::string& code_name,
     else if (event == "Other" && sub == 0) s.outside_room = fn;
     else if (event == "Other" && sub == 8) s.path_ended = fn;
     else if (event == "Other" && sub == 62) s.async_web = fn;
+    else if (event == "Other" && sub == 63) s.async_web = fn;
     else if (event == "Other" && sub == 70) s.async_web = fn;
     else if (event == "Other" && sub == 72) s.async_save_load = fn;
     else if (event == "Other" && sub == 75) s.async_system = fn;

@@ -733,6 +733,11 @@ GMLFN(file_delete) {
     return Value(std::remove(kwik_resolve_read(S(args, argc, 0)).c_str()) == 0);
 }
 
+GMLFN(file_rename) {
+    (void)self;
+    return Value(std::rename(kwik_resolve_read(S(args, argc, 0)).c_str(), kwik_save_path(S(args, argc, 1)).c_str()) == 0);
+}
+
 GMLFN(file_copy) {
     (void)self;
     std::FILE* in = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");

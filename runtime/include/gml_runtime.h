@@ -423,7 +423,7 @@ GMLFN(ini_open); GMLFN(ini_open_from_string); GMLFN(ini_close); GMLFN(ini_read_r
 GMLFN(ini_read_string); GMLFN(ini_write_real); GMLFN(ini_write_string);
 GMLFN(ini_section_exists); GMLFN(ini_key_exists); GMLFN(ini_section_delete); GMLFN(ini_key_delete);
 GMLFN(directory_exists); GMLFN(directory_create);
-GMLFN(file_exists); GMLFN(file_copy); GMLFN(file_delete); GMLFN(file_text_open_read);
+GMLFN(file_exists); GMLFN(file_copy); GMLFN(file_delete); GMLFN(file_rename); GMLFN(file_text_open_read);
 GMLFN(file_text_open_write); GMLFN(file_text_close); GMLFN(file_text_eof);
 GMLFN(file_text_read_real); GMLFN(file_text_read_string); GMLFN(file_text_readln);
 GMLFN(file_text_write_real); GMLFN(file_text_write_string); GMLFN(file_text_writeln);
