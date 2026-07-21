@@ -221,6 +221,11 @@ GMLFN(draw_line_width_color) {
 }
 GMLFN(draw_line_width_colour) { return draw_line_width_color(self, args, argc); }
 
+GMLFN(draw_set_circle_precision) {
+    (void)self; (void)args; (void)argc;
+    return Value();
+}
+
 GMLFN(draw_circle) {
     (void)self;
     if (argc < 4) return Value();

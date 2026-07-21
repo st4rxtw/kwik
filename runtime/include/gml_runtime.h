@@ -454,7 +454,7 @@ GMLFN(sprite_get_number); GMLFN(sprite_get_xoffset); GMLFN(sprite_get_yoffset);
 GMLFN(sprite_create_from_surface); GMLFN(sprite_add_from_surface); GMLFN(sprite_delete); GMLFN(font_add_sprite_ext);
 GMLFN(path_start); GMLFN(path_end);
 
-GMLFN(draw_arrow); GMLFN(draw_circle); GMLFN(draw_circle_color); GMLFN(draw_circle_colour);
+GMLFN(draw_arrow); GMLFN(draw_set_circle_precision); GMLFN(draw_circle); GMLFN(draw_circle_color); GMLFN(draw_circle_colour);
 GMLFN(draw_ellipse); GMLFN(draw_ellipse_color); GMLFN(draw_ellipse_colour); GMLFN(draw_get_alpha);
 GMLFN(draw_get_color); GMLFN(draw_line); GMLFN(draw_line_color); GMLFN(draw_line_colour);
 GMLFN(draw_line_width); GMLFN(draw_line_width_color); GMLFN(draw_line_width_colour);
