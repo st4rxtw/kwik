@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,9 @@ struct SpriteInfo {
     int bbox_bottom;
     double speed;
     int speed_type;
+    int sep_masks = 0;
+    int mask_blob = -1;
+    int tile_repeat = 0;
 };
 
 struct GlyphInfo {
@@ -38,14 +42,37 @@ struct FontInfo {
     int size;
 };
 
+struct SoundInfo {
+    std::string name;
+    std::string file;
+    double volume = 1.0;
+    double pitch = 1.0;
+    int blob = -1;
+};
+
+struct TilesetInfo {
+    int image = -1;
+    int tile_w = 0;
+    int tile_h = 0;
+    int border_x = 0;
+    int border_y = 0;
+    int columns = 0;
+    int frames = 1;
+    int tile_count = 0;
+    int frame_ms = 0;
+    std::vector<uint32_t> tile_ids;
+    int map_blob = -1;
+};
+
 struct AssetExtraction {
     int image_count = 0;
     int sound_count = 0;
     std::vector<SpriteInfo> sprites;
-    std::vector<std::string> sound_names;
-    std::vector<int> sound_audio_id;
+    std::vector<SoundInfo> sounds;
     std::vector<FontInfo> fonts;
     std::vector<GlyphInfo> glyphs;
+    std::vector<TilesetInfo> tilesets;
+    std::map<int, int> tilemap_blobs;
 };
 
 bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtraction& out);

@@ -1,11 +1,23 @@
 #include "assets.h"
 
+#ifdef _WIN32
+#include "C:\Libraries\bzip2\include\bzlib.h"  // this sucks ass but it works so idc
+#else
 #include <bzlib.h>
+#endif
+#ifdef _WIN32
+#include "C:\Libraries\zlib\include\zlib.h"  // this sucks ass but it works so idc
+#else
 #include <zlib.h>
+#endif
 
 #include <cstring>
 #include <fstream>
 #include <map>
+
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_NO_STDIO
+#include "stb_image.h"
 
 namespace kwik {
 
@@ -78,6 +90,7 @@ static Page decode_page(const GameData& gd, uint32_t entry_ptr) {
     Page pg;
     const auto& bytes = gd.bytes();
     uint32_t dptr = 0;
+    bool is_png = false;
     for (int w = 0; w < 12; ++w) {
         uint32_t v = gd.u32(entry_ptr + w * 4);
         if ((size_t)v + 4 <= bytes.size() && bytes[v] == '2' && bytes[v + 1] == 'z' &&
@@ -85,8 +98,26 @@ static Page decode_page(const GameData& gd, uint32_t entry_ptr) {
             dptr = v;
             break;
         }
+        if ((size_t)v + 8 <= bytes.size() && bytes[v] == 0x89 && bytes[v + 1] == 'P' &&
+            bytes[v + 2] == 'N' && bytes[v + 3] == 'G') {
+            dptr = v;
+            is_png = true;
+            break;
+        }
     }
     if (!dptr) return pg;
+    if (is_png) {
+        int w, h, ch;
+        unsigned char* pixels =
+            stbi_load_from_memory(&bytes[dptr], (int)(bytes.size() - dptr), &w, &h, &ch, 4);
+        if (!pixels) return pg;
+        pg.w = w;
+        pg.h = h;
+        pg.rgba.assign(pixels, pixels + (size_t)w * h * 4);
+        stbi_image_free(pixels);
+        pg.ok = true;
+        return pg;
+    }
     uint32_t declen = gd.u32(dptr + 8);
     std::vector<char> dec((size_t)declen + 4096);
     unsigned int destlen = dec.size();
@@ -163,7 +194,13 @@ static std::vector<uint8_t> build_image_entry(int w, int h, int hot_x, int hot_y
     return e;
 }
 
+struct MaskPayload {
+    int sprite;
+    std::vector<uint8_t> data;
+};
+
 bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtraction& out) {
+    std::vector<MaskPayload> mask_payloads;
     std::map<int, Page> pages;
     const Chunk* txtr = gd.chunk("TXTR");
     if (txtr) {
@@ -193,6 +230,8 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
             info.first_frame = images.size();
             info.frame_count = 0;
 
+            info.sep_masks = gd.i32(sp + 44);
+
             uint32_t tex_list = 0;
             info.speed = 1.0;
             info.speed_type = 1;
@@ -205,7 +244,17 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
                 info.speed_type = (int)gd.u32(sp + 72);
                 uint32_t base = sp + 76;
                 if (sver >= 2) base += 4;
-                if (sver >= 3) base += 4;
+                if (sver >= 3) {
+                    uint32_t ns = gd.u32(sp + 80);
+                    if (ns && (size_t)ns + 40 <= gd.bytes().size()) {
+                        bool enabled = gd.u32(ns + 16) != 0;
+                        bool margins0 = gd.i32(ns) == 0 && gd.i32(ns + 4) == 0 &&
+                                        gd.i32(ns + 8) == 0 && gd.i32(ns + 12) == 0;
+                        int center_mode = gd.i32(ns + 36);
+                        if (enabled && margins0 && center_mode == 1) info.tile_repeat = 1;
+                    }
+                    base += 4;
+                }
                 tex_list = base;
             } else {
                 tex_list = sp + 56;
@@ -213,6 +262,31 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
 
             uint32_t nframes = gd.u32(tex_list);
             if (nframes > 4096) nframes = 0;
+
+            if (info.sep_masks == 1 && info.width > 0 && info.height > 0 && nframes > 0) {
+                uint32_t mask_pos = tex_list + 4 + nframes * 4;
+                uint32_t mcount = gd.u32(mask_pos);
+                uint32_t rowbytes = (uint32_t)(info.width + 7) / 8;
+                uint32_t per_mask = rowbytes * (uint32_t)info.height;
+                if (mcount > 0 && mcount <= 4096 &&
+                    (size_t)mask_pos + 4 + (size_t)mcount * per_mask <= gd.bytes().size()) {
+                    MaskPayload mp;
+                    mp.sprite = (int)i;
+                    auto& d = mp.data;
+                    auto w32m = [&](uint32_t v) {
+                        d.push_back(v);
+                        d.push_back(v >> 8);
+                        d.push_back(v >> 16);
+                        d.push_back(v >> 24);
+                    };
+                    w32m(mcount);
+                    w32m((uint32_t)info.width);
+                    w32m((uint32_t)info.height);
+                    const uint8_t* src = &gd.bytes()[mask_pos + 4];
+                    d.insert(d.end(), src, src + (size_t)mcount * per_mask);
+                    mask_payloads.push_back(std::move(mp));
+                }
+            }
             for (uint32_t fr = 0; fr < nframes; ++fr) {
                 uint32_t tpag = gd.u32(tex_list + 4 + fr * 4);
                 int srcX = (int16_t)gd.u16(tpag + 0), srcY = (int16_t)gd.u16(tpag + 2);
@@ -297,6 +371,67 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
         }
     }
 
+    const Chunk* bgnd = gd.chunk("BGND");
+    if (bgnd) {
+        uint32_t bc = gd.u32(bgnd->offset);
+        out.tilesets.assign(bc, TilesetInfo{});
+        for (uint32_t i = 0; i < bc; ++i) {
+            uint32_t p = gd.u32(bgnd->offset + 4 + i * 4);
+            int tile_w = gd.i32(p + 24), tile_h = gd.i32(p + 28);
+            int border_x = gd.i32(p + 32), border_y = gd.i32(p + 36);
+            int columns = gd.i32(p + 40);
+            uint32_t tpag = gd.u32(p + 16);
+            if (tile_w <= 0 || tile_h <= 0 || columns <= 0 || !tpag) continue;
+            int srcX = (int16_t)gd.u16(tpag + 0), srcY = (int16_t)gd.u16(tpag + 2);
+            int srcW = (int16_t)gd.u16(tpag + 4), srcH = (int16_t)gd.u16(tpag + 6);
+            int texIdx = (int16_t)gd.u16(tpag + 20);
+            if (srcW <= 0 || srcH <= 0) continue;
+            std::vector<uint8_t> canvas = crop_canvas(pages, texIdx, srcX, srcY, srcW, srcH, 0, 0,
+                                                      srcW, srcH);
+            std::vector<uint8_t> png;
+            write_png(png, srcW, srcH, canvas);
+            TilesetInfo ti;
+            ti.image = (int)images.size();
+            ti.tile_w = tile_w;
+            ti.tile_h = tile_h;
+            ti.border_x = border_x;
+            ti.border_y = border_y;
+            ti.columns = columns;
+            int frames = gd.i32(p + 44);
+            int tile_count = gd.i32(p + 48);
+            int64_t frame_us = (int64_t)gd.u32(p + 56) | ((int64_t)gd.u32(p + 60) << 32);
+            if (frames >= 1 && frames <= 64 && tile_count > 0 && tile_count <= 100000) {
+                ti.frames = frames;
+                ti.tile_count = tile_count;
+                ti.frame_ms = (int)(frame_us / 1000);
+                bool identity = frames == 1;
+                ti.tile_ids.resize((size_t)tile_count * frames);
+                for (size_t k = 0; k < ti.tile_ids.size(); ++k) {
+                    ti.tile_ids[k] = gd.u32(p + 64 + (uint32_t)k * 4);
+                    if (identity && ti.tile_ids[k] != k) identity = false;
+                }
+                if (identity) ti.tile_ids.clear();
+            }
+            images.push_back(build_image_entry(srcW, srcH, 0, 0, png));
+            out.tilesets[i] = ti;
+        }
+    }
+
+    auto pack_blob = [&](const uint8_t* data, uint32_t size) {
+        uint32_t type = 0;
+        if (size >= 4) {
+            if (!std::memcmp(data, "RIFF", 4)) type = 1;
+            else if (!std::memcmp(data, "OggS", 4)) type = 2;
+            else type = 3;
+        }
+        std::vector<uint8_t> e;
+        auto w32 = [&](uint32_t v) { e.push_back(v); e.push_back(v >> 8); e.push_back(v >> 16); e.push_back(v >> 24); };
+        w32(type);
+        w32(size);
+        e.insert(e.end(), data, data + size);
+        sounds.push_back(std::move(e));
+    };
+
     const Chunk* audo = gd.chunk("AUDO");
     if (audo) {
         const auto& bytes = gd.bytes();
@@ -304,20 +439,42 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
         for (uint32_t i = 0; i < ac; ++i) {
             uint32_t p = gd.u32(audo->offset + 4 + i * 4);
             uint32_t size = gd.u32(p);
-            const uint8_t* data = &bytes[p + 4];
-            uint32_t type = 0;
-            if (size >= 4) {
-                if (!std::memcmp(data, "RIFF", 4)) type = 1;
-                else if (!std::memcmp(data, "OggS", 4)) type = 2;
-                else type = 3;
+            if ((size_t)p + 4 + size > bytes.size()) size = bytes.size() - p - 4;
+            pack_blob(&bytes[p + 4], size);
+        }
+    }
+
+    int group1_base = (int)sounds.size();
+    bool have_group1 = false;
+    {
+        std::string agpath = gd.source_dir() + "/audiogroup1.dat";
+        std::ifstream ag(agpath, std::ios::binary);
+        if (ag) {
+            std::vector<uint8_t> agb((std::istreambuf_iterator<char>(ag)),
+                                     std::istreambuf_iterator<char>());
+            auto agu32 = [&](size_t o) -> uint32_t {
+                if (o + 4 > agb.size()) return 0;
+                return agb[o] | (agb[o + 1] << 8) | (agb[o + 2] << 16) | ((uint32_t)agb[o + 3] << 24);
+            };
+            if (agb.size() > 16 && !std::memcmp(agb.data(), "FORM", 4)) {
+                size_t pos = 8;
+                while (pos + 8 <= agb.size()) {
+                    std::string cname((const char*)&agb[pos], 4);
+                    uint32_t csize = agu32(pos + 4);
+                    if (cname == "AUDO") {
+                        uint32_t ac = agu32(pos + 8);
+                        for (uint32_t i = 0; i < ac; ++i) {
+                            uint32_t p = agu32(pos + 12 + i * 4);
+                            uint32_t size = agu32(p);
+                            if ((size_t)p + 4 + size > agb.size()) continue;
+                            pack_blob(&agb[p + 4], size);
+                        }
+                        have_group1 = true;
+                        break;
+                    }
+                    pos += 8 + csize;
+                }
             }
-            std::vector<uint8_t> e;
-            auto w32 = [&](uint32_t v) { e.push_back(v); e.push_back(v >> 8); e.push_back(v >> 16); e.push_back(v >> 24); };
-            w32(type);
-            w32(size);
-            e.insert(e.end(), data, data + size);
-            sounds.push_back(std::move(e));
-            out.sound_names.push_back("sound_" + std::to_string(i));
         }
     }
 
@@ -326,8 +483,78 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
         uint32_t sc = gd.u32(sond->offset);
         for (uint32_t i = 0; i < sc; ++i) {
             uint32_t p = gd.u32(sond->offset + 4 + i * 4);
-            out.sound_audio_id.push_back(gd.i32(p + 32));
+            SoundInfo si;
+            si.name = gd.string_at_offset(gd.u32(p));
+            si.file = gd.string_at_offset(gd.u32(p + 12));
+            uint32_t uvol = gd.u32(p + 20), upit = gd.u32(p + 24);
+            float fvol, fpit;
+            std::memcpy(&fvol, &uvol, 4);
+            std::memcpy(&fpit, &upit, 4);
+            si.volume = fvol;
+            si.pitch = fpit;
+            int32_t group = gd.i32(p + 28);
+            int32_t audio_id = gd.i32(p + 32);
+            if (audio_id < 0)
+                si.blob = -1;
+            else if (group >= 1 && have_group1)
+                si.blob = group1_base + audio_id;
+            else
+                si.blob = audio_id;
+            out.sounds.push_back(si);
         }
+    }
+
+    for (auto& mp : mask_payloads) {
+        std::vector<uint8_t> e;
+        auto w32 = [&](uint32_t v) {
+            e.push_back(v);
+            e.push_back(v >> 8);
+            e.push_back(v >> 16);
+            e.push_back(v >> 24);
+        };
+        w32(4);
+        w32((uint32_t)mp.data.size());
+        e.insert(e.end(), mp.data.begin(), mp.data.end());
+        out.sprites[mp.sprite].mask_blob = (int)sounds.size();
+        sounds.push_back(std::move(e));
+    }
+
+    {
+        const auto& rooms = gd.rooms();
+        for (size_t ri = 0; ri < rooms.size(); ++ri) {
+            for (size_t li = 0; li < rooms[ri].layers.size(); ++li) {
+                const auto& l = rooms[ri].layers[li];
+                if (l.type != 4 || l.grid.empty()) continue;
+                std::vector<uint8_t> e;
+                auto w32 = [&](uint32_t v) {
+                    e.push_back(v);
+                    e.push_back(v >> 8);
+                    e.push_back(v >> 16);
+                    e.push_back(v >> 24);
+                };
+                w32(6);
+                w32((uint32_t)l.grid.size() * 4);
+                for (uint32_t cell : l.grid) w32(cell);
+                out.tilemap_blobs[(int)ri * 1000 + (int)li] = (int)sounds.size();
+                sounds.push_back(std::move(e));
+            }
+        }
+    }
+
+    for (auto& ti : out.tilesets) {
+        if (ti.tile_ids.empty()) continue;
+        std::vector<uint8_t> e;
+        auto w32 = [&](uint32_t v) {
+            e.push_back(v);
+            e.push_back(v >> 8);
+            e.push_back(v >> 16);
+            e.push_back(v >> 24);
+        };
+        w32(6);
+        w32((uint32_t)ti.tile_ids.size() * 4);
+        for (uint32_t id : ti.tile_ids) w32(id);
+        ti.map_blob = (int)sounds.size();
+        sounds.push_back(std::move(e));
     }
 
     out.image_count = images.size();
