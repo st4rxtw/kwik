@@ -40,6 +40,14 @@ GMLFN(degtorad) { (void)self; return Value(A(args, argc, 0) * M_PI / 180.0); }
 GMLFN(radtodeg) { (void)self; return Value(A(args, argc, 0) * 180.0 / M_PI); }
 GMLFN(randomise) { return randomize(self, args, argc); }
 GMLFN(game_get_speed) { (void)self; (void)args; (void)argc; return Value(kwik_room_speed()); }
+GMLFN(game_set_speed) {
+    (void)self;
+    if (argc < 1) return Value();
+    double speed = (double)args[0];
+    int type = argc > 1 ? (int)(double)args[1] : 0;
+    g_room_speed_v = type == 1 ? 1000000.0 / speed : speed;
+    return Value();
+}
 GMLFN(make_colour_rgb) { return make_color_rgb(self, args, argc); }
 GMLFN(make_colour_hsv) { return make_color_hsv(self, args, argc); }
 GMLFN(merge_colour) { return merge_color(self, args, argc); }

@@ -476,7 +476,7 @@ GMLFN(color_get_green); GMLFN(color_get_blue);
 GMLFN(gpu_set_blendenable); GMLFN(gpu_set_blendmode); GMLFN(gpu_set_fog); GMLFN(gpu_set_texfilter);
 GMLFN(gpu_set_texfilter_ext);
 GMLFN(surface_get_width); GMLFN(surface_get_height); GMLFN(texture_is_ready);
-GMLFN(texture_prefetch); GMLFN(texturegroup_get_textures); GMLFN(application_surface_draw_enable);
+GMLFN(texture_prefetch); GMLFN(sprite_prefetch); GMLFN(texturegroup_get_textures); GMLFN(application_surface_draw_enable);
 GMLFN(application_surface_enable); GMLFN(vertex_create_buffer); GMLFN(vertex_format_add_colour);
 GMLFN(vertex_format_add_normal); GMLFN(vertex_format_add_position_3d);
 GMLFN(vertex_format_add_textcoord); GMLFN(vertex_format_begin); GMLFN(vertex_format_end);
@@ -526,6 +526,8 @@ GMLFN(gamepad_axis_value); GMLFN(gamepad_button_check); GMLFN(gamepad_button_che
 GMLFN(gamepad_get_description); GMLFN(gamepad_get_device_count); GMLFN(gamepad_get_guid);
 GMLFN(gamepad_is_connected); GMLFN(gamepad_test_mapping); GMLFN(gamepad_set_vibration);
 GMLFN(gamepad_set_axis_deadzone);
+GMLFN(gamepad_button_check_released); GMLFN(gamepad_button_count); GMLFN(gamepad_button_value);
+GMLFN(exception_unhandled_handler);
 
 GMLFN(audio_create_stream); GMLFN(audio_destroy_stream); GMLFN(audio_group_is_loaded);
 GMLFN(audio_group_load); GMLFN(audio_group_set_gain); GMLFN(audio_is_playing);
@@ -538,7 +540,7 @@ GMLFN(audio_sound_set_track_position); GMLFN(audio_stop_all); GMLFN(audio_stop_s
 
 GMLFN(show_debug_message); GMLFN(show_error); GMLFN(show_message);
 GMLFN(lerp); GMLFN(median); GMLFN(degtorad); GMLFN(radtodeg); GMLFN(randomise);
-GMLFN(game_get_speed); GMLFN(array_get); GMLFN(array_length_2d); GMLFN(array_height_2d);
+GMLFN(game_get_speed); GMLFN(game_set_speed); GMLFN(array_get); GMLFN(array_length_2d); GMLFN(array_height_2d);
 GMLFN(make_colour_rgb); GMLFN(make_colour_hsv); GMLFN(merge_colour);
 GMLFN(variable_global_set); GMLFN(variable_global_get); GMLFN(variable_instance_get); GMLFN(variable_instance_set);
 GMLFN(variable_instance_get_names); GMLFN(event_inherited); GMLFN(get_string); GMLFN(get_string_async);
@@ -663,7 +665,7 @@ GMLFN(date_get_hour);
 GMLFN(date_get_minute);
 GMLFN(date_get_month);
 GMLFN(date_get_second);
-GMLFN(date_get_weekday);
+GMLFN(date_get_weekday); GMLFN(date_get_timezone); GMLFN(date_set_timezone);
 GMLFN(date_get_year);
 GMLFN(dot_product);
 GMLFN(draw_enable_drawevent);

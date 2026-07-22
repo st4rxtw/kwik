@@ -360,6 +360,7 @@ GMLFN(surface_get_height) {
 }
 GMLFN(texture_is_ready) { (void)self; (void)args; (void)argc; return Value(1.0); }
 GMLFN(texture_prefetch) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(sprite_prefetch) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(texture_flush) {
     (void)self; (void)args; (void)argc;
     kwik_flush_textures();

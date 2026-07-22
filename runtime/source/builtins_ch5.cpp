@@ -242,6 +242,14 @@ GMLFN(date_get_weekday) {
     return Value(gm_datetime_tm(A(args, argc, 0), t) ? (double)t.tm_wday : 0.0);
 }
 
+static double g_date_timezone = 0.0;
+GMLFN(date_get_timezone) { (void)self; (void)args; (void)argc; return Value(g_date_timezone); }
+GMLFN(date_set_timezone) {
+    (void)self;
+    if (argc >= 1) g_date_timezone = (double)args[0];
+    return Value();
+}
+
 static void rgb_of(unsigned int c, double& r, double& g, double& b) {
     r = (double)(c & 0xFF);
     g = (double)((c >> 8) & 0xFF);

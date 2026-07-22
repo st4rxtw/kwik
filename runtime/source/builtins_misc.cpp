@@ -67,10 +67,21 @@ GMLFN(mouse_check_button_pressed) {
     return Value(render_mouse_pressed((int)A(args, argc, 0) - 1));
 }
 
+static Value g_exception_unhandled_handler;
+GMLFN(exception_unhandled_handler) {
+    (void)self;
+    Value prev = g_exception_unhandled_handler;
+    if (argc >= 1) g_exception_unhandled_handler = args[0];
+    return prev;
+}
+
 GMLFN(gamepad_is_connected) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_get_device_count) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_button_check) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_button_check_pressed) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(gamepad_button_check_released) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(gamepad_button_count) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(gamepad_button_value) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_axis_value) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_get_description) { (void)self; (void)args; (void)argc; return Value(""); }
 GMLFN(gamepad_get_guid) { (void)self; (void)args; (void)argc; return Value("none"); }
