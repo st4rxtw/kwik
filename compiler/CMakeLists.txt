@@ -5,7 +5,7 @@ add_executable(kwikc
     source/lift.cpp
     source/assets.cpp
 )
-target_include_directories(kwikc PRIVATE include)
+target_include_directories(kwikc PRIVATE include "${CMAKE_SOURCE_DIR}/third_party/stb")
 target_compile_definitions(kwikc PRIVATE KWIK_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
 link_directories("C:/Libraries/zlib/lib" "C:/Libraries/bzip2/lib")

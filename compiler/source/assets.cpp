@@ -15,6 +15,10 @@
 #include <fstream>
 #include <map>
 
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_NO_STDIO
+#include "stb_image.h"
+
 namespace kwik {
 
 struct Page {
@@ -86,6 +90,7 @@ static Page decode_page(const GameData& gd, uint32_t entry_ptr) {
     Page pg;
     const auto& bytes = gd.bytes();
     uint32_t dptr = 0;
+    bool is_png = false;
     for (int w = 0; w < 12; ++w) {
         uint32_t v = gd.u32(entry_ptr + w * 4);
         if ((size_t)v + 4 <= bytes.size() && bytes[v] == '2' && bytes[v + 1] == 'z' &&
@@ -93,8 +98,26 @@ static Page decode_page(const GameData& gd, uint32_t entry_ptr) {
             dptr = v;
             break;
         }
+        if ((size_t)v + 8 <= bytes.size() && bytes[v] == 0x89 && bytes[v + 1] == 'P' &&
+            bytes[v + 2] == 'N' && bytes[v + 3] == 'G') {
+            dptr = v;
+            is_png = true;
+            break;
+        }
     }
     if (!dptr) return pg;
+    if (is_png) {
+        int w, h, ch;
+        unsigned char* pixels =
+            stbi_load_from_memory(&bytes[dptr], (int)(bytes.size() - dptr), &w, &h, &ch, 4);
+        if (!pixels) return pg;
+        pg.w = w;
+        pg.h = h;
+        pg.rgba.assign(pixels, pixels + (size_t)w * h * 4);
+        stbi_image_free(pixels);
+        pg.ok = true;
+        return pg;
+    }
     uint32_t declen = gd.u32(dptr + 8);
     std::vector<char> dec((size_t)declen + 4096);
     unsigned int destlen = dec.size();

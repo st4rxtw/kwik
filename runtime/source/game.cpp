@@ -56,12 +56,20 @@ std::string g_game_dir;
 std::string g_assets_path;
 std::string g_save_dir;
 
-std::string kwik_save_path(const std::string& rel) {
+static std::string normalize_slashes(const std::string& s) {
+    std::string out = s;
+    for (char& c : out) if (c == '\\') c = '/';
+    return out;
+}
+
+std::string kwik_save_path(const std::string& rel_) {
+    std::string rel = normalize_slashes(rel_);
     if (rel.empty() || rel[0] == '/' || g_save_dir.empty()) return rel;
     return g_save_dir + "/" + rel;
 }
 
-std::string kwik_resolve_read(const std::string& rel) {
+std::string kwik_resolve_read(const std::string& rel_) {
+    std::string rel = normalize_slashes(rel_);
     if (rel.empty() || rel[0] == '/' || g_save_dir.empty()) return rel;
     std::string in_save = g_save_dir + "/" + rel;
     std::FILE* f = std::fopen(in_save.c_str(), "rb");
