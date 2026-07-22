@@ -11,7 +11,47 @@ endif()
 
 set(KWIK_DIR "@KWIK_DIR@" CACHE PATH "kwik repo root")
 
-add_subdirectory(${KWIK_DIR}/runtime ${CMAKE_BINARY_DIR}/kwik_runtime)
+if(VITA)
+    add_subdirectory(${KWIK_DIR}/runtime ${CMAKE_BINARY_DIR}/kwik_runtime)
+else()
+    set(KWIK_RUNTIME_LIB "${KWIK_DIR}/build/runtime/libkwik_runtime.a" CACHE FILEPATH
+        "Path to a prebuilt libkwik_runtime.a. Build the kwik repo root once \
+(cmake -B build -S ${KWIK_DIR} && cmake --build build --target kwik_runtime) to produce \
+this, instead of recompiling the runtime from source for every emitted game.")
+    if(NOT EXISTS "${KWIK_RUNTIME_LIB}")
+        message(FATAL_ERROR "kwik: KWIK_RUNTIME_LIB not found at ${KWIK_RUNTIME_LIB} -- "
+            "build the root kwik project first (cmake -B build -S ${KWIK_DIR} && "
+            "cmake --build build --target kwik_runtime), or set -DKWIK_RUNTIME_LIB=<path> "
+            "to point at an existing libkwik_runtime.a")
+    endif()
+
+    find_package(Threads REQUIRED)
+    set(KWIK_BACKEND "glfw" CACHE STRING "render backend the prebuilt libkwik_runtime.a was built with: glfw or sdl2")
+
+    add_library(kwik_runtime STATIC IMPORTED)
+    set_target_properties(kwik_runtime PROPERTIES IMPORTED_LOCATION "${KWIK_RUNTIME_LIB}")
+    target_include_directories(kwik_runtime INTERFACE ${KWIK_DIR}/runtime/include)
+
+    if(KWIK_BACKEND STREQUAL "sdl2")
+        find_package(SDL2 REQUIRED)
+        if(TARGET SDL2::SDL2)
+            set(KWIK_WINDOW_LIBS SDL2::SDL2)
+        else()
+            target_include_directories(kwik_runtime INTERFACE ${SDL2_INCLUDE_DIRS})
+            set(KWIK_WINDOW_LIBS ${SDL2_LIBRARIES})
+        endif()
+    else()
+        find_package(OpenGL REQUIRED)
+        find_package(glfw3 REQUIRED)
+        set(KWIK_WINDOW_LIBS glfw OpenGL::GL)
+    endif()
+
+    if(WIN32)
+        target_link_libraries(kwik_runtime INTERFACE ${KWIK_WINDOW_LIBS} ${CMAKE_DL_LIBS} Threads::Threads)
+    else()
+        target_link_libraries(kwik_runtime INTERFACE ${KWIK_WINDOW_LIBS} ${CMAKE_DL_LIBS} Threads::Threads m)
+    endif()
+endif()
 
 file(GLOB GAME_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
