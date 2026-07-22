@@ -320,10 +320,9 @@ uint32_t* kwik_tilemap_grid_mut(int blob, int cells) {
     return it->second.data();
 }
 
-int kwik_sprite_add_file(const std::string& path, int imgnum, int xorig, int yorig) {
-    (void)imgnum;
+static bool load_sprite_from_file(const std::string& path, int xorig, int yorig, KwikSprite& s) {
     std::FILE* f = std::fopen(kwik_resolve_read(path).c_str(), "rb");
-    if (!f) return -1;
+    if (!f) return false;
     std::vector<unsigned char> bytes;
     char tmp[8192];
     size_t n;
@@ -332,11 +331,11 @@ int kwik_sprite_add_file(const std::string& path, int imgnum, int xorig, int yor
     int w, h, ch;
     unsigned char* pixels =
         stbi_load_from_memory(bytes.data(), (int)bytes.size(), &w, &h, &ch, 4);
-    if (!pixels) return -1;
+    if (!pixels) return false;
     unsigned int tex = render_upload_texture(pixels, w, h);
     stbi_image_free(pixels);
     int img = kwik_register_dynamic_image(tex, w, h);
-    KwikSprite s{};
+    s = KwikSprite{};
     s.first_frame = img;
     s.frame_count = 1;
     s.origin_x = xorig;
@@ -352,7 +351,24 @@ int kwik_sprite_add_file(const std::string& path, int imgnum, int xorig, int yor
     s.sep_masks = 0;
     s.mask_blob = -1;
     s.name = "dyn_sprite";
+    return true;
+}
+
+int kwik_sprite_add_file(const std::string& path, int imgnum, int xorig, int yorig) {
+    (void)imgnum;
+    KwikSprite s;
+    if (!load_sprite_from_file(path, xorig, yorig, s)) return -1;
     return kwik_register_dynamic_sprite(s);
+}
+
+bool kwik_sprite_replace(int spr, const std::string& path, int imgnum, int xorig, int yorig) {
+    (void)imgnum;
+    KwikSprite s;
+    if (!load_sprite_from_file(path, xorig, yorig, s)) return false;
+    KwikSprite* dst = sprite_mutable(spr);
+    if (!dst) return false;
+    *dst = s;
+    return true;
 }
 
 static int frame_of(int spr, int sub, const KwikSprite** out) {

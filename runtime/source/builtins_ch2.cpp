@@ -45,8 +45,27 @@ GMLFN(make_colour_hsv) { return make_color_hsv(self, args, argc); }
 GMLFN(merge_colour) { return merge_color(self, args, argc); }
 GMLFN(keyboard_check_direct) { return keyboard_check(self, args, argc); }
 GMLFN(get_string) { (void)self; return Value(argc > 1 ? (std::string)args[1] : ""); }
+GMLFN(get_string_async) { (void)self; return Value(argc > 1 ? (std::string)args[1] : ""); }
 GMLFN(clipboard_set_text) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(xboxone_show_account_picker) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(keyboard_set_map) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(keyboard_unset_map) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_format_add_texcoord) { (void)self; (void)args; (void)argc; return Value(); }
+
+GMLFN(object_exists) {
+    (void)self;
+    if (argc < 1) return Value(0.0);
+    int obj = (int)(double)args[0];
+    return Value(obj >= 0 && obj < g_object_count_rt);
+}
+
+GMLFN(array_contains) {
+    (void)self;
+    if (argc < 2 || args[0].type != Value::ARR || !args[0].arr) return Value(0.0);
+    for (const Value& v : args[0].arr->items)
+        if (gml_truthy(gml_eq(v, args[1]))) return Value(1.0);
+    return Value(0.0);
+}
 
 GMLFN(array_get) {
     (void)self;
@@ -173,6 +192,21 @@ GMLFN(surface_getpixel) {
     unsigned char px[4] = {0, 0, 0, 0};
     render_surface_getpixel((int)A(args, argc, 0), (int)A(args, argc, 1), (int)A(args, argc, 2), px);
     return Value((double)((unsigned)px[0] | ((unsigned)px[1] << 8) | ((unsigned)px[2] << 16)));
+}
+GMLFN(draw_getpixel) {
+    (void)self;
+    if (argc < 2) return Value(0.0);
+    unsigned char px[4] = {0, 0, 0, 0};
+    render_surface_getpixel(0, (int)A(args, argc, 0), (int)A(args, argc, 1), px);
+    return Value((double)((unsigned)px[0] | ((unsigned)px[1] << 8) | ((unsigned)px[2] << 16)));
+}
+GMLFN(draw_getpixel_ext) {
+    (void)self;
+    if (argc < 2) return Value(0.0);
+    unsigned char px[4] = {0, 0, 0, 0};
+    render_surface_getpixel(0, (int)A(args, argc, 0), (int)A(args, argc, 1), px);
+    return Value((double)((unsigned)px[0] | ((unsigned)px[1] << 8) | ((unsigned)px[2] << 16) |
+                          ((unsigned)px[3] << 24)));
 }
 GMLFN(screen_save) { (void)self; (void)args; (void)argc; return Value(); }
 
@@ -423,6 +457,13 @@ GMLFN(sprite_add) {
     if (argc < 5) return Value(-1.0);
     return Value((double)kwik_sprite_add_file((std::string)args[0], (int)A(args, argc, 1, 1),
                                               (int)A(args, argc, 3), (int)A(args, argc, 4)));
+}
+GMLFN(sprite_replace) {
+    (void)self;
+    if (argc < 6) return Value();
+    kwik_sprite_replace((int)A(args, argc, 0), (std::string)args[1], (int)A(args, argc, 2, 1),
+                        (int)A(args, argc, 4), (int)A(args, argc, 5));
+    return Value();
 }
 GMLFN(sprite_duplicate) {
     (void)self;

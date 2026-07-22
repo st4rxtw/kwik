@@ -120,6 +120,7 @@ int kwik_sprite_frame_image(int spr, int sub);
 void kwik_sprite_override_bbox(int spr, int l, int t, int r, int b);
 void kwik_sprite_override_offset(int spr, int ox, int oy);
 int kwik_sprite_add_file(const std::string& path, int imgnum, int xorig, int yorig);
+bool kwik_sprite_replace(int spr, const std::string& path, int imgnum, int xorig, int yorig);
 double kwik_sound_length_seconds(int what);
 double kwik_voice_gain(int what);
 double kwik_voice_pitch(int what);

@@ -1900,6 +1900,14 @@ GMLFN(move_towards_point) {
     return Value();
 }
 
+GMLFN(move_snap) {
+    if (argc < 2 || !self) return Value();
+    double hsnap = (double)args[0], vsnap = (double)args[1];
+    if (hsnap != 0.0) self->x = std::round(self->x / hsnap) * hsnap;
+    if (vsnap != 0.0) self->y = std::round(self->y / vsnap) * vsnap;
+    return Value();
+}
+
 GMLFN(motion_set) {
     if (argc < 2 || !self) return Value();
     self->m_dir = (double)args[0];
@@ -2728,6 +2736,14 @@ static void update_camera_follow() {
 }
 
 static bool g_first_room_loaded = false;
+static std::unordered_map<int, bool> g_room_persistent_override;
+
+GMLFN(room_set_persistent) {
+    (void)self;
+    if (argc < 2) return Value();
+    g_room_persistent_override[(int)(double)args[0]] = gml_truthy(args[1]);
+    return Value();
+}
 
 static void load_room(int index, bool clear_persistent) {
     const RoomDef& room = g_room_defs_rt[index];

@@ -392,7 +392,7 @@ GMLFN(floor); GMLFN(frac); GMLFN(lengthdir_x); GMLFN(lengthdir_y); GMLFN(ln); GM
 GMLFN(log10); GMLFN(max); GMLFN(min); GMLFN(point_direction); GMLFN(point_distance);
 GMLFN(power); GMLFN(random); GMLFN(random_range); GMLFN(irandom); GMLFN(irandom_range);
 GMLFN(random_set_seed); GMLFN(randomize); GMLFN(round); GMLFN(sign); GMLFN(sqr); GMLFN(sqrt);
-GMLFN(dsin); GMLFN(dcos); GMLFN(dtan); GMLFN(darcsin); GMLFN(darccos); GMLFN(darctan);
+GMLFN(dsin); GMLFN(dcos); GMLFN(dtan); GMLFN(darcsin); GMLFN(darccos); GMLFN(darctan); GMLFN(darctan2);
 
 GMLFN(chr); GMLFN(ord); GMLFN(real); GMLFN(string); GMLFN(__string__); GMLFN(string_byte_length);
 GMLFN(string_char_at); GMLFN(string_copy); GMLFN(string_delete); GMLFN(string_digits);
@@ -407,6 +407,7 @@ GMLFN(variable_global_exists); GMLFN(variable_instance_exists); GMLFN(variable_s
 GMLFN(variable_struct_get); GMLFN(variable_struct_exists);
 
 GMLFN(array_create); GMLFN(array_length); GMLFN(array_length_1d); GMLFN(array_push);
+GMLFN(array_contains); GMLFN(object_exists);
 GMLFN(array_pop); GMLFN(array_resize); GMLFN(array_copy); GMLFN(array_delete); GMLFN(array_insert);
 
 GMLFN(ds_exists); GMLFN(ds_list_add); GMLFN(ds_list_create); GMLFN(ds_list_destroy);
@@ -439,7 +440,7 @@ GMLFN(instance_activate_region); GMLFN(instance_deactivate_region);
 GMLFN(place_meeting); GMLFN(place_free); GMLFN(position_meeting); GMLFN(instance_place);
 GMLFN(instance_position); GMLFN(instance_nearest); GMLFN(instance_furthest); GMLFN(collision_line); GMLFN(collision_point);
 GMLFN(collision_rectangle); GMLFN(collision_circle); GMLFN(distance_to_object); GMLFN(distance_to_point);
-GMLFN(point_in_rectangle); GMLFN(move_towards_point); GMLFN(motion_set); GMLFN(motion_add);
+GMLFN(point_in_rectangle); GMLFN(move_towards_point); GMLFN(move_snap); GMLFN(motion_set); GMLFN(motion_add);
 
 GMLFN(event_user); GMLFN(event_perform); GMLFN(event_inherited_fn);
 GMLFN(object_get_sprite); GMLFN(object_get_name); GMLFN(object_get_parent);
@@ -540,8 +541,10 @@ GMLFN(lerp); GMLFN(median); GMLFN(degtorad); GMLFN(radtodeg); GMLFN(randomise);
 GMLFN(game_get_speed); GMLFN(array_get); GMLFN(array_length_2d); GMLFN(array_height_2d);
 GMLFN(make_colour_rgb); GMLFN(make_colour_hsv); GMLFN(merge_colour);
 GMLFN(variable_global_set); GMLFN(variable_global_get); GMLFN(variable_instance_get); GMLFN(variable_instance_set);
-GMLFN(variable_instance_get_names); GMLFN(event_inherited); GMLFN(get_string);
+GMLFN(variable_instance_get_names); GMLFN(event_inherited); GMLFN(get_string); GMLFN(get_string_async);
 GMLFN(clipboard_set_text); GMLFN(keyboard_check_direct); GMLFN(buffer_md5);
+GMLFN(xboxone_show_account_picker); GMLFN(room_set_persistent);
+GMLFN(keyboard_set_map); GMLFN(keyboard_unset_map);
 GMLFN(buffer_get_surface); GMLFN(screen_save);
 GMLFN(draw_clear); GMLFN(draw_clear_alpha); GMLFN(draw_get_font); GMLFN(draw_get_halign);
 GMLFN(draw_get_valign); GMLFN(draw_healthbar); GMLFN(draw_primitive_begin);
@@ -551,7 +554,7 @@ GMLFN(draw_sprite_stretched_ext); GMLFN(draw_sprite_tiled); GMLFN(draw_surface);
 GMLFN(draw_text_ext); GMLFN(draw_text_ext_transformed); GMLFN(draw_tilemap);
 GMLFN(surface_create); GMLFN(surface_exists); GMLFN(surface_free); GMLFN(surface_set_target);
 GMLFN(surface_reset_target); GMLFN(surface_get_texture); GMLFN(surface_getpixel_ext);
-GMLFN(surface_getpixel);
+GMLFN(surface_getpixel); GMLFN(draw_getpixel); GMLFN(draw_getpixel_ext);
 GMLFN(shader_set); GMLFN(shader_reset); GMLFN(shader_get_uniform);
 GMLFN(shader_set_uniform_f); GMLFN(shader_get_sampler_index); GMLFN(texture_set_stage);
 GMLFN(texture_get_texel_width); GMLFN(texture_get_texel_height);
@@ -568,7 +571,7 @@ GMLFN(mp_grid_create); GMLFN(mp_grid_destroy); GMLFN(mp_grid_clear_all); GMLFN(m
 GMLFN(mp_grid_clear_cell); GMLFN(mp_grid_get_cell); GMLFN(mp_grid_add_rectangle);
 GMLFN(mp_grid_clear_rectangle); GMLFN(mp_grid_add_instances); GMLFN(mp_grid_path);
 GMLFN(layer_sprite_get_angle); GMLFN(layer_sprite_get_alpha); GMLFN(layer_sprite_get_blend);
-GMLFN(sprite_add); GMLFN(sprite_duplicate); GMLFN(sprite_get_bbox_left);
+GMLFN(sprite_add); GMLFN(sprite_replace); GMLFN(sprite_duplicate); GMLFN(sprite_get_bbox_left);
 GMLFN(sprite_get_bbox_right); GMLFN(sprite_get_bbox_top); GMLFN(sprite_get_bbox_bottom);
 GMLFN(sprite_get_texture); GMLFN(sprite_get_uvs); GMLFN(sprite_set_bbox);
 GMLFN(sprite_set_offset);

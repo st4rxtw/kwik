@@ -46,6 +46,7 @@ GMLFN(dtan) { (void)self; return Value(std::tan(A(args, argc, 0) * M_PI / 180.0)
 GMLFN(darcsin) { (void)self; return Value(std::asin(A(args, argc, 0)) * 180.0 / M_PI); }
 GMLFN(darccos) { (void)self; return Value(std::acos(A(args, argc, 0)) * 180.0 / M_PI); }
 GMLFN(darctan) { (void)self; return Value(std::atan(A(args, argc, 0)) * 180.0 / M_PI); }
+GMLFN(darctan2) { (void)self; return Value(std::atan2(A(args, argc, 0), A(args, argc, 1)) * 180.0 / M_PI); }
 GMLFN(power) { (void)self; return Value(std::pow(A(args, argc, 0), A(args, argc, 1))); }
 
 GMLFN(min) {
