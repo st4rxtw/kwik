@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
 
@@ -134,8 +135,28 @@ GMLFN(string) {
 }
 GMLFN(__string__) {
     (void)self;
+    if (argc < 1) return Value("");
+    std::string fmt = (std::string)args[0];
     std::string out;
-    for (int i = 0; i < argc; ++i) out += (std::string)args[i];
+    out.reserve(fmt.size());
+    for (size_t i = 0; i < fmt.size();) {
+        if (fmt[i] == '{') {
+            size_t close = fmt.find('}', i + 1);
+            if (close != std::string::npos) {
+                std::string idx_str = fmt.substr(i + 1, close - i - 1);
+                bool numeric = !idx_str.empty();
+                for (char c : idx_str) numeric = numeric && (c >= '0' && c <= '9');
+                if (numeric) {
+                    int idx = std::atoi(idx_str.c_str()) + 1;
+                    if (idx >= 0 && idx < argc) out += (std::string)args[idx];
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+        out += fmt[i];
+        ++i;
+    }
     return Value(out);
 }
 GMLFN(string_length) { (void)self; return Value((double)S(args, argc, 0).size()); }
