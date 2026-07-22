@@ -62,3 +62,9 @@
 [lift] unhandled event Other_40 on obj_playernoisearrow
 ```
 display_set_gui_size isn't implemented
+
+## UNDERTALE (NXTALE)
+
+## STATUS: In-Game
+
+* Hardlock after flowey at the start
