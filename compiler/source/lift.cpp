@@ -293,6 +293,17 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                                  << S(d() - 1) << ");\n";
                         pop(2);
                         push(16);
+                    } else if (int argn; is_argument_n(name, argn)) {
+                        if (out) {
+                            if (wref)
+                                *out << "    " << S(d() - 2) << " = kwik_array_wslot(__a[" << argn
+                                     << "], (int)(double)" << S(d() - 1) << ");\n";
+                            else
+                                *out << "    " << S(d() - 2) << " = kwik_array_elem(__a[" << argn
+                                     << "], (int)(double)" << S(d() - 1) << ");\n";
+                        }
+                        pop(2);
+                        push(16);
                     } else {
                         std::string specexpr = spec.is_const ? std::to_string(spec.cval)
                                                              : "(int)(double)" + S(d() - 2);
@@ -401,6 +412,11 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                                  << ", (int)(double)" << S(d() - 1) << ", " << S(d() - 3)
                                  << ");\n";
                         pop(3);
+                    } else if (int argn; is_argument_n(name, argn)) {
+                        if (out)
+                            *out << "    kwik_array_store(__a[" << argn << "], (int)(double)"
+                                 << S(d() - 1) << ", " << S(d() - 3) << ");\n";
+                        pop(3);
                     } else {
                         std::string specexpr = spec.is_const ? std::to_string(spec.cval)
                                                              : "(int)(double)" + S(d() - 2);
@@ -423,6 +439,11 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                             *out << "    kwik_array_store(loc_" << sanitize(name)
                                  << ", (int)(double)" << S(d() - 2) << ", " << S(d() - 1)
                                  << ");\n";
+                        pop(3);
+                    } else if (int argn; is_argument_n(name, argn)) {
+                        if (out)
+                            *out << "    kwik_array_store(__a[" << argn << "], (int)(double)"
+                                 << S(d() - 2) << ", " << S(d() - 1) << ");\n";
                         pop(3);
                     } else {
                         std::string specexpr = spec.is_const ? std::to_string(spec.cval)
