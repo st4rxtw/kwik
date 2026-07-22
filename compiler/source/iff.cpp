@@ -433,8 +433,37 @@ void GameData::parse_rooms() {
                     if (rl.grid_w > 0 && rl.grid_h > 0 && rl.grid_w < 4096 && rl.grid_h < 4096) {
                         uint32_t g = lp + 60;
                         size_t n = (size_t)rl.grid_w * rl.grid_h;
-                        rl.grid.resize(n);
-                        for (size_t i = 0; i < n; ++i) rl.grid[i] = u32(g + i * 4);
+                        uint32_t chunk_end = c->offset + c->size;
+                        std::vector<uint32_t> rle;
+                        rle.reserve(n);
+                        uint32_t p = g;
+                        bool ok = true;
+                        while (rle.size() < n) {
+                            if (p + 1 > chunk_end) { ok = false; break; }
+                            uint8_t len = u8(p);
+                            ++p;
+                            if (len >= 128) {
+                                uint32_t run = (uint32_t)(len & 0x7f) + 1;
+                                if (p + 4 > chunk_end) { ok = false; break; }
+                                uint32_t tile = u32(p);
+                                p += 4;
+                                for (uint32_t k = 0; k < run && rle.size() < n; ++k)
+                                    rle.push_back(tile);
+                            } else {
+                                for (uint32_t k = 0; k < (uint32_t)len && rle.size() < n; ++k) {
+                                    if (p + 4 > chunk_end) { ok = false; break; }
+                                    rle.push_back(u32(p));
+                                    p += 4;
+                                }
+                                if (!ok) break;
+                            }
+                        }
+                        if (ok && rle.size() == n) {
+                            rl.grid = std::move(rle);
+                        } else {
+                            rl.grid.resize(n);
+                            for (size_t i = 0; i < n; ++i) rl.grid[i] = u32(g + i * 4);
+                        }
                     } else {
                         rl.grid_w = rl.grid_h = 0;
                     }
