@@ -6,6 +6,7 @@
 #ifdef __vita__
 #define MA_NO_NEON
 #define MA_NO_DEVICE_IO
+#define MA_NO_RUNTIME_LINKING
 #endif
 #include "miniaudio.h"
 
