@@ -6,7 +6,7 @@ add_executable(kwikc
     source/assets.cpp
 )
 target_include_directories(kwikc PRIVATE include "${CMAKE_SOURCE_DIR}/third_party/stb")
-target_compile_definitions(kwikc PRIVATE KWIK_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+target_compile_definitions(kwikc PRIVATE KWIK_SOURCE_ROOT="${CMAKE_SOURCE_DIR}" KWIK_RUNTIME_ARCHIVE="${CMAKE_BINARY_DIR}/runtime/libkwik_runtime.a")
 
 link_directories("C:/Libraries/zlib/lib" "C:/Libraries/bzip2/lib")
 find_library(BZ2_LIB bz2 PATHS "C:/Libraries/bzip2/lib" NO_DEFAULT_PATH)
