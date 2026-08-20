@@ -1246,101 +1246,68 @@ bool emit_cpp(const GameData&, const std::string&) {
 bool emit_dir(const GameData& gd, const std::string& out_dir) {
     namespace fs = std::filesystem;
     fs::path root(out_dir);
+    fs::path game_dir = root / "Game";
     std::error_code ec;
-    fs::create_directories(root / "objects", ec);
-    fs::create_directories(root / "rooms", ec);
-    fs::create_directories(root / "scripts", ec);
+    fs::create_directories(game_dir, ec);
+    if (ec) return false;
 
-    std::ofstream hdr(root / "generated.h", std::ios::binary);
-    if (!hdr) return false;
-    hdr << "#pragma once\n#include \"gml_runtime.h\"\n#include <cmath>\n\nusing gml::Value;\nusing gml::Instance;\n\n";
-    for (const auto& e : gd.code())
-        hdr << "Value " << sanitize(e.name)
-            << "(Instance* self, const Value* args, int argc);\n";
-    hdr << "\nextern gml::ObjectDef g_objects[];\n";
-    hdr << "extern const int g_object_count;\n";
-    hdr << "extern const gml::RoomDef g_rooms[];\n";
-    hdr << "extern const int g_room_count;\n";
-    hdr << "void kwik_fill_objects();\n";
-    hdr.close();
-
-    std::map<std::string, std::vector<const CodeEntry*>> by_object;
-    std::vector<const CodeEntry*> rooms_code;
-    std::vector<const CodeEntry*> scripts_code;
-
-    for (const auto& e : gd.code()) {
-        int idx = obj_index_for(gd, e.name, nullptr);
-        if (idx >= 0)
-            by_object[gd.objects()[idx].name].push_back(&e);
-        else if (e.name.rfind("gml_RoomCC_", 0) == 0 || e.name.rfind("gml_Room_", 0) == 0)
-            rooms_code.push_back(&e);
-        else
-            scripts_code.push_back(&e);
+    for (const auto& old : fs::directory_iterator(game_dir, ec)) {
+        if (old.is_regular_file() && old.path().extension() == ".cpp") fs::remove(old.path(), ec);
     }
 
-    for (const char* sub : {"objects", "rooms", "scripts"})
-        for (const auto& old : fs::directory_iterator(root / sub, ec))
-            if (old.path().extension() == ".cpp") fs::remove(old.path(), ec);
+    std::ofstream pch(game_dir / "pch.hpp", std::ios::binary);
+    if (!pch) return false;
+    pch << "#pragma once\n";
+    pch << "#include <KwikGML.h>\n";
+    pch << "#include <cmath>\n\n";
+    pch << "using gml::Value;\n";
+    pch << "using gml::Instance;\n\n";
+    for (const auto& e : gd.code())
+        pch << "Value " << sanitize(e.name) << "(Instance* self, const Value* args, int argc);\n";
+    pch << "\nextern gml::ObjectDef g_objects[];\n";
+    pch << "extern const int g_object_count;\n";
+    pch << "extern const gml::RoomDef g_rooms[];\n";
+    pch << "extern const int g_room_count;\n";
+    pch << "void kwik_fill_objects();\n";
+    pch.close();
 
-    const size_t unit_budget = 80 * 1024;
     const size_t big_fn_threshold = 128 * 1024;
     const size_t huge_fn_threshold = 512 * 1024;
 
     auto emit_entry = [&](const CodeEntry& e) {
         std::ostringstream ss;
         emit_function(ss, gd, e);
-        std::string s = ss.str();
-        if (s.size() > big_fn_threshold) {
-            const char* level = s.size() > huge_fn_threshold ? "O0" : "O1";
-            s = "#if defined(__GNUC__) && !defined(__clang__)\n"
-                "#pragma GCC push_options\n"
-                "#pragma GCC optimize (\"" +
-                std::string(level) +
-                "\")\n"
-                "#endif\n" +
-                s +
-                "#if defined(__GNUC__) && !defined(__clang__)\n"
-                "#pragma GCC pop_options\n"
-                "#endif\n";
+        std::string out = ss.str();
+        if (out.size() > big_fn_threshold) {
+            const char* level = out.size() > huge_fn_threshold ? "O0" : "O1";
+            out = "#if defined(__GNUC__) && !defined(__clang__)\n"
+                  "#pragma GCC push_options\n"
+                  "#pragma GCC optimize (\"" + std::string(level) + "\")\n"
+                  "#endif\n" + out +
+                  "#if defined(__GNUC__) && !defined(__clang__)\n"
+                  "#pragma GCC pop_options\n"
+                  "#endif\n";
         }
-        return s;
+        return out;
     };
 
-    auto write_split = [&](const fs::path& dir, const std::string& prefix, bool numbered,
-                           const std::vector<const CodeEntry*>& entries) {
-        size_t file_idx = 0;
-        size_t cur = 0;
-        std::ofstream f;
-        auto open_next = [&]() {
-            if (f.is_open()) f.close();
-            std::string name = !numbered && file_idx == 0
-                                   ? prefix + ".cpp"
-                                   : prefix + "_" + std::to_string(file_idx) + ".cpp";
-            ++file_idx;
-            f.open(dir / name, std::ios::binary);
-            f << "#include \"generated.h\"\n\nusing namespace gml;\n\n";
-            cur = 0;
-        };
-        open_next();
-        for (const CodeEntry* e : entries) {
-            std::string s = emit_entry(*e);
-            if (cur > 0 && cur + s.size() > unit_budget) open_next();
-            f << s;
-            cur += s.size();
-        }
-    };
-
-    for (const auto& kv : by_object)
-        write_split(root / "objects", sanitize(kv.first), false, kv.second);
-
-    write_split(root / "rooms", "rooms", true, rooms_code);
-    write_split(root / "scripts", "scripts", true, scripts_code);
+    for (const auto& e : gd.code()) {
+        fs::path path = game_dir / (sanitize(e.name) + ".gml.cpp");
+        std::ofstream f(path, std::ios::binary);
+        if (!f) return false;
+        f << "#include \"pch.hpp\"\n\n";
+        f << "using namespace gml;\n\n";
+        f << emit_entry(e);
+    }
 
     AssetExtraction ex;
     extract_assets(gd, out_dir, ex);
 
-    std::ofstream data(root / "game_data.cpp", std::ios::binary);
-    data << "#include \"generated.h\"\n\nusing namespace gml;\n\n";
+    std::string vars_base = sanitize(gd.game_name());
+    if (vars_base.empty() || vars_base == "_") vars_base = "game";
+    std::ofstream data(game_dir / (vars_base + ".vars.cpp"), std::ios::binary);
+    if (!data) return false;
+    data << "#include \"pch.hpp\"\n\nusing namespace gml;\n\n";
     emit_object_table(data, gd);
     emit_room_data(data, gd, ex);
     data << "namespace gml {\n";
@@ -1406,73 +1373,156 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     }
     data << "int g_sound_count = " << ex.sounds.size() << ";\n";
     data << "}\n\n";
+
+    if (!gd.global_init_ids().empty()) {
+        data << "static const ScriptFn g_global_init[] = {\n";
+        for (uint32_t id : gd.global_init_ids())
+            data << "    " << code_fn_or_null(gd, (int)id) << ",\n";
+        data << "};\n";
+    }
+    data << "static const ScriptEntry g_script_entries[] = {\n";
+    int script_count = 0;
+    for (const auto& e : gd.code()) {
+        if (e.name.rfind("gml_Script_", 0) == 0) {
+            data << "    { " << quote(e.name.substr(11)) << ", " << sanitize(e.name) << " },\n";
+            ++script_count;
+        }
+    }
+    data << "    { \"\", nullptr },\n};\n";
+    data << "static const int g_script_entry_count = " << script_count << ";\n\n";
+    data << "int main(int argc, char** argv) {\n";
+    data << "    kwik_set_program_args(argc, argv);\n";
+    data << "    kwik_fill_objects();\n";
+    data << "    GameTables t{};\n";
+    data << "    t.objects = g_objects;\n";
+    data << "    t.object_count = g_object_count;\n";
+    data << "    t.rooms = g_rooms;\n";
+    data << "    t.room_count = g_room_count;\n";
+    if (!gd.global_init_ids().empty()) {
+        data << "    t.global_init = g_global_init;\n";
+        data << "    t.global_init_count = " << gd.global_init_ids().size() << ";\n";
+    }
+    data << "    t.scripts = g_script_entries;\n";
+    data << "    t.script_count = g_script_entry_count;\n";
+    data << "    t.assets_path = \"Assets.dat\";\n";
+    data << "    t.game_name = " << quote(gd.display_name()) << ";\n";
+    data << "    t.save_id = " << quote(gd.game_name()) << ";\n";
+    data << "    t.window_w = " << gd.window_w() << ";\n";
+    data << "    t.window_h = " << gd.window_h() << ";\n";
+    data << "    t.game_fps = " << gd.game_fps() << ";\n";
+    data << "    t.start_room = " << gd.start_room() << ";\n";
+    data << "    return gml::run_game(t);\n";
+    data << "}\n";
     data.close();
 
-    std::ofstream mainf(root / "main.cpp", std::ios::binary);
-    mainf << "#include \"generated.h\"\n\nusing namespace gml;\n\n";
-    if (!gd.global_init_ids().empty()) {
-        mainf << "static const ScriptFn g_global_init[] = {\n";
-        for (uint32_t id : gd.global_init_ids())
-            mainf << "    " << code_fn_or_null(gd, (int)id) << ",\n";
-        mainf << "};\n";
-    }
-    {
-        mainf << "static const ScriptEntry g_script_entries[] = {\n";
-        int script_count = 0;
-        for (const auto& e : gd.code()) {
-            if (e.name.rfind("gml_Script_", 0) == 0) {
-                mainf << "    { " << quote(e.name.substr(11)) << ", " << sanitize(e.name)
-                      << " },\n";
-                ++script_count;
-            }
-        }
-        mainf << "    { \"\", nullptr },\n};\n";
-        mainf << "static const int g_script_entry_count = " << script_count << ";\n";
-    }
-    mainf << "\nint main(int argc, char** argv) {\n";
-    mainf << "    kwik_set_program_args(argc, argv);\n";
-    mainf << "    kwik_fill_objects();\n";
-    mainf << "    GameTables t{};\n";
-    mainf << "    t.objects = g_objects;\n";
-    mainf << "    t.object_count = g_object_count;\n";
-    mainf << "    t.rooms = g_rooms;\n";
-    mainf << "    t.room_count = g_room_count;\n";
-    if (!gd.global_init_ids().empty()) {
-        mainf << "    t.global_init = g_global_init;\n";
-        mainf << "    t.global_init_count = " << gd.global_init_ids().size() << ";\n";
-    }
-    mainf << "    t.scripts = g_script_entries;\n";
-    mainf << "    t.script_count = g_script_entry_count;\n";
-    {
-        mainf << "    t.assets_path = \"Assets.dat\";\n";
-    }
-    mainf << "    t.game_name = " << quote(gd.display_name()) << ";\n";
-    mainf << "    t.save_id = " << quote(gd.game_name()) << ";\n";
-    mainf << "    t.window_w = " << gd.window_w() << ";\n";
-    mainf << "    t.window_h = " << gd.window_h() << ";\n";
-    mainf << "    t.game_fps = " << gd.game_fps() << ";\n";
-    mainf << "    t.start_room = " << gd.start_room() << ";\n";
-    mainf << "    return gml::run_game(t);\n";
-    mainf << "}\n";
-    mainf.close();
-
 #ifdef KWIK_SOURCE_ROOT
-    const char* kwik_root = KWIK_SOURCE_ROOT;
+    fs::path kwik_root = KWIK_SOURCE_ROOT;
 #else
-    const char* kwik_root = "";
+    fs::path kwik_root;
 #endif
-    std::ifstream base(std::string(kwik_root) + "/Base.cmake", std::ios::binary);
-    if (!base) {
-        std::fprintf(stderr, "kwik: could not open %s/Base.cmake\n", kwik_root);
+#ifdef KWIK_RUNTIME_ARCHIVE
+    fs::path kwik_runtime = KWIK_RUNTIME_ARCHIVE;
+#else
+    fs::path kwik_runtime;
+#endif
+
+    if (kwik_root.empty()) return false;
+
+    auto write_header = [&](const fs::path& dst, const std::string& text) {
+        std::ofstream h(dst, std::ios::binary);
+        if (!h) return false;
+        h << text;
+        return true;
+    };
+
+    std::ifstream gml_header(kwik_root / "runtime/include/gml_runtime.h", std::ios::binary);
+    if (!gml_header) return false;
+    std::string gml_text((std::istreambuf_iterator<char>(gml_header)), std::istreambuf_iterator<char>());
+    if (!write_header(root / "KwikGML.h", gml_text)) return false;
+    if (!write_header(root / "KwikStd.h", "#pragma once\n#include <cstdint>\n#include <cstddef>\n#include <string>\n#include <string_view>\n")) return false;
+    if (!write_header(root / "KwikRef.h", "#pragma once\n#include <memory>\n")) return false;
+    if (!write_header(root / "KwikSlot.h", "#pragma once\n#include <vector>\n")) return false;
+    if (!write_header(root / "KwikValue.h", "#pragma once\n#include <KwikGML.h>\n")) return false;
+
+    if (kwik_runtime.empty() || !fs::exists(kwik_runtime)) {
+        std::fprintf(stderr, "[lift] libkwik_runtime.a not found; build kwik_runtime before exporting\n");
         return false;
     }
-    std::string tmpl((std::istreambuf_iterator<char>(base)), std::istreambuf_iterator<char>());
-    const std::string placeholder = "@KWIK_DIR@";
-    for (size_t p = tmpl.find(placeholder); p != std::string::npos;
-         p = tmpl.find(placeholder, p))
-        tmpl.replace(p, placeholder.size(), kwik_root);
-    std::ofstream cm(root / "CMakeLists.txt", std::ios::binary);
-    cm << tmpl;
+    fs::copy_file(kwik_runtime, root / "libkwik_runtime.a", fs::copy_options::overwrite_existing, ec);
+    if (ec) return false;
+
+    std::ofstream mk(root / "makefile", std::ios::binary);
+    if (!mk) return false;
+    mk << "SHELL := /bin/bash\n";
+    mk << "COMPILER ?= c++\n";
+    mk << "KWIK_RUNTIME ?= libkwik_runtime.a\n";
+    mk << "KWIK_BACKEND ?= glfw\n";
+    mk << "TARGET ?= $(notdir $(CURDIR))\n";
+    mk << "COMPILEOPTS ?= -std=c++20 -O2\n";
+    mk << "COMPILEOPTS += -I Game -I .\n";
+    mk << "SOURCES := $(wildcard Game/*.cpp)\n";
+    mk << "OBJECTS := $(patsubst Game/%.cpp,out/%.o,$(SOURCES))\n";
+    mk << "ifeq ($(KWIK_BACKEND),sdl2)\n";
+    mk << "BACKEND_CFLAGS := $(shell pkg-config --cflags sdl2)\n";
+    mk << "BACKEND_LIBS := $(shell pkg-config --libs sdl2)\n";
+    mk << "else\n";
+    mk << "BACKEND_CFLAGS := $(shell pkg-config --cflags glfw3)\n";
+    mk << "BACKEND_LIBS := $(shell pkg-config --libs glfw3) -lGL\n";
+    mk << "endif\n";
+    mk << "COMPILEOPTS += $(BACKEND_CFLAGS)\n";
+    mk << "LINKLIBS := $(KWIK_RUNTIME) $(BACKEND_LIBS) -ldl -lpthread -lm\n\n";
+    mk << "VITASDK ?= /usr/local/vitasdk\n";
+    mk << "KWIK_DIR ?= " << kwik_root.string() << "\n";
+    mk << "VITA_PREFIX ?= arm-vita-eabi\n";
+    mk << "VITA_CXX ?= $(VITA_PREFIX)-g++\n";
+    mk << "VITA_TITLEID ?= KWIK00001\n";
+    mk << "VITA_NAME ?= $(TARGET)\n";
+    mk << "VITA_VERSION ?= 01.00\n";
+    mk << "VITA_BUILD ?= out/vita\n";
+    mk << "VITA_RUNTIME_BUILD ?= $(VITA_BUILD)/runtime-build\n";
+    mk << "VITA_RUNTIME := $(VITA_RUNTIME_BUILD)/runtime/libkwik_runtime.a\n";
+    mk << "VITA_OBJECTS := $(patsubst Game/%.cpp,$(VITA_BUILD)/%.o,$(SOURCES))\n";
+    mk << "VITA_COMPILEOPTS ?= -std=c++20 -O2 -I Game -I .\n";
+    mk << "VITA_LDFLAGS ?= -Wl,-q -Wl,-z,nocopyreloc\n";
+    mk << "VITA_LINKLIBS := $(VITA_RUNTIME) -lvitaGL -lSceCommonDialog_stub -lSceGxm_stub -lSceDisplay_stub -lSceAppMgr_stub -lSceCtrl_stub -lSceAudio_stub -lmathneon -lvitashark -lSceShaccCgExt -ltaihen_stub -lSceShaccCg_stub -lSceKernelDmacMgr_stub -lpthread -lm\n\n";
+    mk << ".PHONY: all clean vita vita-runtime vita-vpk\n\n";
+    mk << "all: $(TARGET)\n\n";
+    mk << "$(TARGET): $(OBJECTS) $(KWIK_RUNTIME)\n";
+    mk << "\t$(COMPILER) $(OBJECTS) -o $@ $(LINKLIBS)\n\n";
+    mk << "out/%.o: Game/%.cpp Game/pch.hpp\n";
+    mk << "\t@mkdir -p out\n";
+    mk << "\t$(COMPILER) $(COMPILEOPTS) -c -o $@ $<\n\n";
+    mk << "vita: vita-vpk\n\n";
+    mk << "vita-runtime:\n";
+    mk << "\t@test -n \"$(KWIK_DIR)\" || (echo \"KWIK_DIR must point to the kwik repo.\" && false)\n";
+    mk << "\tcmake -S \"$(KWIK_DIR)\" -B \"$(VITA_RUNTIME_BUILD)\" -DCMAKE_TOOLCHAIN_FILE=\"$(VITASDK)/share/vita.toolchain.cmake\" -DVITA=ON -DKWIK_BACKEND=vitagl -DCMAKE_BUILD_TYPE=Release\n";
+    mk << "\tcmake --build \"$(VITA_RUNTIME_BUILD)\" --target kwik_runtime\n\n";
+    mk << "$(VITA_RUNTIME): vita-runtime\n\n";
+    mk << "$(VITA_BUILD)/%.o: Game/%.cpp Game/pch.hpp\n";
+    mk << "\t@mkdir -p \"$(VITA_BUILD)\"\n";
+    mk << "\t$(VITA_CXX) $(VITA_COMPILEOPTS) -c -o $@ $<\n\n";
+    mk << "$(VITA_BUILD)/$(TARGET).elf: $(VITA_OBJECTS) $(VITA_RUNTIME)\n";
+    mk << "\t$(VITA_CXX) $(VITA_LDFLAGS) $(VITA_OBJECTS) -o $@ $(VITA_LINKLIBS)\n\n";
+    mk << "$(VITA_BUILD)/$(TARGET).velf: $(VITA_BUILD)/$(TARGET).elf\n";
+    mk << "\t$(VITASDK)/bin/vita-elf-create $< $@\n\n";
+    mk << "$(VITA_BUILD)/eboot.bin: $(VITA_BUILD)/$(TARGET).velf\n";
+    mk << "\t$(VITASDK)/bin/vita-make-fself -c -s $< $@\n\n";
+    mk << "$(VITA_BUILD)/param.sfo:\n";
+    mk << "\t@mkdir -p \"$(VITA_BUILD)\"\n";
+    mk << "\t$(VITASDK)/bin/vita-mksfoex -s TITLE_ID=$(VITA_TITLEID) -s APP_VER=$(VITA_VERSION) \"$(VITA_NAME)\" $@\n\n";
+    mk << "vita-vpk: $(VITA_BUILD)/eboot.bin $(VITA_BUILD)/param.sfo\n";
+    mk << "\t@set -e; args=\"-s $(VITA_BUILD)/param.sfo -b $(VITA_BUILD)/eboot.bin\"; if [ -f Assets.dat ]; then args=\"$$args -a Assets.dat=Assets.dat\"; fi; if [ -f sce_sys/icon0.png ]; then args=\"$$args -a sce_sys/icon0.png=sce_sys/icon0.png\"; fi; if [ -d sce_sys/livearea ]; then while IFS= read -r f; do args=\"$$args -a $$f=$$f\"; done < <(find sce_sys/livearea -type f -print); fi; eval \"$(VITASDK)/bin/vita-pack-vpk $$args $(TARGET).vpk\"\n\n";
+    mk << "clean:\n";
+    mk << "\trm -rf out $(TARGET) $(TARGET).vpk\n";
+    mk.close();
+
+    fs::remove(root / "CMakeLists.txt", ec);
+    fs::remove(root / "generated.h", ec);
+    fs::remove(root / "game_data.cpp", ec);
+    fs::remove(root / "main.cpp", ec);
+    fs::remove_all(root / "objects", ec);
+    fs::remove_all(root / "rooms", ec);
+    fs::remove_all(root / "scripts", ec);
     return true;
 }
 
