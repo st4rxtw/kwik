@@ -594,10 +594,37 @@ static const RtGlyph* find_glyph(const RtFont& f, int ch) {
     return nullptr;
 }
 
+static int utf8_next(const std::string& text, size_t& i) {
+    unsigned char c0 = (unsigned char)text[i++];
+    if (c0 < 0x80) return c0;
+    int need = 0;
+    int cp = 0;
+    if ((c0 & 0xE0) == 0xC0) {
+        need = 1;
+        cp = c0 & 0x1F;
+    } else if ((c0 & 0xF0) == 0xE0) {
+        need = 2;
+        cp = c0 & 0x0F;
+    } else if ((c0 & 0xF8) == 0xF0) {
+        need = 3;
+        cp = c0 & 0x07;
+    } else {
+        return c0;
+    }
+    for (int j = 0; j < need; ++j) {
+        if (i >= text.size()) return c0;
+        unsigned char cx = (unsigned char)text[i];
+        if ((cx & 0xC0) != 0x80) return c0;
+        ++i;
+        cp = (cp << 6) | (cx & 0x3F);
+    }
+    return cp;
+}
+
 static double line_width(const RtFont& f, const std::string& text, size_t a, size_t b) {
     double w = 0;
-    for (size_t i = a; i < b; ++i) {
-        const RtGlyph* g = find_glyph(f, (unsigned char)text[i]);
+    for (size_t i = a; i < b;) {
+        const RtGlyph* g = find_glyph(f, utf8_next(text, i));
         if (g) w += g->shift;
     }
     return w;
@@ -645,17 +672,18 @@ void kwik_draw_text_ext_rt(double x, double y, const std::string& text, double s
         double linew = 0;
         size_t last_space = std::string::npos;
         double width_at_space = 0;
-        for (size_t i = 0; i < text.size(); ++i) {
-            char c = text[i];
-            wrapped.push_back(c);
-            if (c == '\n') {
+        for (size_t i = 0; i < text.size();) {
+            size_t start = i;
+            int ch = utf8_next(text, i);
+            wrapped.append(text, start, i - start);
+            if (ch == '\n') {
                 linew = 0;
                 last_space = std::string::npos;
                 continue;
             }
-            const RtGlyph* g = find_glyph(f, (unsigned char)c);
+            const RtGlyph* g = find_glyph(f, ch);
             double adv = g ? g->shift : 0;
-            if (c == ' ') {
+            if (ch == ' ') {
                 last_space = wrapped.size() - 1;
                 width_at_space = linew;
             }
@@ -686,11 +714,15 @@ void kwik_draw_text_rt(double x, double y, const std::string& text, double xs, d
     if (dbg_left > 0 && !text.empty()) {
         --dbg_left;
         int found = 0;
-        if (font >= 0)
-            for (char c : text)
-                if (find_glyph(g_rt_fonts[font], (unsigned char)c)) ++found;
+        size_t glyphs = 0;
+        if (font >= 0) {
+            for (size_t i = 0; i < text.size();) {
+                ++glyphs;
+                if (find_glyph(g_rt_fonts[font], utf8_next(text, i))) ++found;
+            }
+        }
         std::fprintf(stderr, "[text] font=%d at(%.0f,%.0f) glyphs=%d/%zu \"%.40s\"\n", g_cur_font,
-                     x, y, found, text.size(), text.c_str());
+                     x, y, found, glyphs, text.c_str());
     }
     if (font < 0) return;
     const RtFont& f = g_rt_fonts[font];
@@ -724,8 +756,8 @@ void kwik_draw_text_rt(double x, double y, const std::string& text, double xs, d
         else if (halign == 2) ox -= w;
         double liney = oy + (double)li * line_h;
         double pen = ox;
-        for (size_t i = lines[li].first; i < lines[li].second; ++i) {
-            const RtGlyph* g = find_glyph(f, (unsigned char)text[i]);
+        for (size_t i = lines[li].first; i < lines[li].second;) {
+            const RtGlyph* g = find_glyph(f, utf8_next(text, i));
             if (!g) continue;
             if (g->w > 0 && g->h > 0) {
                 LoadedImage& img = load_image(g->image);

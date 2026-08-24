@@ -563,7 +563,8 @@ static Value csv_row_value(const std::vector<std::string>& cells) {
 
 GMLFN(load_csv) {
     (void)self;
-    std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
+    std::string path = S(args, argc, 0);
+    std::FILE* f = std::fopen(kwik_resolve_read(path).c_str(), "rb");
     Value out = kwik_new_array(nullptr, 0);
     if (!f) return out;
 
@@ -1310,11 +1311,20 @@ GMLFN(ds_grid_destroy) {
 GMLFN(ds_grid_width) {
     (void)self;
     DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
+    if (!g && argc > 0 && args[0].type == Value::ARR && args[0].arr) {
+        size_t best = 0;
+        for (const Value& row : args[0].arr->items)
+            if (row.type == Value::ARR && row.arr)
+                best = std::max(best, row.arr->items.size());
+        return Value((double)best);
+    }
     return Value(g ? (double)g->w : 0.0);
 }
 GMLFN(ds_grid_height) {
     (void)self;
     DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
+    if (!g && argc > 0 && args[0].type == Value::ARR && args[0].arr)
+        return Value((double)args[0].arr->items.size());
     return Value(g ? (double)g->h : 0.0);
 }
 GMLFN(ds_grid_clear) {
@@ -1329,8 +1339,15 @@ GMLFN(ds_grid_clear) {
 GMLFN(ds_grid_get) {
     (void)self;
     DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
-    if (!g) return Value();
     int x = (int)A(args, argc, 1), y = (int)A(args, argc, 2);
+    if (!g && argc > 0 && args[0].type == Value::ARR && args[0].arr) {
+        if (x < 0 || y < 0 || (size_t)y >= args[0].arr->items.size()) return Value(0.0);
+        const Value& row = args[0].arr->items[(size_t)y];
+        if (row.type != Value::ARR || !row.arr || (size_t)x >= row.arr->items.size())
+            return Value(0.0);
+        return row.arr->items[(size_t)x];
+    }
+    if (!g) return Value();
     if (x < 0 || x >= g->w || y < 0 || y >= g->h) return Value(0.0);
     return g->data[(size_t)y * g->w + x];
 }

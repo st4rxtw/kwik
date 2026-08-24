@@ -68,14 +68,24 @@ std::string kwik_save_path(const std::string& rel_) {
     return g_save_dir + "/" + rel;
 }
 
+static bool readable_file(const std::string& path) {
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    std::fclose(f);
+    return true;
+}
+
 std::string kwik_resolve_read(const std::string& rel_) {
     std::string rel = normalize_slashes(rel_);
-    if (rel.empty() || rel[0] == '/' || g_save_dir.empty()) return rel;
-    std::string in_save = g_save_dir + "/" + rel;
-    std::FILE* f = std::fopen(in_save.c_str(), "rb");
-    if (f) {
-        std::fclose(f);
-        return in_save;
+    if (rel.empty() || rel[0] == '/') return rel;
+    if (!g_save_dir.empty()) {
+        std::string in_save = g_save_dir + "/" + rel;
+        if (readable_file(in_save)) return in_save;
+    }
+    if (readable_file(rel)) return rel;
+    if (!g_game_dir.empty()) {
+        std::string in_game = g_game_dir + "/" + rel;
+        if (readable_file(in_game)) return in_game;
     }
     return rel;
 }
