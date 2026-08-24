@@ -554,6 +554,71 @@ static bool json_parse_struct(JsonParser& jp, Instance* self, Value& out) {
 
 GMLFN(json_stringify) { (void)args; (void)argc; return kwik_missing(self, "json_stringify"); }
 
+static Value csv_row_value(const std::vector<std::string>& cells) {
+    Value row = kwik_new_array(nullptr, 0);
+    for (const std::string& cell : cells)
+        row.arr->items.push_back(Value(cell));
+    return row;
+}
+
+GMLFN(load_csv) {
+    (void)self;
+    std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
+    Value out = kwik_new_array(nullptr, 0);
+    if (!f) return out;
+
+    std::string text;
+    char buf[4096];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0)
+        text.append(buf, n);
+    std::fclose(f);
+
+    std::vector<std::string> row;
+    std::string cell;
+    bool quoted = false;
+    bool have_cell = false;
+    for (size_t i = 0; i < text.size(); ++i) {
+        char c = text[i];
+        have_cell = true;
+        if (quoted) {
+            if (c == '"') {
+                if (i + 1 < text.size() && text[i + 1] == '"') {
+                    cell.push_back('"');
+                    ++i;
+                } else {
+                    quoted = false;
+                }
+            } else {
+                cell.push_back(c);
+            }
+            continue;
+        }
+        if (c == '"') {
+            quoted = true;
+        } else if (c == ',') {
+            row.push_back(cell);
+            cell.clear();
+            have_cell = false;
+        } else if (c == '\n' || c == '\r') {
+            row.push_back(cell);
+            cell.clear();
+            if (!row.empty())
+                out.arr->items.push_back(csv_row_value(row));
+            row.clear();
+            have_cell = false;
+            if (c == '\r' && i + 1 < text.size() && text[i + 1] == '\n') ++i;
+        } else {
+            cell.push_back(c);
+        }
+    }
+    if (have_cell || !cell.empty() || !row.empty()) {
+        row.push_back(cell);
+        out.arr->items.push_back(csv_row_value(row));
+    }
+    return out;
+}
+
 struct IniSection {
     std::map<std::string, std::string> entries;
 };

@@ -418,7 +418,7 @@ GMLFN(ds_map_delete); GMLFN(ds_map_destroy); GMLFN(ds_map_exists); GMLFN(ds_map_
 GMLFN(ds_map_empty);
 GMLFN(ds_map_find_next); GMLFN(ds_map_find_value); GMLFN(ds_map_keys_to_array); GMLFN(ds_map_set);
 GMLFN(ds_map_set_post); GMLFN(ds_map_size); GMLFN(json_decode); GMLFN(json_encode);
-GMLFN(json_parse); GMLFN(json_stringify);
+GMLFN(json_parse); GMLFN(json_stringify); GMLFN(load_csv);
 
 GMLFN(ini_open); GMLFN(ini_open_from_string); GMLFN(ini_close); GMLFN(ini_read_real);
 GMLFN(ini_read_string); GMLFN(ini_write_real); GMLFN(ini_write_string);
@@ -565,6 +565,9 @@ GMLFN(gpu_set_colorwriteenable);
 GMLFN(ds_list_find_index); GMLFN(ds_list_shuffle); GMLFN(ds_map_add_list); GMLFN(ds_map_clear);
 GMLFN(ds_priority_add); GMLFN(ds_priority_clear); GMLFN(ds_priority_copy);
 GMLFN(ds_priority_create); GMLFN(ds_priority_delete_min); GMLFN(ds_priority_empty);
+GMLFN(ds_priority_size); GMLFN(ds_priority_find_min); GMLFN(ds_priority_find_max);
+GMLFN(ds_priority_change_priority); GMLFN(ds_priority_find_priority); GMLFN(ds_priority_delete_value);
+GMLFN(ds_priority_write); GMLFN(ds_priority_read);
 GMLFN(ds_queue_create);
 GMLFN(path_add); GMLFN(path_add_point); GMLFN(path_delete); GMLFN(path_exists);
 GMLFN(path_get_x); GMLFN(path_get_y); GMLFN(path_set_closed); GMLFN(path_set_kind);

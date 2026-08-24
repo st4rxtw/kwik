@@ -584,6 +584,17 @@ GMLFN(ds_priority_copy) {
     if (dst && src) dst->data = src->data;
     return Value();
 }
+GMLFN(ds_priority_size) {
+    (void)self;
+    DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
+    return Value(p ? (double)p->data.size() : 0.0);
+}
+GMLFN(ds_priority_find_min) {
+    (void)self;
+    DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
+    if (!p || p->data.empty()) return Value();
+    return p->data.begin()->second;
+}
 GMLFN(ds_priority_delete_min) {
     (void)self;
     DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
@@ -597,6 +608,12 @@ GMLFN(ds_priority_empty) {
     DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
     return Value(!p || p->data.empty());
 }
+GMLFN(ds_priority_find_max) {
+    (void)self;
+    DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
+    if (!p || p->data.empty()) return Value();
+    return std::prev(p->data.end())->second;
+}
 GMLFN(ds_priority_delete_max) {
     (void)self;
     DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
@@ -606,6 +623,42 @@ GMLFN(ds_priority_delete_max) {
     p->data.erase(it);
     return v;
 }
+GMLFN(ds_priority_change_priority) {
+    (void)self;
+    DsPriority* p = argc > 2 ? prio_of(args[0]) : nullptr;
+    if (!p) return Value();
+    for (auto it = p->data.begin(); it != p->data.end(); ++it) {
+        if (gml_truthy(gml_eq(it->second, args[1]))) {
+            Value v = it->second;
+            p->data.erase(it);
+            p->data.insert({(double)args[2], v});
+            break;
+        }
+    }
+    return Value();
+}
+GMLFN(ds_priority_find_priority) {
+    (void)self;
+    DsPriority* p = argc > 1 ? prio_of(args[0]) : nullptr;
+    if (!p) return Value();
+    for (const auto& kv : p->data)
+        if (gml_truthy(gml_eq(kv.second, args[1]))) return Value(kv.first);
+    return Value();
+}
+GMLFN(ds_priority_delete_value) {
+    (void)self;
+    DsPriority* p = argc > 1 ? prio_of(args[0]) : nullptr;
+    if (!p) return Value();
+    for (auto it = p->data.begin(); it != p->data.end(); ++it) {
+        if (gml_truthy(gml_eq(it->second, args[1]))) {
+            p->data.erase(it);
+            break;
+        }
+    }
+    return Value();
+}
+GMLFN(ds_priority_write) { return kwik_missing(self, "ds_priority_write"); }
+GMLFN(ds_priority_read) { return kwik_missing(self, "ds_priority_read"); }
 GMLFN(ds_priority_destroy) {
     (void)self;
     DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
