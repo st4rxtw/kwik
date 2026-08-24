@@ -221,16 +221,23 @@ void GameData::parse_objects() {
     const Chunk* c = chunk("OBJT");
     if (!c) return;
     uint32_t count = u32(c->offset);
+    int non_bool_persistent = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t ptr = u32(c->offset + 4 + i * 4);
+        int32_t v = i32(ptr + 24);
+        if (v != 0 && v != 1) ++non_bool_persistent;
+    }
+    bool old_layout = non_bool_persistent > 0;
     for (uint32_t i = 0; i < count; ++i) {
         uint32_t ptr = u32(c->offset + 4 + i * 4);
         GameObject o;
         o.name = string_at_offset(u32(ptr));
         o.sprite_index = i32(ptr + 4);
         o.visible = i32(ptr + 8);
-        o.depth = i32(ptr + 20);
-        o.persistent = i32(ptr + 24);
-        o.parent_index = i32(ptr + 28);
-        o.mask_index = i32(ptr + 32);
+        o.depth = i32(ptr + (old_layout ? 16 : 20));
+        o.persistent = i32(ptr + (old_layout ? 20 : 24));
+        o.parent_index = i32(ptr + (old_layout ? 24 : 28));
+        o.mask_index = i32(ptr + (old_layout ? 28 : 32));
         objects_.push_back(o);
     }
 }
