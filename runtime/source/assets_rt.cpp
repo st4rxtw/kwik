@@ -578,6 +578,12 @@ void kwik_set_font_rt(int rt_font) {
 
 int kwik_get_font_rt() { return g_cur_font; }
 
+static int current_font_or_default() {
+    build_fonts();
+    if (g_cur_font >= 0 && g_cur_font < (int)g_rt_fonts.size()) return g_cur_font;
+    return g_rt_fonts.empty() ? -1 : 0;
+}
+
 static const RtGlyph* find_glyph(const RtFont& f, int ch) {
     if (ch >= 0 && ch < 256) {
         int i = f.index[ch];
@@ -610,9 +616,9 @@ static void split_lines(const std::string& text, std::vector<std::pair<size_t, s
 }
 
 double kwik_string_width(const std::string& s) {
-    build_fonts();
-    if (g_cur_font < 0) return 0;
-    const RtFont& f = g_rt_fonts[g_cur_font];
+    int font = current_font_or_default();
+    if (font < 0) return 0;
+    const RtFont& f = g_rt_fonts[font];
     std::vector<std::pair<size_t, size_t>> lines;
     split_lines(s, lines);
     double best = 0;
@@ -621,9 +627,9 @@ double kwik_string_width(const std::string& s) {
 }
 
 double kwik_string_height(const std::string& s) {
-    build_fonts();
-    if (g_cur_font < 0) return 0;
-    const RtFont& f = g_rt_fonts[g_cur_font];
+    int font = current_font_or_default();
+    if (font < 0) return 0;
+    const RtFont& f = g_rt_fonts[font];
     std::vector<std::pair<size_t, size_t>> lines;
     split_lines(s, lines);
     return f.line_height * (double)lines.size();
@@ -631,9 +637,9 @@ double kwik_string_height(const std::string& s) {
 
 void kwik_draw_text_ext_rt(double x, double y, const std::string& text, double sep, double wrapw,
                            double xs, double ys, double angle) {
-    build_fonts();
-    if (g_cur_font < 0) return;
-    const RtFont& f = g_rt_fonts[g_cur_font];
+    int font = current_font_or_default();
+    if (font < 0) return;
+    const RtFont& f = g_rt_fonts[font];
     std::string wrapped;
     if (wrapw > 0) {
         double linew = 0;
@@ -666,28 +672,28 @@ void kwik_draw_text_ext_rt(double x, double y, const std::string& text, double s
     }
     double saved = -1;
     if (sep > 0) {
-        saved = g_rt_fonts[g_cur_font].line_height;
-        g_rt_fonts[g_cur_font].line_height = sep;
+        saved = g_rt_fonts[font].line_height;
+        g_rt_fonts[font].line_height = sep;
     }
     kwik_draw_text_rt(x, y, wrapped, xs, ys, angle);
-    if (saved >= 0) g_rt_fonts[g_cur_font].line_height = saved;
+    if (saved >= 0) g_rt_fonts[font].line_height = saved;
 }
 
 void kwik_draw_text_rt(double x, double y, const std::string& text, double xs, double ys,
                        double angle) {
-    build_fonts();
+    int font = current_font_or_default();
     static int dbg_left = std::getenv("KWIK_DEBUG_TEXT") ? 40 : 0;
     if (dbg_left > 0 && !text.empty()) {
         --dbg_left;
         int found = 0;
-        if (g_cur_font >= 0)
+        if (font >= 0)
             for (char c : text)
-                if (find_glyph(g_rt_fonts[g_cur_font], (unsigned char)c)) ++found;
+                if (find_glyph(g_rt_fonts[font], (unsigned char)c)) ++found;
         std::fprintf(stderr, "[text] font=%d at(%.0f,%.0f) glyphs=%d/%zu \"%.40s\"\n", g_cur_font,
                      x, y, found, text.size(), text.c_str());
     }
-    if (g_cur_font < 0) return;
-    const RtFont& f = g_rt_fonts[g_cur_font];
+    if (font < 0) return;
+    const RtFont& f = g_rt_fonts[font];
     std::vector<std::pair<size_t, size_t>> lines;
     split_lines(text, lines);
 

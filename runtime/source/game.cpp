@@ -2060,6 +2060,8 @@ GMLFN(asset_get_index) {
     }
     for (int i = 0; i < g_sound_count; ++i)
         if (g_sound_table[i].name && n == g_sound_table[i].name) return Value((double)i);
+    for (int i = 0; i < g_font_count; ++i)
+        if (g_fonts && g_fonts[i].name && n == g_fonts[i].name) return Value((double)i);
     for (int i = 0; i < g_room_count_rt; ++i)
         if (n == g_room_defs_rt[i].name) return Value((double)i);
     for (int i = 0; i < g_script_entry_count; ++i)
