@@ -128,4 +128,10 @@ bool kwik_voice_paused(int what);
 unsigned int kwik_image_texture(int image, int& w, int& h);
 void kwik_flush_textures();
 
+bool kwik_keyboard_mapped_down(int vk);
+bool kwik_keyboard_mapped_pressed(int vk);
+bool kwik_keyboard_mapped_released(int vk);
+void kwik_keyboard_set_map(int key, int maps_to);
+void kwik_keyboard_unset_map(int key);
+
 }

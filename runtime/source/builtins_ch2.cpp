@@ -51,13 +51,26 @@ GMLFN(game_set_speed) {
 GMLFN(make_colour_rgb) { return make_color_rgb(self, args, argc); }
 GMLFN(make_colour_hsv) { return make_color_hsv(self, args, argc); }
 GMLFN(merge_colour) { return merge_color(self, args, argc); }
-GMLFN(keyboard_check_direct) { return keyboard_check(self, args, argc); }
+GMLFN(keyboard_check_direct) {
+    (void)self;
+    return Value(render_key_down((int)A(args, argc, 0)));
+}
 GMLFN(get_string) { (void)self; return Value(argc > 1 ? (std::string)args[1] : ""); }
 GMLFN(get_string_async) { (void)self; return Value(argc > 1 ? (std::string)args[1] : ""); }
 GMLFN(clipboard_set_text) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(xboxone_show_account_picker) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(keyboard_set_map) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(keyboard_unset_map) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(keyboard_set_map) {
+    (void)self;
+    if (argc >= 2)
+        kwik_keyboard_set_map((int)A(args, argc, 0), (int)A(args, argc, 1));
+    return Value();
+}
+GMLFN(keyboard_unset_map) {
+    (void)self;
+    if (argc >= 1)
+        kwik_keyboard_unset_map((int)A(args, argc, 0));
+    return Value();
+}
 GMLFN(vertex_format_add_texcoord) { (void)self; (void)args; (void)argc; return Value(); }
 
 GMLFN(object_exists) {

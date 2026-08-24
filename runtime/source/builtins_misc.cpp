@@ -34,26 +34,62 @@ static bool autoz_pressed(int vk) {
     return (g_frame_counter % 16) == 0;
 }
 
+static int g_keyboard_map[512];
+static bool g_keyboard_map_init = false;
+
+static void ensure_keyboard_map() {
+    if (g_keyboard_map_init) return;
+    g_keyboard_map_init = true;
+    for (int i = 0; i < 512; ++i)
+        g_keyboard_map[i] = i;
+}
+
+static bool keyboard_any_mapped(int vk, bool (*fn)(int)) {
+    ensure_keyboard_map();
+    if (vk == 1) {
+        for (int i = 2; i < 512; ++i)
+            if (fn(i)) return true;
+        return false;
+    }
+    if (vk < 0 || vk >= 512) return false;
+    if (fn(vk)) return true;
+    for (int key = 0; key < 512; ++key)
+        if (key != vk && g_keyboard_map[key] == vk && fn(key))
+            return true;
+    return false;
+}
+
+bool kwik_keyboard_mapped_down(int vk) { return keyboard_any_mapped(vk, render_key_down); }
+bool kwik_keyboard_mapped_pressed(int vk) { return keyboard_any_mapped(vk, render_key_pressed); }
+bool kwik_keyboard_mapped_released(int vk) { return keyboard_any_mapped(vk, render_key_released); }
+
+void kwik_keyboard_set_map(int key, int maps_to) {
+    ensure_keyboard_map();
+    if (key >= 0 && key < 512 && maps_to >= 0 && maps_to < 512)
+        g_keyboard_map[key] = maps_to;
+}
+
+void kwik_keyboard_unset_map(int key) {
+    ensure_keyboard_map();
+    if (key >= 0 && key < 512)
+        g_keyboard_map[key] = key;
+}
+
 GMLFN(keyboard_check) {
     (void)self;
     int vk = (int)A(args, argc, 0);
     if (autoz_down(vk)) return Value(1.0);
-    return Value(render_key_down(vk));
+    return Value(kwik_keyboard_mapped_down(vk));
 }
 GMLFN(keyboard_check_pressed) {
     (void)self;
     int vk = (int)A(args, argc, 0);
     if (autoz_pressed(vk)) return Value(1.0);
-    if (vk == 1) {
-        for (int i = 2; i < 512; ++i)
-            if (render_key_pressed(i)) return Value(1.0);
-        return Value(0.0);
-    }
-    return Value(render_key_pressed(vk));
+    return Value(kwik_keyboard_mapped_pressed(vk));
 }
 GMLFN(keyboard_check_released) {
     (void)self;
-    return Value(render_key_released((int)A(args, argc, 0)));
+    return Value(kwik_keyboard_mapped_released((int)A(args, argc, 0)));
 }
 GMLFN(keyboard_key_press) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(keyboard_key_release) { (void)self; (void)args; (void)argc; return Value(); }
