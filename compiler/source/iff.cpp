@@ -377,7 +377,16 @@ void GameData::parse_rooms() {
                     }
                     r.layers.push_back(rl);
                 } else if (rl.type == 3) {
-                    uint32_t tl = u32(lp + 48);
+                    uint32_t tl = u32(lp + 36);
+                    uint32_t sl = u32(lp + 40);
+                    if (tl <= c->offset || tl >= c->offset + c->size) {
+                        uint32_t tl_alt = u32(lp + 48);
+                        uint32_t sl_alt = u32(lp + 52);
+                        if (tl_alt > c->offset && tl_alt < c->offset + c->size) {
+                            tl = tl_alt;
+                            sl = sl_alt;
+                        }
+                    }
                     rl.tile_first = (int32_t)r.tiles.size();
                     if (tl > c->offset && tl < c->offset + c->size) {
                         uint32_t tn = u32(tl);
@@ -394,18 +403,17 @@ void GameData::parse_rooms() {
                                 t.h = i32(tp + 24);
                                 t.depth = i32(tp + 28);
                                 float fsx, fsy;
-                                uint32_t usx = u32(tp + 36), usy = u32(tp + 40);
+                                uint32_t usx = u32(tp + 32), usy = u32(tp + 36);
                                 std::memcpy(&fsx, &usx, 4);
                                 std::memcpy(&fsy, &usy, 4);
                                 t.scale_x = fsx;
                                 t.scale_y = fsy;
-                                t.color = u32(tp + 44);
+                                t.color = u32(tp + 40);
                                 if (t.sprite >= 0 && t.sprite < sprite_count && t.w > 0 && t.h > 0)
                                     r.tiles.push_back(t);
                             }
                         }
                     }
-                    uint32_t sl = u32(lp + 52);
                     if (sl > c->offset && sl < c->offset + c->size) {
                         uint32_t sn = u32(sl);
                         if (sn <= 100000) {
