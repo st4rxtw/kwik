@@ -473,13 +473,17 @@ static bool boxes_overlap(double al, double at, double ar, double ab,
     return al < br && ar > bl && at < bb && ab > bt;
 }
 
-Instance* collision_at(Instance* self, double px, double py, int who, bool) {
+Instance* collision_at(Instance* self, double px, double py, int who, bool solid_only) {
     if (!self) return nullptr;
     HitProbe p;
     if (!probe_init(self, px, py, p)) return nullptr;
     for (auto& sp : g_instances) {
         Instance* other = sp.get();
         if (other == self || !inst_matches(other, who)) continue;
+        if (solid_only) {
+            auto it = other->vars.find("solid");
+            if (it == other->vars.end() || !gml_truthy(it->second)) continue;
+        }
         if (probe_hits(p, other)) return other;
     }
     return nullptr;
@@ -540,7 +544,7 @@ static void init_instance_vars(Instance* inst, const ObjectDef* def) {
     inst->var("gravity") = Value(0.0);
     inst->var("gravity_direction") = Value(270.0);
     inst->var("friction") = Value(0.0);
-    inst->var("solid") = Value(0.0);
+    inst->var("solid") = Value(def ? (double)def->solid : 0.0);
     inst->var("mask_index") = Value(def ? (double)def->mask_index : -1.0);
     inst->var("sprite_index") = Value(def ? (double)def->sprite_index : -1.0);
     Value alarms;
@@ -1504,7 +1508,7 @@ GMLFN(place_meeting) {
 
 GMLFN(place_free) {
     if (argc < 2) return Value(1.0);
-    return Value(collision_at(self, (double)args[0], (double)args[1], -3, false) == nullptr);
+    return Value(collision_at(self, (double)args[0], (double)args[1], -3, true) == nullptr);
 }
 
 GMLFN(position_meeting) {

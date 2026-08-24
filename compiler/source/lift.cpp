@@ -1127,7 +1127,8 @@ static void emit_object_table(std::ostream& os, const GameData& gd) {
         os << "    { ObjectDef& d = g_objects[" << i << "]; d.name = " << quote(g.name)
            << "; d.sprite_index = " << g.sprite_index << "; d.parent_index = " << g.parent_index
            << "; d.mask_index = " << g.mask_index << "; d.persistent = " << (g.persistent ? 1 : 0)
-           << "; d.visible = " << (g.visible ? 1 : 0) << "; d.depth = " << g.depth << ";";
+           << "; d.visible = " << (g.visible ? 1 : 0) << "; d.solid = " << (g.solid ? 1 : 0)
+           << "; d.depth = " << g.depth << ";";
         set(os, "pre_create", s.pre_create);
         set(os, "create", s.create);
         set(os, "destroy", s.destroy);

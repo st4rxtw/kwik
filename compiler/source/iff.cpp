@@ -234,6 +234,7 @@ void GameData::parse_objects() {
         o.name = string_at_offset(u32(ptr));
         o.sprite_index = i32(ptr + 4);
         o.visible = i32(ptr + 8);
+        o.solid = i32(ptr + (old_layout ? 12 : 16));
         o.depth = i32(ptr + (old_layout ? 16 : 20));
         o.persistent = i32(ptr + (old_layout ? 20 : 24));
         o.parent_index = i32(ptr + (old_layout ? 24 : 28));
@@ -350,10 +351,17 @@ void GameData::parse_rooms() {
                 rl.y = (int32_t)ly;
                 rl.visible = i32(lp + 32) ? 1 : 0;
                 if (rl.type == 1) {
-                    int32_t sprite = i32(lp + 56);
-                    rl.color = u32(lp + 72);
+                    uint32_t bg = 36;
+                    int32_t sprite = i32(lp + bg + 8);
+                    int32_t sprite_alt = i32(lp + 48 + 8);
+                    if ((sprite < 0 || sprite >= sprite_count) && sprite_alt >= 0 && sprite_alt < sprite_count) {
+                        bg = 48;
+                        sprite = sprite_alt;
+                    }
+                    rl.visible = (rl.visible && i32(lp + bg) != 0) ? 1 : 0;
+                    rl.color = u32(lp + bg + 24);
                     if (sprite >= 0 && sprite < sprite_count) rl.sprite = sprite;
-                    uint32_t ht = u32(lp + 60), vt = u32(lp + 64), st = u32(lp + 68);
+                    uint32_t ht = u32(lp + bg + 12), vt = u32(lp + bg + 16), st = u32(lp + bg + 20);
                     if (ht <= 1) rl.htiled = (int32_t)ht;
                     if (vt <= 1) rl.vtiled = (int32_t)vt;
                     if (st <= 1) rl.stretch = (int32_t)st;

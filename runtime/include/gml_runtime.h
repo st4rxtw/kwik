@@ -110,6 +110,7 @@ struct ObjectDef {
     int mask_index = -1;
     int persistent = 0;
     int visible = 1;
+    int solid = 0;
     double depth = 0.0;
     ScriptFn pre_create = nullptr, create = nullptr, destroy = nullptr, cleanup = nullptr;
     ScriptFn step = nullptr, step_begin = nullptr, step_end = nullptr;
