@@ -9,6 +9,12 @@ set(KWIK_BACKEND "${KWIK_BACKEND_DEFAULT}" CACHE STRING "render backend: glfw, s
 
 set(KWIK_THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
 
+link_directories("C:/Libraries/bzip2/lib")
+find_library(BZ2_LIB bz2 PATHS "C:/Libraries/bzip2/lib" NO_DEFAULT_PATH)
+if(NOT BZ2_LIB)
+    find_library(BZ2_LIB bz2)
+endif()
+
 if(KWIK_BACKEND STREQUAL "sdl2")
     find_package(SDL2 REQUIRED)
     set(KWIK_BACKEND_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/source/backends/sdl2.cpp)
@@ -75,11 +81,11 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(kwik_runtime PUBLIC ${KWIK_WINDOW_LIBS} ${CMAKE_DL_LIBS} Threads::Threads)
+    target_link_libraries(kwik_runtime PUBLIC ${KWIK_WINDOW_LIBS} ${BZ2_LIB} ${CMAKE_DL_LIBS} Threads::Threads)
     target_compile_definitions(kwik_runtime PRIVATE _USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN)
 elseif(VITA)
-    target_link_libraries(kwik_runtime PUBLIC ${KWIK_WINDOW_LIBS} Threads::Threads m)
+    target_link_libraries(kwik_runtime PUBLIC ${KWIK_WINDOW_LIBS} ${BZ2_LIB} Threads::Threads m)
     target_compile_definitions(kwik_runtime PRIVATE _GNU_SOURCE)
 else()
-    target_link_libraries(kwik_runtime PUBLIC ${KWIK_WINDOW_LIBS} ${CMAKE_DL_LIBS} Threads::Threads m)
+    target_link_libraries(kwik_runtime PUBLIC ${KWIK_WINDOW_LIBS} ${BZ2_LIB} ${CMAKE_DL_LIBS} Threads::Threads m)
 endif()

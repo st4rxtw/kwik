@@ -351,20 +351,57 @@ void GameData::parse_rooms() {
                 rl.y = (int32_t)ly;
                 rl.visible = i32(lp + 32) ? 1 : 0;
                 if (rl.type == 1) {
-                    uint32_t bg = 36;
-                    int32_t sprite = i32(lp + bg + 8);
-                    int32_t sprite_alt = i32(lp + 48 + 8);
-                    if ((sprite < 0 || sprite >= sprite_count) && sprite_alt >= 0 && sprite_alt < sprite_count) {
-                        bg = 48;
-                        sprite = sprite_alt;
-                    }
-                    rl.visible = (rl.visible && i32(lp + bg) != 0) ? 1 : 0;
-                    rl.color = u32(lp + bg + 24);
+                    struct BgCandidate {
+                        uint32_t off = 0;
+                        int visible = 0;
+                        int sprite = -1;
+                        std::string sprite_name;
+                        uint32_t ht = 0, vt = 0, st = 0;
+                        uint32_t color = 0;
+                        bool valid = false;
+                    };
+                    auto sprite_name_for = [&](int32_t sprite) {
+                        if (!sc || sprite < 0 || sprite >= sprite_count) return std::string();
+                        uint32_t sp = u32(sc->offset + 4 + (uint32_t)sprite * 4);
+                        return string_at_offset(u32(sp));
+                    };
+                    auto read_bg = [&](uint32_t bg) {
+                        BgCandidate cnd;
+                        cnd.off = bg;
+                        if (lp + bg + 28 > c->offset + c->size) return cnd;
+                        cnd.visible = i32(lp + bg);
+                        cnd.sprite = i32(lp + bg + 8);
+                        cnd.sprite_name = sprite_name_for(cnd.sprite);
+                        cnd.ht = u32(lp + bg + 12);
+                        cnd.vt = u32(lp + bg + 16);
+                        cnd.st = u32(lp + bg + 20);
+                        cnd.color = u32(lp + bg + 24);
+                        cnd.valid = (cnd.visible == 0 || cnd.visible == 1) && cnd.sprite >= -1 &&
+                                    cnd.sprite < sprite_count && cnd.ht <= 1 && cnd.vt <= 1 &&
+                                    cnd.st <= 1;
+                        return cnd;
+                    };
+                    BgCandidate bg0 = read_bg(36);
+                    BgCandidate bg1 = read_bg(48);
+                    BgCandidate bg = bg0;
+                    bool bg0_name_match =
+                        bg0.valid && !bg0.sprite_name.empty() &&
+                        rl.name.find(bg0.sprite_name) != std::string::npos;
+                    bool bg1_name_match =
+                        bg1.valid && !bg1.sprite_name.empty() &&
+                        rl.name.find(bg1.sprite_name) != std::string::npos;
+                    if (bg1_name_match ||
+                        (bg1.valid && !bg0_name_match &&
+                         (!bg0.valid || ((bg0.color >> 24) == 0 && (bg1.color >> 24) != 0))))
+                        bg = bg1;
+                    if (!bg.valid) bg = bg0.valid ? bg0 : bg1;
+                    rl.visible = (rl.visible && bg.visible != 0) ? 1 : 0;
+                    rl.color = bg.color;
+                    int32_t sprite = bg.sprite;
                     if (sprite >= 0 && sprite < sprite_count) rl.sprite = sprite;
-                    uint32_t ht = u32(lp + bg + 12), vt = u32(lp + bg + 16), st = u32(lp + bg + 20);
-                    if (ht <= 1) rl.htiled = (int32_t)ht;
-                    if (vt <= 1) rl.vtiled = (int32_t)vt;
-                    if (st <= 1) rl.stretch = (int32_t)st;
+                    if (bg.ht <= 1) rl.htiled = (int32_t)bg.ht;
+                    if (bg.vt <= 1) rl.vtiled = (int32_t)bg.vt;
+                    if (bg.st <= 1) rl.stretch = (int32_t)bg.st;
                     r.layers.push_back(rl);
                 } else if (rl.type == 2) {
                     uint32_t n = u32(lp + 48);
