@@ -62,6 +62,8 @@ static int g_cullmode = 0;
 static bool g_alpha_test = false;
 static double g_alpha_ref = 0.0;
 
+static GLenum gm_depth_func(int func);
+
 static void mat_mul(const double a[16], const double b[16], double out[16]) {
     for (int r = 0; r < 4; ++r)
         for (int c = 0; c < 4; ++c) {
@@ -307,7 +309,7 @@ void render_primitive_vertex(double x, double y, double u, double v, unsigned in
     glColor4f((color & 0xFF) / 255.0f, ((color >> 8) & 0xFF) / 255.0f,
               ((color >> 16) & 0xFF) / 255.0f, (float)alpha);
     if (textured) glTexCoord2f((float)u, (float)v);
-    glVertex2f((float)x, (float)y);
+    glVertex3d(x, y, g_draw_depth);
 }
 
 void render_primitive_vertex_3d(double x, double y, double z, double u, double v,
@@ -469,6 +471,7 @@ void render_begin_frame() {
     glLoadIdentity();
     if (g_ztest) glEnable(GL_DEPTH_TEST);
     else glDisable(GL_DEPTH_TEST);
+    glDepthFunc(gm_depth_func(g_zfunc));
     glDepthMask(g_zwrite ? GL_TRUE : GL_FALSE);
 
     glClearColor(0.f, 0.f, 0.f, 1.f);
@@ -536,6 +539,7 @@ static GLenum gm_depth_func(int func) {
 
 void render_set_ztest(bool enable) {
     g_ztest = enable;
+    glDepthFunc(gm_depth_func(g_zfunc));
     if (enable) glEnable(GL_DEPTH_TEST);
     else glDisable(GL_DEPTH_TEST);
 }
@@ -844,10 +848,10 @@ void render_draw_quad(unsigned int tex, double x, double y, double dw, double dh
     apply_fog_env();
     glColor4f(r, g, b, (float)alpha);
     glBegin(GL_QUADS);
-    glTexCoord2f(u0, v0); glVertex2f(vx[0], vy[0]);
-    glTexCoord2f(u1, v0); glVertex2f(vx[1], vy[1]);
-    glTexCoord2f(u1, v1); glVertex2f(vx[2], vy[2]);
-    glTexCoord2f(u0, v1); glVertex2f(vx[3], vy[3]);
+    glTexCoord2f(u0, v0); glVertex3d(vx[0], vy[0], g_draw_depth);
+    glTexCoord2f(u1, v0); glVertex3d(vx[1], vy[1], g_draw_depth);
+    glTexCoord2f(u1, v1); glVertex3d(vx[2], vy[2], g_draw_depth);
+    glTexCoord2f(u0, v1); glVertex3d(vx[3], vy[3], g_draw_depth);
     glEnd();
 }
 

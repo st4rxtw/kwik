@@ -621,7 +621,12 @@ GMLFN(layer_destroy) {
         }
     return Value();
 }
-GMLFN(layer_force_draw_depth) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(layer_force_draw_depth) {
+    (void)self;
+    g_layer_force_draw_depth = argc > 0 && gml_truthy(args[0]);
+    if (argc > 1) g_layer_forced_depth = (double)args[1];
+    return Value();
+}
 GMLFN(layer_get_all_elements) {
     (void)self;
     Value out = kwik_new_array(nullptr, 0);

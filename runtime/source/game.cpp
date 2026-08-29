@@ -92,6 +92,8 @@ std::string kwik_resolve_read(const std::string& rel_) {
 
 std::vector<Camera> g_cameras;
 std::vector<RtLayer> g_rt_layers;
+bool g_layer_force_draw_depth = false;
+double g_layer_forced_depth = 0.0;
 static int g_next_layer_id = 1000000;
 
 RtLayer* kwik_layer_by_id(int id) {
@@ -3052,10 +3054,13 @@ static void draw_world() {
     }
 
     for (const DrawItem& it : items) {
+        double old_depth = render_get_depth();
+        render_set_depth(g_layer_force_draw_depth ? g_layer_forced_depth : it.depth);
         if (it.tilemap) {
             const RtLayer& tm = *it.layer;
             kwik_render_tilemap_clipped(tm, tm.x, tm.y, cam.x, cam.y, cam.x + cam.w,
                                         cam.y + cam.h);
+            render_set_depth(old_depth);
             continue;
         }
         if (it.layer) {
@@ -3065,10 +3070,13 @@ static void draw_world() {
             if (bg.sprite < 0) {
                 if (alpha > 0.0) {
                     double sa = render_get_alpha();
+                    bool old_zwrite = render_get_zwrite();
                     render_set_alpha(alpha);
+                    render_set_zwrite(false);
                     render_draw_rectangle_color(cam.x - 32, cam.y - 32, cam.x + cam.w + 32,
                                                 cam.y + cam.h + 32, blend, blend, blend, blend,
                                                 false);
+                    render_set_zwrite(old_zwrite);
                     render_set_alpha(sa);
                 }
             } else if (bg.stretch) {
@@ -3081,6 +3089,7 @@ static void draw_world() {
                 kwik_draw_sprite_general(bg.sprite, 0, bg.x, bg.y, bg.xscale, bg.yscale, 0, blend,
                                          alpha);
             }
+            render_set_depth(old_depth);
             continue;
         }
         if (it.tile) {
@@ -3093,14 +3102,19 @@ static void draw_world() {
                 kwik_draw_sprite_part(t.sprite, 0, t.src_x, t.src_y, t.w, t.h, t.x + it.tile_ox,
                                       t.y + it.tile_oy, t.scale_x, t.scale_y, t.color & 0xFFFFFF,
                                       ((t.color >> 24) & 0xFF) / 255.0);
+            render_set_depth(old_depth);
             continue;
         }
         Instance* inst = it.inst;
-        if (inst->dead) continue;
+        if (inst->dead) {
+            render_set_depth(old_depth);
+            continue;
+        }
         int owner = -1;
         ScriptFn fn = find_event(inst->object_index, EVK_DRAW, 0, &owner);
         if (fn) call_event(inst, EVK_DRAW, 0, fn, owner);
         else draw_self_instance(inst);
+        render_set_depth(old_depth);
     }
 
     for (auto& sp : g_instances) {

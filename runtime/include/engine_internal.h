@@ -101,6 +101,8 @@ extern int g_gpu_alphatest;
 extern double g_gpu_alphatest_ref;
 
 extern std::vector<RtLayer> g_rt_layers;
+extern bool g_layer_force_draw_depth;
+extern double g_layer_forced_depth;
 RtLayer* kwik_layer_by_id(int id);
 int kwik_layer_create(double depth, const std::string& name);
 
