@@ -6,11 +6,18 @@
 #include "stb_image.h"
 
 #ifdef _WIN32
+#include "C:\Libraries\bzip2\include\bzlib.h"
+#else
+#include <bzlib.h>
+#endif
+
+#ifdef _WIN32
 #define _USE_MATH_DEFINES
 #endif
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 #include <algorithm>
@@ -25,14 +32,141 @@ struct LoadedImage {
     bool ok = false;
 };
 
+struct LoadedPage {
+    std::vector<uint8_t> rgba;
+    int w = 0;
+    int h = 0;
+    bool tried = false;
+    bool ok = false;
+};
+
 static std::vector<uint8_t> g_assets;
 static bool g_assets_tried = false;
 static std::vector<LoadedImage> g_images;
+static std::vector<LoadedPage> g_pages;
 
 static uint32_t rd32(size_t o) {
     if (o + 4 > g_assets.size()) return 0;
     return g_assets[o] | (g_assets[o + 1] << 8) | (g_assets[o + 2] << 16) |
            ((uint32_t)g_assets[o + 3] << 24);
+}
+
+static uint16_t rd16(size_t o) {
+    if (o + 2 > g_assets.size()) return 0;
+    return (uint16_t)(g_assets[o] | (g_assets[o + 1] << 8));
+}
+
+static int16_t rds16(size_t o) { return (int16_t)rd16(o); }
+
+static int32_t rds32(size_t o) {
+    uint32_t u = rd32(o);
+    int32_t s;
+    std::memcpy(&s, &u, sizeof(s));
+    return s;
+}
+
+static int sign_extend(uint32_t val, int bits) {
+    uint32_t mask = 1U << (bits - 1);
+    return (int)((val ^ mask) - mask);
+}
+
+static bool gm_qoi_decode(const uint8_t* d, size_t n, std::vector<uint8_t>& out, int& W, int& H) {
+    if (!d || n < 12 || d[0] != 'f' || d[1] != 'i' || d[2] != 'o' || d[3] != 'q')
+        return false;
+    W = d[4] | (d[5] << 8);
+    H = d[6] | (d[7] << 8);
+    uint32_t length = d[8] | (d[9] << 8) | (d[10] << 16) | ((uint32_t)d[11] << 24);
+    if (W <= 0 || H <= 0 || 12 + (size_t)length > n) return false;
+
+    const uint8_t* px = d + 12;
+    out.assign((size_t)W * H * 4, 0);
+    uint8_t index[64 * 4] = {};
+    size_t pos = 0;
+    int run = 0;
+    uint8_t r = 0, g = 0, b = 0, a = 255;
+
+    for (size_t rp = 0; rp < out.size(); rp += 4) {
+        if (run > 0) {
+            --run;
+        } else if (pos < length) {
+            uint8_t b1 = px[pos++];
+            if ((b1 & 0xC0) == 0x00) {
+                int ip = (b1 & 0x3f) << 2;
+                r = index[ip]; g = index[ip + 1]; b = index[ip + 2]; a = index[ip + 3];
+            } else if ((b1 & 0xE0) == 0x40) {
+                run = b1 & 0x1f;
+            } else if ((b1 & 0xE0) == 0x60) {
+                if (pos >= length) return false;
+                uint8_t b2 = px[pos++];
+                run = (((b1 & 0x1f) << 8) | b2) + 32;
+            } else if ((b1 & 0xC0) == 0x80) {
+                r = (uint8_t)(r + sign_extend((b1 >> 4) & 3, 2));
+                g = (uint8_t)(g + sign_extend((b1 >> 2) & 3, 2));
+                b = (uint8_t)(b + sign_extend(b1 & 3, 2));
+            } else if ((b1 & 0xE0) == 0xC0) {
+                if (pos >= length) return false;
+                uint8_t b2 = px[pos++];
+                uint32_t m = ((uint32_t)b1 << 8) | b2;
+                r = (uint8_t)(r + sign_extend((m >> 8) & 0x1f, 5));
+                g = (uint8_t)(g + sign_extend((m >> 4) & 0x0f, 4));
+                b = (uint8_t)(b + sign_extend(m & 0x0f, 4));
+            } else if ((b1 & 0xF0) == 0xE0) {
+                if (pos + 1 >= length) return false;
+                uint8_t b2 = px[pos++], b3 = px[pos++];
+                uint32_t m = ((uint32_t)b1 << 16) | ((uint32_t)b2 << 8) | b3;
+                r = (uint8_t)(r + sign_extend((m >> 15) & 0x1f, 5));
+                g = (uint8_t)(g + sign_extend((m >> 10) & 0x1f, 5));
+                b = (uint8_t)(b + sign_extend((m >> 5) & 0x1f, 5));
+                a = (uint8_t)(a + sign_extend(m & 0x1f, 5));
+            } else if ((b1 & 0xF0) == 0xF0) {
+                if (b1 & 8) { if (pos >= length) return false; r = px[pos++]; }
+                if (b1 & 4) { if (pos >= length) return false; g = px[pos++]; }
+                if (b1 & 2) { if (pos >= length) return false; b = px[pos++]; }
+                if (b1 & 1) { if (pos >= length) return false; a = px[pos++]; }
+            }
+            int ip = ((r ^ g ^ b ^ a) & 63) << 2;
+            index[ip] = r; index[ip + 1] = g; index[ip + 2] = b; index[ip + 3] = a;
+        }
+        out[rp] = r; out[rp + 1] = g; out[rp + 2] = b; out[rp + 3] = a;
+    }
+    return true;
+}
+
+static bool decode_bz2_qoi(const uint8_t* blob, size_t size, size_t header,
+                           std::vector<uint8_t>& out, int& w, int& h) {
+    if (!blob || size <= header || size < 8) return false;
+    int bw = blob[4] | (blob[5] << 8);
+    int bh = blob[6] | (blob[7] << 8);
+    if (bw <= 0 || bh <= 0) return false;
+    size_t cap = 12 + (size_t)bw * bh * 5;
+    std::vector<uint8_t> dec(cap);
+    unsigned int destlen = (unsigned int)dec.size();
+    unsigned int inlen = (unsigned int)(size - header);
+    if (BZ2_bzBuffToBuffDecompress((char*)dec.data(), &destlen, (char*)(blob + header), inlen, 0,
+                                    0) != BZ_OK)
+        return false;
+    return gm_qoi_decode(dec.data(), destlen, out, w, h);
+}
+
+static bool decode_txtr_page(const uint8_t* blob, size_t size, LoadedPage& page) {
+    if (!blob || size < 4) return false;
+    if (blob[0] == 'f' && blob[1] == 'i' && blob[2] == 'o' && blob[3] == 'q')
+        return gm_qoi_decode(blob, size, page.rgba, page.w, page.h);
+    if (blob[0] == '2' && blob[1] == 'z' && blob[2] == 'o' && blob[3] == 'q') {
+        if (decode_bz2_qoi(blob, size, 12, page.rgba, page.w, page.h)) return true;
+        return decode_bz2_qoi(blob, size, 8, page.rgba, page.w, page.h);
+    }
+    if (size >= 8 && blob[0] == 0x89 && blob[1] == 'P' && blob[2] == 'N' && blob[3] == 'G') {
+        int w = 0, h = 0, ch = 0;
+        unsigned char* pixels = stbi_load_from_memory(blob, (int)size, &w, &h, &ch, 4);
+        if (!pixels) return false;
+        page.w = w;
+        page.h = h;
+        page.rgba.assign(pixels, pixels + (size_t)w * h * 4);
+        stbi_image_free(pixels);
+        return true;
+    }
+    return false;
 }
 
 static void ensure_assets() {
@@ -68,6 +202,42 @@ const unsigned char* kwik_sound_blob(int blob_index, unsigned int& size, int& ty
     if (off + 8 + sz > g_assets.size()) return nullptr;
     size = sz;
     return &g_assets[off + 8];
+}
+
+static LoadedPage& load_page(int page_index) {
+    ensure_assets();
+    static LoadedPage dummy;
+    if (page_index < 0) return dummy;
+    if (page_index >= (int)g_pages.size()) g_pages.resize(page_index + 1);
+    LoadedPage& page = g_pages[page_index];
+    if (page.tried) return page;
+    page.tried = true;
+
+    unsigned int size = 0;
+    int type = 0;
+    const unsigned char* blob = kwik_sound_blob(page_index, size, type);
+    static const char* dbg = std::getenv("KWIK_DEBUG");
+    static int dbg_budget = dbg ? 20 : 0;
+    if (!blob || type != 7 || size == 0) {
+        if (dbg_budget > 0) {
+            --dbg_budget;
+            std::fprintf(stderr, "[kwik] TXTR page %d missing type=%d size=%u\n", page_index, type,
+                         size);
+        }
+        return page;
+    }
+    page.ok = decode_txtr_page(blob, size, page);
+    if (!page.ok) {
+        if (dbg_budget > 0) {
+            --dbg_budget;
+            std::fprintf(stderr, "[kwik] TXTR page %d decode failed size=%u\n", page_index, size);
+        }
+    } else if (dbg_budget > 0) {
+        --dbg_budget;
+        std::fprintf(stderr, "[kwik] TXTR page %d decoded ok %dx%d size=%u\n", page_index, page.w,
+                     page.h, size);
+    }
+    return page;
 }
 
 static std::vector<KwikSprite> g_dyn_sprites;
@@ -163,7 +333,7 @@ static LoadedImage& load_image(int index) {
     size_t off = rd32((size_t)g_image_count * 2 + (size_t)index * 4);
     static const char* dbg = std::getenv("KWIK_DEBUG");
     static int dbg_budget = dbg ? 20 : 0;
-    if (off == 0 || off + 16 > g_assets.size()) {
+    if (off == 0 || off + 12 > g_assets.size()) {
         if (dbg_budget > 0) {
             --dbg_budget;
             std::fprintf(stderr, "[kwik] image %d bad offset off=%zu assets_size=%zu\n", index,
@@ -171,8 +341,59 @@ static LoadedImage& load_image(int index) {
         }
         return img;
     }
+    uint16_t kind = rd16(off + 8);
+    if (kind == 1) {
+        if (off + 24 > g_assets.size()) {
+            if (dbg_budget > 0) {
+                --dbg_budget;
+                std::fprintf(stderr, "[kwik] image %d truncated TXTR metadata off=%zu\n", index,
+                             off);
+            }
+            return img;
+        }
+        img.w = rd16(off);
+        img.h = rd16(off + 2);
+        int tgt_x = rds16(off + 4);
+        int tgt_y = rds16(off + 6);
+        int page_index = rds32(off + 12);
+        int src_x = rds16(off + 16);
+        int src_y = rds16(off + 18);
+        int src_w = rds16(off + 20);
+        int src_h = rds16(off + 22);
+        if (img.w <= 0 || img.h <= 0 || src_w <= 0 || src_h <= 0) return img;
+
+        LoadedPage& page = load_page(page_index);
+        if (!page.ok || page.w <= 0 || page.h <= 0) return img;
+
+        std::vector<uint8_t> canvas((size_t)img.w * img.h * 4, 0);
+        for (int y = 0; y < src_h; ++y) {
+            int sy = src_y + y;
+            int dy = tgt_y + y;
+            if (sy < 0 || sy >= page.h || dy < 0 || dy >= img.h) continue;
+            for (int x = 0; x < src_w; ++x) {
+                int sx = src_x + x;
+                int dx = tgt_x + x;
+                if (sx < 0 || sx >= page.w || dx < 0 || dx >= img.w) continue;
+                const uint8_t* s = &page.rgba[((size_t)sy * page.w + sx) * 4];
+                uint8_t* d = &canvas[((size_t)dy * img.w + dx) * 4];
+                d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
+            }
+        }
+        img.tex = render_upload_texture(canvas.data(), img.w, img.h);
+        img.ok = img.tex != 0;
+        if (!img.ok)
+            std::fprintf(stderr, "[kwik] texture upload failed for TXTR image %d (%dx%d)\n",
+                         index, img.w, img.h);
+        else if (dbg_budget > 0) {
+            --dbg_budget;
+            std::fprintf(stderr, "[kwik] image %d loaded from TXTR page %d tex=%u %dx%d\n", index,
+                         page_index, img.tex, img.w, img.h);
+        }
+        return img;
+    }
+
     uint32_t png_size = rd32(off + 12);
-    if (off + 16 + png_size > g_assets.size()) {
+    if (off + 16 > g_assets.size() || off + 16 + png_size > g_assets.size()) {
         if (dbg_budget > 0) {
             --dbg_budget;
             std::fprintf(stderr, "[kwik] image %d bad png_size=%u off=%zu assets_size=%zu\n", index,
@@ -254,6 +475,13 @@ void kwik_flush_textures() {
         img.h = 0;
         img.ok = false;
         img.tried = false;
+    }
+    for (LoadedPage& page : g_pages) {
+        page.rgba.clear();
+        page.w = 0;
+        page.h = 0;
+        page.ok = false;
+        page.tried = false;
     }
 }
 

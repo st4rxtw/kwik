@@ -1460,12 +1460,13 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     mk << "TARGET ?= $(notdir $(CURDIR))\n";
     mk << "COMPILEOPTS ?= -std=c++20 -O2\n";
     mk << "COMPILEOPTS += -I Game -I .\n";
+    mk << "BZIP2_LIBS ?= -lbz2\n";
     mk << "SOURCES := $(wildcard Game/*.cpp)\n";
     mk << "OBJECTS := $(patsubst Game/%.cpp,out/%.o,$(SOURCES))\n";
     mk << "BACKEND_CFLAGS := $(shell pkg-config --cflags glfw3)\n";
     mk << "BACKEND_LIBS := $(shell pkg-config --libs glfw3) -lGL\n";
     mk << "COMPILEOPTS += $(BACKEND_CFLAGS)\n";
-    mk << "LINKLIBS := $(KWIK_RUNTIME) $(BACKEND_LIBS) -ldl -lpthread -lm\n\n";
+    mk << "LINKLIBS := $(KWIK_RUNTIME) $(BACKEND_LIBS) $(BZIP2_LIBS) -ldl -lpthread -lm\n\n";
     mk << "VITASDK ?= /usr/local/vitasdk\n";
     mk << "KWIK_DIR ?= " << kwik_root.string() << "\n";
     mk << "VITA_PREFIX ?= arm-vita-eabi\n";
@@ -1479,7 +1480,7 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     mk << "VITA_OBJECTS := $(patsubst Game/%.cpp,$(VITA_BUILD)/%.o,$(SOURCES))\n";
     mk << "VITA_COMPILEOPTS ?= -std=c++20 -O2 -I Game -I .\n";
     mk << "VITA_LDFLAGS ?= -Wl,-q -Wl,-z,nocopyreloc\n";
-    mk << "VITA_LINKLIBS := $(VITA_RUNTIME) -lvitaGL -lSceCommonDialog_stub -lSceGxm_stub -lSceDisplay_stub -lSceAppMgr_stub -lSceCtrl_stub -lSceAudio_stub -lmathneon -lvitashark -lSceShaccCgExt -ltaihen_stub -lSceShaccCg_stub -lSceKernelDmacMgr_stub -lpthread -lm\n\n";
+    mk << "VITA_LINKLIBS := $(VITA_RUNTIME) -lvitaGL -lSceCommonDialog_stub -lSceGxm_stub -lSceDisplay_stub -lSceAppMgr_stub -lSceCtrl_stub -lSceAudio_stub -lmathneon -lvitashark -lSceShaccCgExt -ltaihen_stub -lSceShaccCg_stub -lbz2 -lpthread -lm\n\n";
     mk << ".PHONY: all clean vita vita-runtime vita-vpk\n\n";
     mk << "all: $(TARGET)\n\n";
     mk << "$(TARGET): $(OBJECTS) $(KWIK_RUNTIME)\n";

@@ -1,196 +1,90 @@
 #include "assets.h"
 
-#ifdef _WIN32
-#include "C:\Libraries\bzip2\include\bzlib.h"  // this sucks ass but it works so idc
-#else
-#include <bzlib.h>
-#endif
-#ifdef _WIN32
-#include "C:\Libraries\zlib\include\zlib.h"  // this sucks ass but it works so idc
-#else
-#include <zlib.h>
-#endif
-
+#include <algorithm>
 #include <cstring>
 #include <fstream>
-#include <map>
-
-#define STB_IMAGE_IMPLEMENTATION
-#define STBI_NO_STDIO
-#include "stb_image.h"
 
 namespace kwik {
 
-struct Page {
-    int w = 0;
-    int h = 0;
-    std::vector<uint8_t> rgba;
-    bool ok = false;
+struct TxtrPage {
+    uint32_t data_offset = 0;
+    uint32_t data_size = 0;
 };
 
-static bool gm_qoi_decode(const uint8_t* d, size_t n, std::vector<uint8_t>& out, int& W, int& H) {
-    if (n < 12 || d[0] != 'f' || d[1] != 'i' || d[2] != 'o' || d[3] != 'q') return false;
-    W = d[4] | (d[5] << 8);
-    H = d[6] | (d[7] << 8);
-    uint32_t length = d[8] | (d[9] << 8) | (d[10] << 16) | ((uint32_t)d[11] << 24);
-    const uint8_t* px = d + 12;
-    size_t plen = length;
-    if ((size_t)12 + plen > n) plen = n - 12;
-    out.assign((size_t)W * H * 4, 0);
-    size_t pos = 0;
-    int run = 0;
-    int r = 0, g = 0, b = 0, a = 255;
-    uint8_t index[64 * 4] = {0};
-    size_t total = (size_t)W * H * 4;
-    for (size_t rp = 0; rp < total; rp += 4) {
-        if (run > 0) {
-            run--;
-        } else if (pos < plen) {
-            int b1 = px[pos++];
-            if ((b1 & 0xC0) == 0x00) {
-                int ip = b1 << 2;
-                r = index[ip]; g = index[ip + 1]; b = index[ip + 2]; a = index[ip + 3];
-            } else if ((b1 & 0xE0) == 0x40) {
-                run = b1 & 0x1f;
-            } else if ((b1 & 0xE0) == 0x60) {
-                int b2 = px[pos++];
-                run = (((b1 & 0x1f) << 8) | b2) + 32;
-            } else if ((b1 & 0xC0) == 0x80) {
-                r = (uint8_t)(r + (((b1 & 48) << 26 >> 30) & 0xff));
-                g = (uint8_t)(g + (((b1 & 12) << 28 >> 22 >> 8) & 0xff));
-                b = (uint8_t)(b + (((b1 & 3) << 30 >> 14 >> 16) & 0xff));
-            } else if ((b1 & 0xE0) == 0xc0) {
-                int b2 = px[pos++];
-                int m = (b1 << 8) | b2;
-                r = (uint8_t)(r + (((m & 7936) << 19 >> 27) & 0xff));
-                g = (uint8_t)(g + (((m & 240) << 24 >> 20 >> 8) & 0xff));
-                b = (uint8_t)(b + (((m & 15) << 28 >> 12 >> 16) & 0xff));
-            } else if ((b1 & 0xF0) == 0xe0) {
-                int b2 = px[pos++], b3 = px[pos++];
-                int m = (b1 << 16) | (b2 << 8) | b3;
-                r = (uint8_t)(r + (((m & 1015808) << 12 >> 27) & 0xff));
-                g = (uint8_t)(g + (((m & 31744) << 17 >> 19 >> 8) & 0xff));
-                b = (uint8_t)(b + (((m & 992) << 22 >> 11 >> 16) & 0xff));
-                a = (uint8_t)(a + (((m & 31) << 27 >> 3 >> 24) & 0xff));
-            } else if ((b1 & 0xF0) == 0xf0) {
-                if (b1 & 8) r = px[pos++];
-                if (b1 & 4) g = px[pos++];
-                if (b1 & 2) b = px[pos++];
-                if (b1 & 1) a = px[pos++];
-            }
-            int ip2 = ((r ^ g ^ b ^ a) & 63) << 2;
-            index[ip2] = r; index[ip2 + 1] = g; index[ip2 + 2] = b; index[ip2 + 3] = a;
-        }
-        out[rp] = r; out[rp + 1] = g; out[rp + 2] = b; out[rp + 3] = a;
-    }
-    return true;
+static bool is_txtr_payload(const std::vector<uint8_t>& bytes, uint32_t off) {
+    if ((size_t)off + 4 > bytes.size()) return false;
+    if (bytes[off] == 'f' && bytes[off + 1] == 'i' && bytes[off + 2] == 'o' &&
+        bytes[off + 3] == 'q')
+        return true;
+    if (bytes[off] == '2' && bytes[off + 1] == 'z' && bytes[off + 2] == 'o' &&
+        bytes[off + 3] == 'q')
+        return true;
+    return (size_t)off + 8 <= bytes.size() && bytes[off] == 0x89 && bytes[off + 1] == 'P' &&
+           bytes[off + 2] == 'N' && bytes[off + 3] == 'G';
 }
 
-static Page decode_page(const GameData& gd, uint32_t entry_ptr) {
-    Page pg;
+static uint32_t find_txtr_payload_offset(const GameData& gd, uint32_t entry_ptr) {
     const auto& bytes = gd.bytes();
-    uint32_t dptr = 0;
-    bool is_png = false;
     for (int w = 0; w < 12; ++w) {
         uint32_t v = gd.u32(entry_ptr + w * 4);
-        if ((size_t)v + 4 <= bytes.size() && bytes[v] == '2' && bytes[v + 1] == 'z' &&
-            bytes[v + 2] == 'o' && bytes[v + 3] == 'q') {
-            dptr = v;
-            break;
-        }
-        if ((size_t)v + 8 <= bytes.size() && bytes[v] == 0x89 && bytes[v + 1] == 'P' &&
-            bytes[v + 2] == 'N' && bytes[v + 3] == 'G') {
-            dptr = v;
-            is_png = true;
-            break;
-        }
+        if (is_txtr_payload(bytes, v)) return v;
     }
-    if (!dptr) return pg;
-    if (is_png) {
-        int w, h, ch;
-        unsigned char* pixels =
-            stbi_load_from_memory(&bytes[dptr], (int)(bytes.size() - dptr), &w, &h, &ch, 4);
-        if (!pixels) return pg;
-        pg.w = w;
-        pg.h = h;
-        pg.rgba.assign(pixels, pixels + (size_t)w * h * 4);
-        stbi_image_free(pixels);
-        pg.ok = true;
-        return pg;
-    }
-    uint32_t declen = gd.u32(dptr + 8);
-    std::vector<char> dec((size_t)declen + 4096);
-    unsigned int destlen = dec.size();
-    unsigned int inlen = bytes.size() - (dptr + 12);
-    if (BZ2_bzBuffToBuffDecompress(dec.data(), &destlen, (char*)&bytes[dptr + 12], inlen, 0, 0) != 0)
-        return pg;
-    pg.ok = gm_qoi_decode((uint8_t*)dec.data(), destlen, pg.rgba, pg.w, pg.h);
-    return pg;
+    return 0;
 }
 
-static void write_png(std::vector<uint8_t>& out, int w, int h, const std::vector<uint8_t>& rgba) {
-    std::vector<uint8_t> raw((size_t)h * (w * 4 + 1));
-    for (int y = 0; y < h; ++y) {
-        raw[(size_t)y * (w * 4 + 1)] = 0;
-        std::memcpy(&raw[(size_t)y * (w * 4 + 1) + 1], &rgba[(size_t)y * w * 4], w * 4);
+static void extract_txtr_pages(const GameData& gd, std::vector<TxtrPage>& pages) {
+    const Chunk* txtr = gd.chunk("TXTR");
+    if (!txtr) return;
+    const auto& bytes = gd.bytes();
+    uint32_t count = gd.u32(txtr->offset);
+    pages.assign(count, TxtrPage{});
+    std::vector<uint32_t> payload_offsets;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t entry = gd.u32(txtr->offset + 4 + i * 4);
+        uint32_t data = find_txtr_payload_offset(gd, entry);
+        pages[i].data_offset = data;
+        if (data) payload_offsets.push_back(data);
     }
-    uLongf clen = compressBound(raw.size());
-    std::vector<uint8_t> comp(clen);
-    compress2(comp.data(), &clen, raw.data(), raw.size(), 9);
+    std::sort(payload_offsets.begin(), payload_offsets.end());
+    payload_offsets.erase(std::unique(payload_offsets.begin(), payload_offsets.end()),
+                          payload_offsets.end());
+    uint32_t chunk_end = txtr->offset + txtr->size;
+    for (TxtrPage& page : pages) {
+        if (!page.data_offset || page.data_offset >= chunk_end || page.data_offset >= bytes.size())
+            continue;
+        auto it = std::upper_bound(payload_offsets.begin(), payload_offsets.end(), page.data_offset);
+        uint32_t end = it == payload_offsets.end() ? chunk_end : *it;
+        if (end > bytes.size()) end = (uint32_t)bytes.size();
+        if (end > page.data_offset) page.data_size = end - page.data_offset;
+    }
+}
 
-    auto put32 = [&](uint32_t v) {
-        out.push_back(v >> 24); out.push_back(v >> 16); out.push_back(v >> 8); out.push_back(v);
+static std::vector<uint8_t> build_txtr_blob(const GameData& gd, const TxtrPage& page) {
+    std::vector<uint8_t> e;
+    auto w32 = [&](uint32_t v) {
+        e.push_back(v);
+        e.push_back(v >> 8);
+        e.push_back(v >> 16);
+        e.push_back(v >> 24);
     };
-    auto chunk = [&](const char* type, const std::vector<uint8_t>& data) {
-        put32(data.size());
-        size_t start = out.size();
-        out.insert(out.end(), type, type + 4);
-        out.insert(out.end(), data.begin(), data.end());
-        uint32_t crc = crc32(0, &out[start], 4 + data.size());
-        put32(crc);
-    };
-
-    const uint8_t sig[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
-    out.insert(out.end(), sig, sig + 8);
-
-    std::vector<uint8_t> ihdr;
-    auto ph = [&](uint32_t v) { ihdr.push_back(v >> 24); ihdr.push_back(v >> 16); ihdr.push_back(v >> 8); ihdr.push_back(v); };
-    ph(w); ph(h);
-    ihdr.push_back(8); ihdr.push_back(6); ihdr.push_back(0); ihdr.push_back(0); ihdr.push_back(0);
-    chunk("IHDR", ihdr);
-    chunk("IDAT", std::vector<uint8_t>(comp.begin(), comp.begin() + clen));
-    chunk("IEND", {});
-}
-
-static std::vector<uint8_t> crop_canvas(const std::map<int, Page>& pages, int texIdx, int srcX,
-                                        int srcY, int srcW, int srcH, int tgtX, int tgtY, int cw,
-                                        int ch) {
-    std::vector<uint8_t> canvas((size_t)cw * ch * 4, 0);
-    auto it = pages.find(texIdx);
-    if (it == pages.end() || !it->second.ok) return canvas;
-    const Page& pg = it->second;
-    for (int y = 0; y < srcH; ++y) {
-        int dy = tgtY + y;
-        if (dy < 0 || dy >= ch || srcY + y < 0 || srcY + y >= pg.h) continue;
-        for (int x = 0; x < srcW; ++x) {
-            int dx = tgtX + x;
-            if (dx < 0 || dx >= cw || srcX + x < 0 || srcX + x >= pg.w) continue;
-            const uint8_t* s = &pg.rgba[((size_t)(srcY + y) * pg.w + (srcX + x)) * 4];
-            uint8_t* d = &canvas[((size_t)dy * cw + dx) * 4];
-            d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
-        }
+    w32(7);
+    w32(page.data_size);
+    if (page.data_size) {
+        const auto& bytes = gd.bytes();
+        e.insert(e.end(), bytes.begin() + page.data_offset,
+                 bytes.begin() + page.data_offset + page.data_size);
     }
-    return canvas;
+    return e;
 }
 
-static std::vector<uint8_t> build_image_entry(int w, int h, int hot_x, int hot_y,
-                                              const std::vector<uint8_t>& png) {
+static std::vector<uint8_t> build_image_entry(int w, int h, int tgt_x, int tgt_y, int page,
+                                              int src_x, int src_y, int src_w, int src_h) {
     std::vector<uint8_t> e;
     auto w16 = [&](int v) { e.push_back(v & 0xff); e.push_back((v >> 8) & 0xff); };
     auto w32 = [&](uint32_t v) { e.push_back(v); e.push_back(v >> 8); e.push_back(v >> 16); e.push_back(v >> 24); };
-    w16(w); w16(h); w16(hot_x); w16(hot_y); w16(0); w16(0);
-    w32(png.size());
-    e.insert(e.end(), png.begin(), png.end());
+    w16(w); w16(h); w16(tgt_x); w16(tgt_y); w16(1); w16(0);
+    w32((uint32_t)page);
+    w16(src_x); w16(src_y); w16(src_w); w16(src_h);
     return e;
 }
 
@@ -201,16 +95,13 @@ struct MaskPayload {
 
 bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtraction& out) {
     std::vector<MaskPayload> mask_payloads;
-    std::map<int, Page> pages;
-    const Chunk* txtr = gd.chunk("TXTR");
-    if (txtr) {
-        uint32_t tc = gd.u32(txtr->offset);
-        for (uint32_t i = 0; i < tc; ++i)
-            pages[i] = decode_page(gd, gd.u32(txtr->offset + 4 + i * 4));
-    }
+    std::vector<TxtrPage> pages;
+    extract_txtr_pages(gd, pages);
 
     std::vector<std::vector<uint8_t>> images;
     std::vector<std::vector<uint8_t>> sounds;
+    for (const TxtrPage& page : pages) sounds.push_back(build_txtr_blob(gd, page));
+    int txtr_blob_count = (int)sounds.size();
 
     const Chunk* sprt = gd.chunk("SPRT");
     if (sprt) {
@@ -297,25 +188,8 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
                 int cw = info.width > 0 ? info.width : srcW;
                 int ch = info.height > 0 ? info.height : srcH;
                 if (cw <= 0 || ch <= 0) continue;
-                std::vector<uint8_t> canvas((size_t)cw * ch * 4, 0);
-                auto it = pages.find(texIdx);
-                if (it != pages.end() && it->second.ok) {
-                    const Page& pg = it->second;
-                    for (int y = 0; y < srcH; ++y) {
-                        int dy = tgtY + y;
-                        if (dy < 0 || dy >= ch || srcY + y >= pg.h) continue;
-                        for (int x = 0; x < srcW; ++x) {
-                            int dx = tgtX + x;
-                            if (dx < 0 || dx >= cw || srcX + x >= pg.w) continue;
-                            const uint8_t* s = &pg.rgba[((size_t)(srcY + y) * pg.w + (srcX + x)) * 4];
-                            uint8_t* d = &canvas[((size_t)dy * cw + dx) * 4];
-                            d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
-                        }
-                    }
-                }
-                std::vector<uint8_t> png;
-                write_png(png, cw, ch, canvas);
-                images.push_back(build_image_entry(cw, ch, info.origin_x, info.origin_y, png));
+                images.push_back(build_image_entry(cw, ch, tgtX, tgtY, texIdx, srcX, srcY, srcW,
+                                                   srcH));
                 info.frame_count++;
             }
             out.sprites.push_back(info);
@@ -334,11 +208,8 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
             int tw = (int16_t)gd.u16(tpag + 4), th = (int16_t)gd.u16(tpag + 6);
             int texIdx = (int16_t)gd.u16(tpag + 20);
             if (tw <= 0 || th <= 0) { tw = 1; th = 1; }
-            std::vector<uint8_t> canvas = crop_canvas(pages, texIdx, tsx, tsy, tw, th, 0, 0, tw, th);
-            std::vector<uint8_t> png;
-            write_png(png, tw, th, canvas);
             fi.atlas_image = images.size();
-            images.push_back(build_image_entry(tw, th, 0, 0, png));
+            images.push_back(build_image_entry(tw, th, 0, 0, texIdx, tsx, tsy, tw, th));
 
             uint32_t goff = 0, gcnt = 0;
             for (uint32_t o = 40; o <= 96; o += 4) {
@@ -386,10 +257,6 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
             int srcW = (int16_t)gd.u16(tpag + 4), srcH = (int16_t)gd.u16(tpag + 6);
             int texIdx = (int16_t)gd.u16(tpag + 20);
             if (srcW <= 0 || srcH <= 0) continue;
-            std::vector<uint8_t> canvas = crop_canvas(pages, texIdx, srcX, srcY, srcW, srcH, 0, 0,
-                                                      srcW, srcH);
-            std::vector<uint8_t> png;
-            write_png(png, srcW, srcH, canvas);
             TilesetInfo ti;
             ti.image = (int)images.size();
             ti.tile_w = tile_w;
@@ -412,7 +279,7 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
                 }
                 if (identity) ti.tile_ids.clear();
             }
-            images.push_back(build_image_entry(srcW, srcH, 0, 0, png));
+            images.push_back(build_image_entry(srcW, srcH, 0, 0, texIdx, srcX, srcY, srcW, srcH));
             out.tilesets[i] = ti;
         }
     }
@@ -499,7 +366,7 @@ bool extract_assets(const GameData& gd, const std::string& out_dir, AssetExtract
             else if (group >= 1 && have_group1)
                 si.blob = group1_base + audio_id;
             else
-                si.blob = audio_id;
+                si.blob = txtr_blob_count + audio_id;
             out.sounds.push_back(si);
         }
     }
