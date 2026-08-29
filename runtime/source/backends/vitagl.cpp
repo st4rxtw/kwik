@@ -229,6 +229,7 @@ void render_surface_clear(unsigned int bgr, double alpha) {
                  ((bgr >> 16) & 0xFF) / 255.0f, (float)alpha);
     glClear(GL_COLOR_BUFFER_BIT);
 }
+void render_surface_clear_depth(double depth) { (void)depth; }
 
 struct Vtx {
     float x, y;
@@ -325,6 +326,11 @@ void render_primitive_vertex(double x, double y, double u, double v, unsigned in
     vtx.b = ((color >> 16) & 0xFF) / 255.0f;
     vtx.a = (float)alpha;
     g_prim_verts.push_back(vtx);
+}
+void render_primitive_vertex_3d(double x, double y, double z, double u, double v,
+                                unsigned int color, double alpha, bool textured) {
+    (void)z;
+    render_primitive_vertex(x, y, u, v, color, alpha, textured);
 }
 
 void render_primitive_end() {
@@ -737,6 +743,35 @@ void render_end_frame() {
 }
 
 double render_wheel_delta() { return g_wheel_frame; }
+void render_set_matrix(int which, const double* m16) { (void)which; (void)m16; }
+void render_get_matrix(int which, double* m16) {
+    (void)which;
+    if (!m16) return;
+    for (int i = 0; i < 16; ++i) m16[i] = (i == 0 || i == 5 || i == 10 || i == 15) ? 1.0 : 0.0;
+}
+void render_set_depth(double depth) { (void)depth; }
+double render_get_depth() { return 0.0; }
+void render_set_ztest(bool enable) { (void)enable; }
+bool render_get_ztest() { return false; }
+void render_set_zwrite(bool enable) { (void)enable; }
+bool render_get_zwrite() { return false; }
+void render_set_zfunc(int func) { (void)func; }
+int render_get_zfunc() { return 4; }
+void render_set_cullmode(int mode) { (void)mode; }
+int render_get_cullmode() { return 0; }
+void render_set_alphatest(bool enable, double ref) {
+    flush_batch();
+    if (enable) {
+        glEnable(GL_ALPHA_TEST);
+        glAlphaFunc(GL_GREATER, (GLclampf)std::max(0.0, std::min(1.0, ref)));
+    } else {
+        glDisable(GL_ALPHA_TEST);
+    }
+}
+double render_mouse_delta_x() { return 0.0; }
+double render_mouse_delta_y() { return 0.0; }
+void render_mouse_set_locked(bool locked) { (void)locked; }
+bool render_mouse_get_locked() { return false; }
 
 void render_idle() {}
 

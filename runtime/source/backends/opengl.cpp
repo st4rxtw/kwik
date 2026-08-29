@@ -33,14 +33,62 @@ static bool g_keys_now[512] = {false};
 static bool g_keys_prev[512] = {false};
 static bool g_mouse_now[3] = {false};
 static bool g_mouse_prev[3] = {false};
+static double g_mouse_dx = 0.0;
+static double g_mouse_dy = 0.0;
+static double g_mouse_last_x = 0.0;
+static double g_mouse_last_y = 0.0;
+static bool g_mouse_have_last = false;
+static bool g_mouse_locked = false;
 
 static double g_last_time = 0.0;
 static double g_dt = 0.0;
 
 static GLuint g_fbo = 0;
 static GLuint g_fbo_tex = 0;
+static GLuint g_fbo_depth = 0;
 static int g_fbo_w = 0;
 static int g_fbo_h = 0;
+
+static double g_matrix[3][16] = {
+    {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+};
+static double g_draw_depth = 0.0;
+static bool g_ztest = false;
+static bool g_zwrite = false;
+static int g_zfunc = 4;
+static int g_cullmode = 0;
+static bool g_alpha_test = false;
+static double g_alpha_ref = 0.0;
+
+static void mat_mul(const double a[16], const double b[16], double out[16]) {
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c) {
+            double sum = 0.0;
+            for (int k = 0; k < 4; ++k) sum += a[r * 4 + k] * b[k * 4 + c];
+            out[r * 4 + c] = sum;
+        }
+}
+
+static void gl_load_row_major(const double m[16]) {
+    glLoadMatrixd(m);
+}
+
+static void apply_3d_matrices() {
+    double model_view[16];
+    mat_mul(g_matrix[2], g_matrix[0], model_view);
+    double proj[16];
+    for (int i = 0; i < 16; ++i) proj[i] = g_matrix[1][i];
+    proj[1] = -proj[1];
+    proj[5] = -proj[5];
+    proj[9] = -proj[9];
+    proj[13] = -proj[13];
+    glMatrixMode(GL_PROJECTION);
+    gl_load_row_major(proj);
+    glMatrixMode(GL_MODELVIEW);
+    gl_load_row_major(model_view);
+}
 
 static bool init_app_surface(int w, int h) {
     if (!glGenFramebuffers) return false;
@@ -52,13 +100,19 @@ static bool init_app_surface(int w, int h) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_fbo_tex, 0);
+    glGenRenderbuffers(1, &g_fbo_depth);
+    glBindRenderbuffer(GL_RENDERBUFFER, g_fbo_depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, g_fbo_depth);
     bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     if (!ok) {
         glDeleteFramebuffers(1, &g_fbo);
         glDeleteTextures(1, &g_fbo_tex);
+        glDeleteRenderbuffers(1, &g_fbo_depth);
         g_fbo = 0;
         g_fbo_tex = 0;
+        g_fbo_depth = 0;
         return false;
     }
     g_fbo_w = w;
@@ -74,6 +128,7 @@ int render_app_height() { return g_fbo_h > 0 ? g_fbo_h : g_gui_h; }
 struct RtSurface {
     GLuint fbo = 0;
     GLuint tex = 0;
+    GLuint depth = 0;
     int w = 0, h = 0;
     bool alive = false;
 };
@@ -93,15 +148,21 @@ int render_surface_create(int w, int h) {
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
     glBindFramebuffer(GL_FRAMEBUFFER, sf.fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sf.tex, 0);
+    glGenRenderbuffers(1, &sf.depth);
+    glBindRenderbuffer(GL_RENDERBUFFER, sf.depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, sf.depth);
     bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
     if (ok) {
         glClearColor(0, 0, 0, 0);
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClearDepth(1.0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
     glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev);
     if (!ok) {
         glDeleteFramebuffers(1, &sf.fbo);
         glDeleteTextures(1, &sf.tex);
+        glDeleteRenderbuffers(1, &sf.depth);
         return -1;
     }
     sf.w = w;
@@ -132,6 +193,7 @@ void render_surface_free(int id) {
     if (!sf) return;
     glDeleteFramebuffers(1, &sf->fbo);
     glDeleteTextures(1, &sf->tex);
+    glDeleteRenderbuffers(1, &sf->depth);
     sf->alive = false;
 }
 
@@ -210,6 +272,11 @@ void render_surface_clear(unsigned int bgr, double alpha) {
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
+void render_surface_clear_depth(double depth) {
+    glClearDepth(depth);
+    glClear(GL_DEPTH_BUFFER_BIT);
+}
+
 static int g_prim_kind = 0;
 static unsigned int g_prim_tex = 0;
 
@@ -243,6 +310,14 @@ void render_primitive_vertex(double x, double y, double u, double v, unsigned in
     glVertex2f((float)x, (float)y);
 }
 
+void render_primitive_vertex_3d(double x, double y, double z, double u, double v,
+                                unsigned int color, double alpha, bool textured) {
+    glColor4f((color & 0xFF) / 255.0f, ((color >> 8) & 0xFF) / 255.0f,
+              ((color >> 16) & 0xFF) / 255.0f, (float)alpha);
+    if (textured) glTexCoord2f((float)u, (float)v);
+    glVertex3d(x, y, z);
+}
+
 void render_primitive_end() {
     glEnd();
     glEnable(GL_TEXTURE_2D);
@@ -250,6 +325,24 @@ void render_primitive_end() {
 
 static double g_wheel_accum = 0.0;
 static double g_wheel_frame = 0.0;
+
+static void update_mouse_delta() {
+    g_mouse_dx = 0.0;
+    g_mouse_dy = 0.0;
+    if (!g_window) {
+        g_mouse_have_last = false;
+        return;
+    }
+    double mx = 0.0, my = 0.0;
+    glfwGetCursorPos(g_window, &mx, &my);
+    if (g_mouse_have_last) {
+        g_mouse_dx = mx - g_mouse_last_x;
+        g_mouse_dy = my - g_mouse_last_y;
+    }
+    g_mouse_last_x = mx;
+    g_mouse_last_y = my;
+    g_mouse_have_last = true;
+}
 
 bool render_surface_snapshot(int id, int x, int y, int w, int h, unsigned char* rgba_out) {
     RtSurface* sf = surf_of(id);
@@ -374,12 +467,18 @@ void render_begin_frame() {
     glOrtho(g_view_x, g_view_x + vw, g_view_y + vh, g_view_y, -1.0, 1.0);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
+    if (g_ztest) glEnable(GL_DEPTH_TEST);
+    else glDisable(GL_DEPTH_TEST);
+    glDepthMask(g_zwrite ? GL_TRUE : GL_FALSE);
 
     glClearColor(0.f, 0.f, 0.f, 1.f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    glClearDepth(1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
 void render_begin_gui() {
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     glOrtho(0.0, g_gui_w, g_gui_h, 0.0, -1.0, 1.0);
@@ -406,6 +505,66 @@ void render_set_view(double x, double y, double w, double h) {
 double render_delta_time() { return g_dt; }
 double render_time_ms() { return glfwGetTime() * 1000.0; }
 
+void render_set_matrix(int which, const double* m16) {
+    if (which < 0 || which > 2 || !m16) return;
+    for (int i = 0; i < 16; ++i) g_matrix[which][i] = m16[i];
+    apply_3d_matrices();
+}
+
+void render_get_matrix(int which, double* m16) {
+    if (!m16) return;
+    if (which < 0 || which > 2) which = 0;
+    for (int i = 0; i < 16; ++i) m16[i] = g_matrix[which][i];
+}
+
+void render_set_depth(double depth) { g_draw_depth = std::max(-16000.0, std::min(16000.0, depth)); }
+double render_get_depth() { return g_draw_depth; }
+
+static GLenum gm_depth_func(int func) {
+    switch (func) {
+        case 1: return GL_NEVER;
+        case 2: return GL_LESS;
+        case 3: return GL_EQUAL;
+        case 4: return GL_LEQUAL;
+        case 5: return GL_GREATER;
+        case 6: return GL_NOTEQUAL;
+        case 7: return GL_GEQUAL;
+        case 8: return GL_ALWAYS;
+        default: return GL_LEQUAL;
+    }
+}
+
+void render_set_ztest(bool enable) {
+    g_ztest = enable;
+    if (enable) glEnable(GL_DEPTH_TEST);
+    else glDisable(GL_DEPTH_TEST);
+}
+bool render_get_ztest() { return g_ztest; }
+
+void render_set_zwrite(bool enable) {
+    g_zwrite = enable;
+    glDepthMask(enable ? GL_TRUE : GL_FALSE);
+}
+bool render_get_zwrite() { return g_zwrite; }
+
+void render_set_zfunc(int func) {
+    g_zfunc = func;
+    glDepthFunc(gm_depth_func(func));
+}
+int render_get_zfunc() { return g_zfunc; }
+
+void render_set_cullmode(int mode) {
+    g_cullmode = mode;
+    if (mode <= 0) {
+        glDisable(GL_CULL_FACE);
+        return;
+    }
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(mode == 1 ? GL_CW : GL_CCW);
+}
+int render_get_cullmode() { return g_cullmode; }
+
 static void blit_fbo_to_window() {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     int fbw = g_win_w, fbh = g_win_h;
@@ -426,6 +585,8 @@ static void blit_fbo_to_window() {
     float x1 = x0 + (float)dw;
     float y1 = y0 + (float)dh;
     glDisable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, g_fbo_tex);
     glColor4f(1.f, 1.f, 1.f, 1.f);
@@ -436,6 +597,8 @@ static void blit_fbo_to_window() {
     glTexCoord2f(0, 0); glVertex2f(x0, y1);
     glEnd();
     glEnable(GL_BLEND);
+    render_set_ztest(g_ztest);
+    render_set_zwrite(g_zwrite);
 }
 
 void render_present_last() {
@@ -462,11 +625,22 @@ void render_end_frame() {
     g_keys_now[0] = false;
     for (int i = 0; i < 3; ++i)
         g_mouse_now[i] = glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_LEFT + i) == GLFW_PRESS;
+    update_mouse_delta();
     g_wheel_frame = g_wheel_accum;
     g_wheel_accum = 0.0;
 }
 
 double render_wheel_delta() { return g_wheel_frame; }
+double render_mouse_delta_x() { return g_mouse_dx; }
+double render_mouse_delta_y() { return g_mouse_dy; }
+void render_mouse_set_locked(bool locked) {
+    g_mouse_locked = locked;
+    if (!g_window) return;
+    glfwSetInputMode(g_window, GLFW_CURSOR, locked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    g_mouse_have_last = false;
+    update_mouse_delta();
+}
+bool render_mouse_get_locked() { return g_mouse_locked; }
 
 void render_idle() { glfwPollEvents(); }
 
@@ -588,6 +762,17 @@ void render_set_blendmode_sepalpha(int src, int dst, int asrc, int adst) {
 void render_set_colorwrite(bool r, bool g, bool b, bool a) {
     glColorMask(r ? GL_TRUE : GL_FALSE, g ? GL_TRUE : GL_FALSE, b ? GL_TRUE : GL_FALSE,
                 a ? GL_TRUE : GL_FALSE);
+}
+
+void render_set_alphatest(bool enable, double ref) {
+    g_alpha_test = enable;
+    g_alpha_ref = std::max(0.0, std::min(1.0, ref));
+    if (enable) {
+        glEnable(GL_ALPHA_TEST);
+        glAlphaFunc(GL_GREATER, (GLclampf)g_alpha_ref);
+    } else {
+        glDisable(GL_ALPHA_TEST);
+    }
 }
 
 unsigned int render_upload_texture(const unsigned char* rgba, int w, int h) {
@@ -878,6 +1063,18 @@ void render_set_room(int width, int height, unsigned int) {
 }
 
 void render_shutdown() {
+    if (g_fbo_depth) {
+        glDeleteRenderbuffers(1, &g_fbo_depth);
+        g_fbo_depth = 0;
+    }
+    if (g_fbo_tex) {
+        glDeleteTextures(1, &g_fbo_tex);
+        g_fbo_tex = 0;
+    }
+    if (g_fbo) {
+        glDeleteFramebuffers(1, &g_fbo);
+        g_fbo = 0;
+    }
     if (g_window) {
         glfwDestroyWindow(g_window);
         g_window = nullptr;

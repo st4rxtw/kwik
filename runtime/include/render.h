@@ -39,6 +39,10 @@ bool render_key_pressed(int gml_vk);
 bool render_key_released(int gml_vk);
 double render_mouse_x();
 double render_mouse_y();
+double render_mouse_delta_x();
+double render_mouse_delta_y();
+void render_mouse_set_locked(bool locked);
+bool render_mouse_get_locked();
 bool render_mouse_down(int button);
 bool render_mouse_pressed(int button);
 bool render_mouse_released(int button);
@@ -57,6 +61,7 @@ void render_set_blendmode_ext(int src, int dst);
 void render_set_blendmode_sepalpha(int src, int dst, int asrc, int adst);
 void render_set_fog(bool on, unsigned int bgr);
 void render_set_colorwrite(bool r, bool g, bool b, bool a);
+void render_set_alphatest(bool enable, double ref);
 
 unsigned int render_upload_texture(const unsigned char* rgba, int w, int h);
 unsigned int render_texture_from_surface(int id, int x, int y, int w, int h);
@@ -82,8 +87,23 @@ void render_surface_clear(unsigned int bgr, double alpha);
 void render_primitive_begin(int kind, unsigned int tex);
 void render_primitive_vertex(double x, double y, double u, double v, unsigned int color,
                              double alpha, bool textured);
+void render_primitive_vertex_3d(double x, double y, double z, double u, double v,
+                                unsigned int color, double alpha, bool textured);
 void render_primitive_end();
 double render_wheel_delta();
+void render_surface_clear_depth(double depth);
+void render_set_matrix(int which, const double* m16);
+void render_get_matrix(int which, double* m16);
+void render_set_depth(double depth);
+double render_get_depth();
+void render_set_ztest(bool enable);
+bool render_get_ztest();
+void render_set_zwrite(bool enable);
+bool render_get_zwrite();
+void render_set_zfunc(int func);
+int render_get_zfunc();
+void render_set_cullmode(int mode);
+int render_get_cullmode();
 void render_draw_quad(unsigned int tex, double x, double y, double dw, double dh,
                       double origin_x, double origin_y, double xscale, double yscale,
                       double angle_deg, float u0, float v0, float u1, float v1,

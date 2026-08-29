@@ -10,6 +10,8 @@ struct Camera {
     double border_x = 32, border_y = 32;
     double speed_x = -1, speed_y = -1;
     double angle = 0;
+    double view_mat[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    double proj_mat[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     bool in_use = false;
     bool script_controlled = false;
 };
@@ -96,6 +98,7 @@ extern int g_gpu_blend_src;
 extern int g_gpu_blend_dst;
 extern int g_gpu_colorwrite[4];
 extern int g_gpu_alphatest;
+extern double g_gpu_alphatest_ref;
 
 extern std::vector<RtLayer> g_rt_layers;
 RtLayer* kwik_layer_by_id(int id);

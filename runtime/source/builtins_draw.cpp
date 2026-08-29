@@ -347,8 +347,10 @@ GMLFN(gpu_set_fog) {
     render_set_fog(argc > 0 && gml_truthy(args[0]), C(args, argc, 1, 0));
     return Value();
 }
-GMLFN(gpu_set_texfilter) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(gpu_set_texfilter_ext) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(gpu_set_texfilter) { return gpu_set_tex_filter(self, args, argc); }
+GMLFN(gpu_set_texfilter_ext) {
+    return argc >= 2 ? gpu_set_tex_filter(self, args + 1, argc - 1) : gpu_set_tex_filter(self, args, argc);
+}
 
 GMLFN(surface_get_width) {
     (void)self;
@@ -507,6 +509,13 @@ GMLFN(window_set_caption) {
     return Value();
 }
 GMLFN(window_set_cursor) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(window_mouse_get_delta_x) { (void)self; (void)args; (void)argc; return Value(render_mouse_delta_x()); }
+GMLFN(window_mouse_get_delta_y) { (void)self; (void)args; (void)argc; return Value(render_mouse_delta_y()); }
+GMLFN(window_mouse_set_locked) {
+    (void)self;
+    render_mouse_set_locked(argc > 0 && gml_truthy(args[0]));
+    return Value();
+}
 
 GMLFN(display_get_width) { (void)self; (void)args; (void)argc; return Value((double)render_display_width()); }
 GMLFN(display_get_height) { (void)self; (void)args; (void)argc; return Value((double)render_display_height()); }

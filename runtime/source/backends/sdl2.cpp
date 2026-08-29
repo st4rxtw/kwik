@@ -34,6 +34,9 @@ static bool g_keys_now[512] = {false};
 static bool g_keys_prev[512] = {false};
 static bool g_mouse_now[3] = {false};
 static bool g_mouse_prev[3] = {false};
+static double g_mouse_dx = 0.0;
+static double g_mouse_dy = 0.0;
+static bool g_mouse_locked = false;
 
 static double g_last_time = 0.0;
 static double g_dt = 0.0;
@@ -281,6 +284,7 @@ void render_surface_clear(unsigned int bgr, double alpha) {
                            (Uint8)std::lround(std::clamp(alpha, 0.0, 1.0) * 255.0));
     SDL_RenderClear(g_renderer);
 }
+void render_surface_clear_depth(double depth) { (void)depth; }
 
 bool render_surface_snapshot(int id, int x, int y, int w, int h, unsigned char* rgba_out) {
     unsigned int tid = id == 0 ? g_app_tex : render_surface_texture(id);
@@ -540,6 +544,11 @@ void render_primitive_vertex(double x, double y, double u, double v, unsigned in
     pv.alpha = alpha;
     g_prim_verts.push_back(pv);
 }
+void render_primitive_vertex_3d(double x, double y, double z, double u, double v,
+                                unsigned int color, double alpha, bool textured) {
+    (void)z;
+    render_primitive_vertex(x, y, u, v, color, alpha, textured);
+}
 
 void render_primitive_end() {
     int n = (int)g_prim_verts.size();
@@ -775,11 +784,42 @@ void render_end_frame() {
     g_mouse_now[0] = (mb & SDL_BUTTON_LMASK) != 0;
     g_mouse_now[1] = (mb & SDL_BUTTON_RMASK) != 0;
     g_mouse_now[2] = (mb & SDL_BUTTON_MMASK) != 0;
+    int mdx = 0, mdy = 0;
+    SDL_GetRelativeMouseState(&mdx, &mdy);
+    g_mouse_dx = mdx;
+    g_mouse_dy = mdy;
     g_wheel_frame = g_wheel_accum;
     g_wheel_accum = 0.0;
 }
 
 double render_wheel_delta() { return g_wheel_frame; }
+void render_set_matrix(int which, const double* m16) { (void)which; (void)m16; }
+void render_get_matrix(int which, double* m16) {
+    (void)which;
+    if (!m16) return;
+    for (int i = 0; i < 16; ++i) m16[i] = (i == 0 || i == 5 || i == 10 || i == 15) ? 1.0 : 0.0;
+}
+void render_set_depth(double depth) { (void)depth; }
+double render_get_depth() { return 0.0; }
+void render_set_ztest(bool enable) { (void)enable; }
+bool render_get_ztest() { return false; }
+void render_set_zwrite(bool enable) { (void)enable; }
+bool render_get_zwrite() { return false; }
+void render_set_zfunc(int func) { (void)func; }
+int render_get_zfunc() { return 4; }
+void render_set_cullmode(int mode) { (void)mode; }
+int render_get_cullmode() { return 0; }
+void render_set_alphatest(bool enable, double ref) { (void)enable; (void)ref; }
+double render_mouse_delta_x() { return g_mouse_dx; }
+double render_mouse_delta_y() { return g_mouse_dy; }
+void render_mouse_set_locked(bool locked) {
+    g_mouse_locked = locked;
+    SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
+    SDL_GetRelativeMouseState(nullptr, nullptr);
+    g_mouse_dx = 0.0;
+    g_mouse_dy = 0.0;
+}
+bool render_mouse_get_locked() { return g_mouse_locked; }
 
 void render_idle() { pump_events(); }
 
