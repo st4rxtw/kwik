@@ -252,6 +252,10 @@ GMLFN(draw_clear_alpha) {
     render_surface_clear(C(args, argc, 0), A(args, argc, 1));
     return Value();
 }
+GMLFN(draw_clear_depth) {
+    (void)self; (void)args; (void)argc;
+    return Value();
+}
 GMLFN(draw_get_font) {
     (void)self; (void)args; (void)argc;
     return Value((double)kwik_get_font_rt() + 10000);

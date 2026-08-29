@@ -2087,6 +2087,29 @@ GMLFN(camera_create) {
     g_cameras.push_back(c);
     return Value((double)(g_cameras.size() - 1));
 }
+GMLFN(camera_create_view) {
+    (void)self;
+    Camera c;
+    c.in_use = true;
+    if (argc >= 4) {
+        c.x = (double)args[0];
+        c.y = (double)args[1];
+        c.w = (double)args[2];
+        c.h = (double)args[3];
+    }
+    if (argc >= 5) c.angle = (double)args[4];
+    if (argc >= 6) c.target = (int)(double)args[5];
+    if (argc >= 8) {
+        c.border_x = (double)args[6];
+        c.border_y = (double)args[7];
+    }
+    if (argc >= 10) {
+        c.speed_x = (double)args[8];
+        c.speed_y = (double)args[9];
+    }
+    g_cameras.push_back(c);
+    return Value((double)(g_cameras.size() - 1));
+}
 
 static Camera& cam_of(const Value& v) {
     int i = (int)(double)v;

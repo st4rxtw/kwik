@@ -33,6 +33,12 @@ static bool g_keys_now[512] = {false};
 static bool g_keys_prev[512] = {false};
 static bool g_mouse_now[3] = {false};
 static bool g_mouse_prev[3] = {false};
+static double g_mouse_dx = 0.0;
+static double g_mouse_dy = 0.0;
+static double g_mouse_last_x = 0.0;
+static double g_mouse_last_y = 0.0;
+static bool g_mouse_have_last = false;
+static bool g_mouse_locked = false;
 
 static double g_last_time = 0.0;
 static double g_dt = 0.0;
@@ -251,6 +257,24 @@ void render_primitive_end() {
 static double g_wheel_accum = 0.0;
 static double g_wheel_frame = 0.0;
 
+static void update_mouse_delta() {
+    g_mouse_dx = 0.0;
+    g_mouse_dy = 0.0;
+    if (!g_window) {
+        g_mouse_have_last = false;
+        return;
+    }
+    double mx = 0.0, my = 0.0;
+    glfwGetCursorPos(g_window, &mx, &my);
+    if (g_mouse_have_last) {
+        g_mouse_dx = mx - g_mouse_last_x;
+        g_mouse_dy = my - g_mouse_last_y;
+    }
+    g_mouse_last_x = mx;
+    g_mouse_last_y = my;
+    g_mouse_have_last = true;
+}
+
 bool render_surface_snapshot(int id, int x, int y, int w, int h, unsigned char* rgba_out) {
     RtSurface* sf = surf_of(id);
     GLuint fbo = id == 0 ? g_fbo : (sf ? sf->fbo : 0);
@@ -462,11 +486,22 @@ void render_end_frame() {
     g_keys_now[0] = false;
     for (int i = 0; i < 3; ++i)
         g_mouse_now[i] = glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_LEFT + i) == GLFW_PRESS;
+    update_mouse_delta();
     g_wheel_frame = g_wheel_accum;
     g_wheel_accum = 0.0;
 }
 
 double render_wheel_delta() { return g_wheel_frame; }
+double render_mouse_delta_x() { return g_mouse_dx; }
+double render_mouse_delta_y() { return g_mouse_dy; }
+void render_mouse_set_locked(bool locked) {
+    g_mouse_locked = locked;
+    if (!g_window) return;
+    glfwSetInputMode(g_window, GLFW_CURSOR, locked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    g_mouse_have_last = false;
+    update_mouse_delta();
+}
+bool render_mouse_get_locked() { return g_mouse_locked; }
 
 void render_idle() { glfwPollEvents(); }
 

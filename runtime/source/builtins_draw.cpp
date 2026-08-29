@@ -507,6 +507,13 @@ GMLFN(window_set_caption) {
     return Value();
 }
 GMLFN(window_set_cursor) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(window_mouse_get_delta_x) { (void)self; (void)args; (void)argc; return Value(render_mouse_delta_x()); }
+GMLFN(window_mouse_get_delta_y) { (void)self; (void)args; (void)argc; return Value(render_mouse_delta_y()); }
+GMLFN(window_mouse_set_locked) {
+    (void)self;
+    render_mouse_set_locked(argc > 0 && gml_truthy(args[0]));
+    return Value();
+}
 
 GMLFN(display_get_width) { (void)self; (void)args; (void)argc; return Value((double)render_display_width()); }
 GMLFN(display_get_height) { (void)self; (void)args; (void)argc; return Value((double)render_display_height()); }

@@ -737,6 +737,10 @@ void render_end_frame() {
 }
 
 double render_wheel_delta() { return g_wheel_frame; }
+double render_mouse_delta_x() { return 0.0; }
+double render_mouse_delta_y() { return 0.0; }
+void render_mouse_set_locked(bool locked) { (void)locked; }
+bool render_mouse_get_locked() { return false; }
 
 void render_idle() {}
 

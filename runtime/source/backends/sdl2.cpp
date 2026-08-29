@@ -34,6 +34,9 @@ static bool g_keys_now[512] = {false};
 static bool g_keys_prev[512] = {false};
 static bool g_mouse_now[3] = {false};
 static bool g_mouse_prev[3] = {false};
+static double g_mouse_dx = 0.0;
+static double g_mouse_dy = 0.0;
+static bool g_mouse_locked = false;
 
 static double g_last_time = 0.0;
 static double g_dt = 0.0;
@@ -775,11 +778,25 @@ void render_end_frame() {
     g_mouse_now[0] = (mb & SDL_BUTTON_LMASK) != 0;
     g_mouse_now[1] = (mb & SDL_BUTTON_RMASK) != 0;
     g_mouse_now[2] = (mb & SDL_BUTTON_MMASK) != 0;
+    int mdx = 0, mdy = 0;
+    SDL_GetRelativeMouseState(&mdx, &mdy);
+    g_mouse_dx = mdx;
+    g_mouse_dy = mdy;
     g_wheel_frame = g_wheel_accum;
     g_wheel_accum = 0.0;
 }
 
 double render_wheel_delta() { return g_wheel_frame; }
+double render_mouse_delta_x() { return g_mouse_dx; }
+double render_mouse_delta_y() { return g_mouse_dy; }
+void render_mouse_set_locked(bool locked) {
+    g_mouse_locked = locked;
+    SDL_SetRelativeMouseMode(locked ? SDL_TRUE : SDL_FALSE);
+    SDL_GetRelativeMouseState(nullptr, nullptr);
+    g_mouse_dx = 0.0;
+    g_mouse_dy = 0.0;
+}
+bool render_mouse_get_locked() { return g_mouse_locked; }
 
 void render_idle() { pump_events(); }
 

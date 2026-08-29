@@ -502,7 +502,7 @@ GMLFN(layer_tile_destroy); GMLFN(layer_tile_get_xscale); GMLFN(layer_tile_get_ys
 GMLFN(layer_tile_get_region);
 GMLFN(layer_vspeed); GMLFN(layer_x); GMLFN(layer_y);
 
-GMLFN(camera_create); GMLFN(camera_get_view_angle); GMLFN(camera_get_view_border_x);
+GMLFN(camera_create); GMLFN(camera_create_view); GMLFN(camera_get_view_angle); GMLFN(camera_get_view_border_x);
 GMLFN(camera_get_view_border_y); GMLFN(camera_get_view_height); GMLFN(camera_get_view_speed_x);
 GMLFN(camera_get_view_speed_y); GMLFN(camera_get_view_target); GMLFN(camera_get_view_width);
 GMLFN(camera_get_view_x); GMLFN(camera_get_view_y); GMLFN(camera_set_view_angle);
@@ -515,6 +515,7 @@ GMLFN(view_set_yport);
 
 GMLFN(window_center); GMLFN(window_enable_borderless_fullscreen); GMLFN(window_get_fullscreen);
 GMLFN(window_get_height); GMLFN(window_get_width); GMLFN(window_set_caption);
+GMLFN(window_mouse_get_delta_x); GMLFN(window_mouse_get_delta_y); GMLFN(window_mouse_set_locked);
 GMLFN(window_set_cursor); GMLFN(window_set_fullscreen); GMLFN(window_set_size);
 GMLFN(display_get_width); GMLFN(display_get_height); GMLFN(display_get_gui_width);
 GMLFN(display_get_gui_height);
@@ -549,7 +550,7 @@ GMLFN(clipboard_set_text); GMLFN(keyboard_check_direct); GMLFN(buffer_md5);
 GMLFN(xboxone_show_account_picker); GMLFN(room_set_persistent);
 GMLFN(keyboard_set_map); GMLFN(keyboard_unset_map);
 GMLFN(buffer_get_surface); GMLFN(screen_save);
-GMLFN(draw_clear); GMLFN(draw_clear_alpha); GMLFN(draw_get_font); GMLFN(draw_get_halign);
+GMLFN(draw_clear); GMLFN(draw_clear_alpha); GMLFN(draw_clear_depth); GMLFN(draw_get_font); GMLFN(draw_get_halign);
 GMLFN(draw_get_valign); GMLFN(draw_healthbar); GMLFN(draw_primitive_begin);
 GMLFN(draw_primitive_begin_texture); GMLFN(draw_primitive_end); GMLFN(draw_vertex);
 GMLFN(draw_vertex_texture_color); GMLFN(draw_sprite_general); GMLFN(draw_sprite_pos);
