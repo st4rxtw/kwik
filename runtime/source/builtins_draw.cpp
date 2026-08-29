@@ -347,8 +347,10 @@ GMLFN(gpu_set_fog) {
     render_set_fog(argc > 0 && gml_truthy(args[0]), C(args, argc, 1, 0));
     return Value();
 }
-GMLFN(gpu_set_texfilter) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(gpu_set_texfilter_ext) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(gpu_set_texfilter) { return gpu_set_tex_filter(self, args, argc); }
+GMLFN(gpu_set_texfilter_ext) {
+    return argc >= 2 ? gpu_set_tex_filter(self, args + 1, argc - 1) : gpu_set_tex_filter(self, args, argc);
+}
 
 GMLFN(surface_get_width) {
     (void)self;

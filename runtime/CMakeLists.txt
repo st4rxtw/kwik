@@ -3,7 +3,7 @@ find_package(Threads REQUIRED)
 if(VITA)
     set(KWIK_BACKEND_DEFAULT "vitagl")
 else()
-    set(KWIK_BACKEND_DEFAULT "glfw") # change this to sdl2 if u wanna use sdl2 instead
+    set(KWIK_BACKEND_DEFAULT "sdl2") # change this to sdl2 if u wanna use sdl2 instead
 endif()
 set(KWIK_BACKEND "${KWIK_BACKEND_DEFAULT}" CACHE STRING "render backend: glfw, sdl2, or vitagl")
 

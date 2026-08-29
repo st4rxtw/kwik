@@ -119,6 +119,7 @@ int g_gpu_blend_src = 2;
 int g_gpu_blend_dst = 6;
 int g_gpu_colorwrite[4] = {1, 1, 1, 1};
 int g_gpu_alphatest = 0;
+double g_gpu_alphatest_ref = 0.0;
 
 static int g_next_instance_id = 10000000;
 static int g_next_struct_id = 20000000;

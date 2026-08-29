@@ -253,7 +253,8 @@ GMLFN(draw_clear_alpha) {
     return Value();
 }
 GMLFN(draw_clear_depth) {
-    (void)self; (void)args; (void)argc;
+    (void)self;
+    render_surface_clear_depth(A(args, argc, 0, 1.0));
     return Value();
 }
 GMLFN(draw_get_font) {
@@ -313,6 +314,19 @@ GMLFN(draw_vertex) {
                             render_get_alpha(), false);
     return Value();
 }
+GMLFN(draw_vertex_3d) {
+    (void)self;
+    render_primitive_vertex_3d(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2), 0, 0,
+                               render_get_color(), render_get_alpha(), false);
+    return Value();
+}
+GMLFN(draw_vertex_3d_color) {
+    (void)self;
+    render_primitive_vertex_3d(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2), 0, 0,
+                               C(args, argc, 3), A(args, argc, 4, 1), false);
+    return Value();
+}
+GMLFN(draw_vertex_3d_colour) { return draw_vertex_3d_color(self, args, argc); }
 GMLFN(draw_vertex_texture_color) {
     (void)self;
     render_primitive_vertex(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2), A(args, argc, 3),
@@ -333,6 +347,21 @@ GMLFN(draw_vertex_texture) {
                             render_get_color(), render_get_alpha(), g_prim_textured);
     return Value();
 }
+GMLFN(draw_vertex_texture_3d) {
+    (void)self;
+    render_primitive_vertex_3d(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2),
+                               A(args, argc, 3), A(args, argc, 4), render_get_color(),
+                               render_get_alpha(), g_prim_textured);
+    return Value();
+}
+GMLFN(draw_vertex_texture_3d_color) {
+    (void)self;
+    render_primitive_vertex_3d(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2),
+                               A(args, argc, 3), A(args, argc, 4), C(args, argc, 5),
+                               A(args, argc, 6, 1), g_prim_textured);
+    return Value();
+}
+GMLFN(draw_vertex_texture_3d_colour) { return draw_vertex_texture_3d_color(self, args, argc); }
 
 GMLFN(draw_sprite_general) {
     (void)self;
@@ -408,8 +437,20 @@ GMLFN(shader_get_sampler_index) { (void)self; (void)args; (void)argc; return Val
 GMLFN(texture_set_stage) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(texture_get_texel_width) { (void)self; (void)args; (void)argc; return Value(1.0 / 2048.0); }
 GMLFN(texture_get_texel_height) { (void)self; (void)args; (void)argc; return Value(1.0 / 2048.0); }
-GMLFN(gpu_set_alphatestenable) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(gpu_set_alphatestref) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(gpu_set_alphatestenable) {
+    (void)self;
+    g_gpu_alphatest = argc > 0 && gml_truthy(args[0]) ? 1 : 0;
+    render_set_alphatest(g_gpu_alphatest != 0, g_gpu_alphatest_ref);
+    return Value();
+}
+GMLFN(gpu_set_alphatestref) {
+    (void)self;
+    g_gpu_alphatest_ref = A(args, argc, 0) / 255.0;
+    if (g_gpu_alphatest_ref < 0.0) g_gpu_alphatest_ref = 0.0;
+    if (g_gpu_alphatest_ref > 1.0) g_gpu_alphatest_ref = 1.0;
+    render_set_alphatest(g_gpu_alphatest != 0, g_gpu_alphatest_ref);
+    return Value();
+}
 GMLFN(gpu_set_blendmode_ext) {
     (void)self;
     g_gpu_blend_src = (int)A(args, argc, 0, 2);

@@ -284,6 +284,7 @@ void render_surface_clear(unsigned int bgr, double alpha) {
                            (Uint8)std::lround(std::clamp(alpha, 0.0, 1.0) * 255.0));
     SDL_RenderClear(g_renderer);
 }
+void render_surface_clear_depth(double depth) { (void)depth; }
 
 bool render_surface_snapshot(int id, int x, int y, int w, int h, unsigned char* rgba_out) {
     unsigned int tid = id == 0 ? g_app_tex : render_surface_texture(id);
@@ -543,6 +544,11 @@ void render_primitive_vertex(double x, double y, double u, double v, unsigned in
     pv.alpha = alpha;
     g_prim_verts.push_back(pv);
 }
+void render_primitive_vertex_3d(double x, double y, double z, double u, double v,
+                                unsigned int color, double alpha, bool textured) {
+    (void)z;
+    render_primitive_vertex(x, y, u, v, color, alpha, textured);
+}
 
 void render_primitive_end() {
     int n = (int)g_prim_verts.size();
@@ -787,6 +793,23 @@ void render_end_frame() {
 }
 
 double render_wheel_delta() { return g_wheel_frame; }
+void render_set_matrix(int which, const double* m16) { (void)which; (void)m16; }
+void render_get_matrix(int which, double* m16) {
+    (void)which;
+    if (!m16) return;
+    for (int i = 0; i < 16; ++i) m16[i] = (i == 0 || i == 5 || i == 10 || i == 15) ? 1.0 : 0.0;
+}
+void render_set_depth(double depth) { (void)depth; }
+double render_get_depth() { return 0.0; }
+void render_set_ztest(bool enable) { (void)enable; }
+bool render_get_ztest() { return false; }
+void render_set_zwrite(bool enable) { (void)enable; }
+bool render_get_zwrite() { return false; }
+void render_set_zfunc(int func) { (void)func; }
+int render_get_zfunc() { return 4; }
+void render_set_cullmode(int mode) { (void)mode; }
+int render_get_cullmode() { return 0; }
+void render_set_alphatest(bool enable, double ref) { (void)enable; (void)ref; }
 double render_mouse_delta_x() { return g_mouse_dx; }
 double render_mouse_delta_y() { return g_mouse_dy; }
 void render_mouse_set_locked(bool locked) {
