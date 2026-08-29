@@ -3,9 +3,9 @@ find_package(Threads REQUIRED)
 if(VITA)
     set(KWIK_BACKEND_DEFAULT "vitagl")
 else()
-    set(KWIK_BACKEND_DEFAULT "glfw") # change this to sdl2 if u wanna use sdl2 instead
+    set(KWIK_BACKEND_DEFAULT "glfw")
 endif()
-set(KWIK_BACKEND "${KWIK_BACKEND_DEFAULT}" CACHE STRING "render backend: glfw, sdl2, or vitagl")
+set(KWIK_BACKEND "${KWIK_BACKEND_DEFAULT}" CACHE STRING "render backend: glfw, or vitagl")
 
 set(KWIK_THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
 
@@ -15,18 +15,17 @@ if(NOT BZ2_LIB)
     find_library(BZ2_LIB bz2)
 endif()
 
-if(KWIK_BACKEND STREQUAL "sdl2")
-    find_package(SDL2 REQUIRED)
-    set(KWIK_BACKEND_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/source/backends/sdl2.cpp)
-elseif(KWIK_BACKEND STREQUAL "vitagl")
+if(KWIK_BACKEND STREQUAL "vitagl")
     set(KWIK_BACKEND_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/source/backends/vitagl.cpp)
-else()
+elseif(KWIK_BACKEND STREQUAL "glfw")
     find_package(OpenGL REQUIRED)
     find_package(glfw3 REQUIRED)
     set(KWIK_BACKEND_SOURCE
         ${CMAKE_CURRENT_SOURCE_DIR}/source/backends/opengl.cpp
         ${KWIK_THIRD_PARTY}/glad/src/glad.c
     )
+else()
+    message(FATAL_ERROR "Supported backends: glfw, vitagl")
 endif()
 
 add_library(kwik_runtime STATIC
@@ -52,14 +51,7 @@ target_include_directories(kwik_runtime PRIVATE
     ${KWIK_THIRD_PARTY}/miniaudio
 )
 
-if(KWIK_BACKEND STREQUAL "sdl2")
-    if(TARGET SDL2::SDL2)
-        set(KWIK_WINDOW_LIBS SDL2::SDL2)
-    else()
-        target_include_directories(kwik_runtime PRIVATE ${SDL2_INCLUDE_DIRS})
-        set(KWIK_WINDOW_LIBS ${SDL2_LIBRARIES})
-    endif()
-elseif(KWIK_BACKEND STREQUAL "vitagl")
+if(KWIK_BACKEND STREQUAL "vitagl")
     set(KWIK_WINDOW_LIBS
         vitaGL
         SceCommonDialog_stub
