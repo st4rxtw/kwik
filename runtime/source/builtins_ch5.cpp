@@ -28,6 +28,13 @@ static Value mk_array() {
     return v;
 }
 
+static void queue_video_event(Instance* self, const char* type) {
+    Value map = ds_map_create(self, nullptr, 0);
+    Value entry[3] = {map, Value("type"), Value(type)};
+    ds_map_add(self, entry, 3);
+    kwik_queue_async(ASYNC_WEB_EV, (int)(double)map);
+}
+
 GMLFN(mean) {
     (void)self;
     if (argc <= 0) return Value(0.0);
@@ -522,9 +529,18 @@ GMLFN(gpu_set_tex_filter) {
 GMLFN(gpu_set_tex_repeat) {
     (void)self;
     g_gpu_texrepeat = argc > 0 && gml_truthy(args[0]) ? 1 : 0;
+    render_set_texture_repeat(0, g_gpu_texrepeat != 0);
     return Value();
 }
 GMLFN(gpu_set_texrepeat) { return gpu_set_tex_repeat(self, args, argc); }
+GMLFN(gpu_set_texrepeat_ext) {
+    (void)self;
+    int sampler = (int)A(args, argc, 0, 0);
+    bool repeat = argc > 1 && gml_truthy(args[1]);
+    render_set_texture_repeat(sampler, repeat);
+    if (sampler == 0) g_gpu_texrepeat = repeat ? 1 : 0;
+    return Value();
+}
 GMLFN(gpu_set_ztestenable) {
     (void)self;
     render_set_ztest(argc > 0 && gml_truthy(args[0]));
@@ -1220,25 +1236,82 @@ GMLFN(part_emitter_burst) { (void)self; (void)args; (void)argc; return Value(); 
 GMLFN(part_emitter_stream) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(part_emitter_destroy_all) { (void)self; (void)args; (void)argc; return Value(); }
 
-GMLFN(video_open) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(video_close) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(video_get_status) { (void)self; (void)args; (void)argc; return Value(3.0); }
-GMLFN(video_draw) {
+struct VideoCompatState {
+    bool open = false;
+    bool loop = false;
+    bool paused = false;
+    bool end_queued = false;
+    unsigned long long start_frame = 0;
+    double volume = 1.0;
+    double position_ms = 0.0;
+};
+
+static VideoCompatState g_video;
+
+GMLFN(video_open) {
+    (void)args; (void)argc;
+    g_video.open = true;
+    g_video.paused = false;
+    g_video.end_queued = false;
+    g_video.start_frame = g_frame_counter;
+    g_video.position_ms = 0.0;
+    queue_video_event(self, "video_start");
+    return Value(1.0);
+}
+GMLFN(video_close) {
     (void)self; (void)args; (void)argc;
+    g_video.open = false;
+    g_video.paused = false;
+    g_video.end_queued = false;
+    g_video.position_ms = 0.0;
+    return Value();
+}
+GMLFN(video_get_status) {
+    (void)self; (void)args; (void)argc;
+    if (!g_video.open) return Value(0.0);
+    return Value(g_video.paused ? 3.0 : 2.0);
+}
+GMLFN(video_draw) {
+    (void)args; (void)argc;
+    if (g_video.open && !g_video.paused) {
+        unsigned long long elapsed = g_frame_counter - g_video.start_frame;
+        g_video.position_ms = elapsed * (1000.0 / std::max(1.0, g_room_speed_v));
+        if (!g_video.loop && elapsed >= 8 && !g_video.end_queued) {
+            g_video.end_queued = true;
+            queue_video_event(self, "video_end");
+        } else if (g_video.loop && elapsed >= 8) {
+            g_video.start_frame = g_frame_counter;
+            g_video.position_ms = 0.0;
+        }
+    }
     Value out = mk_array();
+    out.arr->items.push_back(Value(g_video.open && !g_video.paused ? 0.0 : -1.0));
     out.arr->items.push_back(Value(-1.0));
     out.arr->items.push_back(Value(-1.0));
     return out;
 }
-GMLFN(video_set_volume) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(video_pause) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(video_resume) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(video_enable_loop) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(video_seek_to) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(video_set_volume) {
+    (void)self;
+    g_video.volume = std::clamp(A(args, argc, 0, 1.0), 0.0, 1.0);
+    return Value();
+}
+GMLFN(video_pause) { (void)self; (void)args; (void)argc; g_video.paused = true; return Value(); }
+GMLFN(video_resume) { (void)self; (void)args; (void)argc; g_video.paused = false; return Value(); }
+GMLFN(video_enable_loop) {
+    (void)self;
+    g_video.loop = gml_truthy(argc > 0 ? args[0] : Value(0.0));
+    return Value();
+}
+GMLFN(video_seek_to) {
+    (void)self;
+    g_video.position_ms = A(args, argc, 0, 0.0);
+    g_video.start_frame = g_frame_counter;
+    return Value();
+}
 GMLFN(video_get_duration) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(video_get_position) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(video_get_position) { (void)self; (void)args; (void)argc; return Value(g_video.position_ms); }
 GMLFN(video_get_format) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(video_is_looping) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(video_is_looping) { (void)self; (void)args; (void)argc; return Value(g_video.loop ? 1.0 : 0.0); }
 
 GMLFN(gif_open) { (void)self; (void)args; (void)argc; return Value(-1.0); }
 GMLFN(gif_add_surface) { (void)self; (void)args; (void)argc; return Value(); }

@@ -23,6 +23,13 @@ static unsigned int C(const Value* args, int argc, int i, unsigned int dflt = 0x
     return i < argc ? (unsigned int)(long long)(double)args[i] : dflt;
 }
 
+static Value mk_array() {
+    Value v;
+    v.type = Value::ARR;
+    v.arr = std::make_shared<GmlArray>();
+    return v;
+}
+
 GMLFN(lerp) {
     (void)self;
     double a = A(args, argc, 0), b = A(args, argc, 1), t = A(args, argc, 2);
@@ -580,6 +587,76 @@ GMLFN(layer_background_get_id) {
     RtLayer* l = kwik_layer_by_id((int)(double)args[0]);
     return Value(l ? (double)l->id : -1.0);
 }
+
+static RtLayer* layer_from_value(const Value& v) {
+    if (v.type == Value::STR) {
+        for (RtLayer& l : g_rt_layers)
+            if (l.name == v.str) return &l;
+        return nullptr;
+    }
+    return kwik_layer_by_id((int)(double)v);
+}
+
+static bool is_fx_value(const Value& v) {
+    if (v.type != Value::OBJ || !v.obj) return false;
+    auto it = v.obj->vars.find(KWIK_STR_KEY("__kwik_fx"));
+    return it != v.obj->vars.end() && gml_truthy(it->second);
+}
+
+GMLFN(fx_create) {
+    (void)self;
+    if (argc < 1) return Value(-1.0);
+    static int next_fx_id = 1;
+    auto fx = std::make_shared<Instance>();
+    Value out = kwik_register_struct_value(fx);
+    fx->var("__kwik_fx") = Value(1.0);
+    fx->var("id") = Value((double)next_fx_id++);
+    fx->var("name") = Value((std::string)args[0]);
+    fx->var("parameters") = kwik_register_struct_value(std::make_shared<Instance>());
+    return out;
+}
+
+GMLFN(fx_set_parameter) {
+    (void)self;
+    if (argc < 3 || !is_fx_value(args[0])) return Value(-1.0);
+    std::string name = (std::string)args[1];
+    Value val = args[2];
+    if (argc > 3) {
+        val = mk_array();
+        for (int i = 2; i < argc; ++i) val.arr->items.push_back(args[i]);
+    }
+    args[0].obj->var(name) = val;
+    Value& params = args[0].obj->var("parameters");
+    if (params.type == Value::OBJ && params.obj) params.obj->var(name) = val;
+    return Value();
+}
+
+GMLFN(layer_set_fx) {
+    (void)self;
+    if (argc < 2 || !is_fx_value(args[1])) return Value(-1.0);
+    RtLayer* l = layer_from_value(args[0]);
+    if (!l) return Value(-1.0);
+    l->fx = args[1];
+    return Value();
+}
+
+GMLFN(layer_get_fx) {
+    (void)self;
+    if (argc < 1) return Value(-1.0);
+    RtLayer* l = layer_from_value(args[0]);
+    if (!l || l->fx.type == Value::UNDEF) return Value(-1.0);
+    return l->fx;
+}
+
+GMLFN(layer_clear_fx) {
+    (void)self;
+    if (argc < 1) return Value(-1.0);
+    RtLayer* l = layer_from_value(args[0]);
+    if (!l) return Value(-1.0);
+    l->fx = Value();
+    return Value();
+}
+
 GMLFN(layer_script_begin) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(layer_script_end) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(layer_sprite_change) { (void)self; (void)args; (void)argc; return Value(); }

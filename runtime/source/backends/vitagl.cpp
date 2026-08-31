@@ -43,6 +43,7 @@ static bool g_keys_now[512] = {false};
 static bool g_keys_prev[512] = {false};
 static bool g_mouse_now[3] = {false};
 static bool g_mouse_prev[3] = {false};
+static bool g_texrepeat[8] = {};
 
 static double g_last_time = 0.0;
 static double g_dt = 0.0;
@@ -54,6 +55,13 @@ static int g_fbo_h = 0;
 
 static void flush_batch();
 
+static void apply_texture_repeat(int stage) {
+    if (stage < 0 || stage >= 8) return;
+    GLenum wrap = g_texrepeat[stage] ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
+}
+
 static GLuint make_target_texture(int w, int h) {
     GLuint tex = 0;
     glGenTextures(1, &tex);
@@ -62,8 +70,7 @@ static GLuint make_target_texture(int w, int h) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, zero.data());
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    apply_texture_repeat(0);
     return tex;
 }
 
@@ -269,6 +276,7 @@ static void flush_batch() {
     if (g_batch.empty()) return;
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, g_batch_tex);
+    apply_texture_repeat(0);
     apply_fog_env(g_batch_fog);
     submit(g_batch.data(), (int)g_batch.size(), GL_TRIANGLES);
     g_batch.clear();
@@ -299,6 +307,7 @@ void render_primitive_begin(int kind, unsigned int tex) {
     if (tex) {
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, tex);
+        apply_texture_repeat(0);
     } else {
         glDisable(GL_TEXTURE_2D);
     }
@@ -882,6 +891,13 @@ void render_set_colorwrite(bool r, bool g, bool b, bool a) {
                 a ? GL_TRUE : GL_FALSE);
 }
 
+void render_set_texture_repeat(int stage, bool repeat) {
+    if (stage < 0 || stage >= 8) return;
+    flush_batch();
+    g_texrepeat[stage] = repeat;
+    if (stage == 0) apply_texture_repeat(stage);
+}
+
 void render_free_texture(unsigned int tex) {
     if (!tex) return;
     if (!g_batch.empty() && g_batch_tex == tex) flush_batch();
@@ -896,8 +912,7 @@ unsigned int render_upload_texture(const unsigned char* rgba, int w, int h) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    apply_texture_repeat(0);
     return tex;
 }
 

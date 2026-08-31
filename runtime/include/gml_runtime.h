@@ -80,6 +80,8 @@ struct Instance : std::enable_shared_from_this<Instance> {
     bool persistent = false;
     bool visible = true;
     double depth = 0.0;
+    int layer_id = -1;
+    std::string layer_name;
     double m_speed = 0.0, m_dir = 0.0, m_hs = 0.0, m_vs = 0.0;
     KwikStrMap<Value> vars;
 
@@ -342,6 +344,7 @@ Instance* kwik_first_instance(int obj_or_id);
 Instance* kwik_resolve_target(Instance* self, const Value& who);
 bool kwik_obj_is_a(int obj, int ancestor);
 Value kwik_create_instance(int obj_index, double x, double y, double depth, bool use_depth);
+Value kwik_create_instance_on_layer(int obj_index, double x, double y, const Value& layer);
 void kwik_destroy_instance(Instance* inst, bool run_event);
 std::vector<Instance*> kwik_instances_matching(Instance* self, int who);
 void kwik_fire_event(Instance* inst, int slot_kind, int sub);
@@ -380,6 +383,7 @@ void draw_self_instance(Instance* inst);
 bool kwik_sprite_size(int spr, int& w, int& h);
 
 Value kwik_missing(Instance* self, const char* name);
+Value kwik_register_struct_value(std::shared_ptr<Instance> s);
 
 void kwik_set_program_args(int argc, char** argv);
 
@@ -589,7 +593,9 @@ GMLFN(layer_background_get_id); GMLFN(layer_script_begin); GMLFN(layer_script_en
 GMLFN(layer_sprite_change); GMLFN(layer_sprite_get_id); GMLFN(layer_sprite_get_index);
 GMLFN(layer_sprite_get_speed); GMLFN(layer_sprite_get_x); GMLFN(layer_sprite_get_xscale);
 GMLFN(layer_sprite_get_y); GMLFN(layer_sprite_get_yscale); GMLFN(layer_sprite_speed);
-GMLFN(layer_sprite_x); GMLFN(layer_sprite_y); GMLFN(layer_tilemap_get_id);
+GMLFN(layer_sprite_x); GMLFN(layer_sprite_y); GMLFN(layer_get_fx); GMLFN(layer_set_fx);
+GMLFN(layer_clear_fx); GMLFN(layer_tilemap_get_id);
+GMLFN(fx_create); GMLFN(fx_set_parameter);
 GMLFN(tilemap_get_x); GMLFN(tilemap_x); GMLFN(vertex_format_add_texcoord);
 GMLFN(date_current_datetime); GMLFN(current_time_fn); GMLFN(get_timer);
 GMLFN(environment_get_variable); GMLFN(os_get_info); GMLFN(os_get_language); GMLFN(os_is_paused);
@@ -607,6 +613,7 @@ GMLFN(switch_controller_support_set_singleplayer_only); GMLFN(switch_controller_
 GMLFN(switch_language_get_desired_language); GMLFN(switch_save_data_commit);
 GMLFN(switch_save_data_mount); GMLFN(switch_show_store);
 
+GMLFN(alarm_get);
 GMLFN(alarm_set);
 GMLFN(animcurve_channel_evaluate);
 GMLFN(animcurve_exists);
@@ -623,7 +630,7 @@ GMLFN(device_mouse_dbclick_enable); GMLFN(device_mouse_x_to_gui); GMLFN(device_m
 GMLFN(display_set_gui_maximize); GMLFN(display_set_gui_size); GMLFN(window_has_focus);
 GMLFN(window_get_x); GMLFN(window_get_y); GMLFN(window_set_position); GMLFN(shaders_are_supported);
 GMLFN(gpu_get_scissor); GMLFN(gpu_set_scissor); GMLFN(is_callable); GMLFN(is_handle);
-GMLFN(os_get_region); GMLFN(room_get_info); GMLFN(struct_get_from_hash);
+GMLFN(os_get_region); GMLFN(room_get_info); GMLFN(struct_get_from_hash); GMLFN(url_open_ext);
 GMLFN(audio_emitter_create);
 GMLFN(audio_emitter_exists);
 GMLFN(audio_emitter_falloff);
@@ -756,10 +763,12 @@ GMLFN(gpu_set_zfunc);
 GMLFN(gpu_set_tex_filter);
 GMLFN(gpu_set_tex_repeat);
 GMLFN(gpu_set_texrepeat);
+GMLFN(gpu_set_texrepeat_ext);
 GMLFN(gpu_set_ztestenable);
 GMLFN(gpu_set_zwriteenable);
 GMLFN(instance_change);
 GMLFN(instance_copy);
+GMLFN(instance_activate_layer);
 GMLFN(instance_deactivate_layer);
 GMLFN(instance_id_get);
 GMLFN(instance_place_list);

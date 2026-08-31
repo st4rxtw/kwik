@@ -79,6 +79,7 @@ struct RtLayer {
     double xscale = 1.0, yscale = 1.0;
     int tile_first = 0, tile_count = 0;
     int tileset = -1, grid_w = 0, grid_h = 0, grid_blob = -1;
+    Value fx;
 };
 
 const uint32_t* kwik_tilemap_grid(int blob, int cells);

@@ -62,6 +62,7 @@ void render_set_blendmode_sepalpha(int src, int dst, int asrc, int adst);
 void render_set_fog(bool on, unsigned int bgr);
 void render_set_colorwrite(bool r, bool g, bool b, bool a);
 void render_set_alphatest(bool enable, double ref);
+void render_set_texture_repeat(int stage, bool repeat);
 
 unsigned int render_upload_texture(const unsigned char* rgba, int w, int h);
 unsigned int render_texture_from_surface(int id, int x, int y, int w, int h);

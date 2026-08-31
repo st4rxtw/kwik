@@ -61,6 +61,14 @@ static int g_zfunc = 4;
 static int g_cullmode = 0;
 static bool g_alpha_test = false;
 static double g_alpha_ref = 0.0;
+static bool g_texrepeat[8] = {};
+
+static void apply_texture_repeat(int stage) {
+    if (stage < 0 || stage >= 8) return;
+    GLenum wrap = g_texrepeat[stage] ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
+}
 
 static void mat_mul(const double a[16], const double b[16], double out[16]) {
     for (int r = 0; r < 4; ++r)
@@ -286,6 +294,7 @@ void render_primitive_begin(int kind, unsigned int tex) {
     if (tex) {
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, tex);
+        apply_texture_repeat(0);
     } else {
         glDisable(GL_TEXTURE_2D);
     }
@@ -775,6 +784,16 @@ void render_set_alphatest(bool enable, double ref) {
     }
 }
 
+void render_set_texture_repeat(int stage, bool repeat) {
+    if (stage < 0 || stage >= 8) return;
+    GLint active = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
+    g_texrepeat[stage] = repeat;
+    glActiveTexture(GL_TEXTURE0 + stage);
+    apply_texture_repeat(stage);
+    glActiveTexture((GLenum)active);
+}
+
 unsigned int render_upload_texture(const unsigned char* rgba, int w, int h) {
     GLuint tex = 0;
     glGenTextures(1, &tex);
@@ -782,8 +801,7 @@ unsigned int render_upload_texture(const unsigned char* rgba, int w, int h) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    apply_texture_repeat(0);
     return tex;
 }
 
@@ -841,6 +859,7 @@ void render_draw_quad(unsigned int tex, double x, double y, double dw, double dh
 
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex);
+    apply_texture_repeat(0);
     apply_fog_env();
     glColor4f(r, g, b, (float)alpha);
     glBegin(GL_QUADS);
@@ -859,6 +878,7 @@ void render_draw_glyph_colored(unsigned int tex, double dx, double dy, double dw
     float b = ((bgr >> 16) & 0xFF) / 255.0f;
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, tex);
+    apply_texture_repeat(0);
     glColor4f(r, g, b, (float)alpha);
     float x0 = (float)dx, y0 = (float)dy, x1 = (float)(dx + dw), y1 = (float)(dy + dh);
     glBegin(GL_QUADS);

@@ -89,6 +89,15 @@ Value gml_bnot(const Value& a) { return Value((double)(~to_i64(a))); }
 
 static const double kGmlEpsilon = 0.00001;
 
+static bool string_to_number(const std::string& s, double& out) {
+    const char* p = s.c_str();
+    char* end = nullptr;
+    out = std::strtod(p, &end);
+    if (end == p) return false;
+    while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n') ++end;
+    return *end == '\0';
+}
+
 static int num_cmp(const Value& a, const Value& b) {
     double diff = (double)a - (double)b;
     if (std::fabs(diff) <= kGmlEpsilon) return 0;
@@ -107,12 +116,20 @@ Value gml_eq(const Value& a, const Value& b) {
     if (a.type == Value::UNDEF || b.type == Value::UNDEF)
         return Value(a.type == b.type);
     if (a.type == Value::STR || b.type == Value::STR) {
-        if (a.type != b.type) return Value(false);
+        if (a.type != b.type) {
+            const Value& s = a.type == Value::STR ? a : b;
+            const Value& n = a.type == Value::STR ? b : a;
+            if (n.type != Value::REAL) return Value(false);
+            double d = 0.0;
+            return Value(string_to_number(s.str, d) && std::fabs(d - n.num) <= kGmlEpsilon);
+        }
         return Value(a.str == b.str);
     }
     if (a.type == Value::ARR || b.type == Value::ARR)
         return Value(a.type == b.type && a.arr == b.arr);
     if (a.type == Value::OBJ && b.type == Value::OBJ) return Value(a.obj == b.obj);
+    if (a.type == Value::FN || b.type == Value::FN)
+        return Value(a.type == b.type && a.fn == b.fn && a.fn_bind == b.fn_bind);
     return Value(num_cmp(a, b) == 0);
 }
 Value gml_ne(const Value& a, const Value& b) { return Value(!gml_truthy(gml_eq(a, b))); }

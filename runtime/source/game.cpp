@@ -100,6 +100,25 @@ RtLayer* kwik_layer_by_id(int id) {
     return nullptr;
 }
 
+static RtLayer* layer_by_name(const std::string& name) {
+    for (auto& l : g_rt_layers)
+        if (l.name == name) return &l;
+    return nullptr;
+}
+
+static RtLayer* layer_from_value(const Value& v) {
+    if (v.type == Value::STR) return layer_by_name(v.str);
+    return kwik_layer_by_id((int)(double)v);
+}
+
+static RtLayer* instance_layer_for_depth(double depth) {
+    for (auto& l : g_rt_layers)
+        if (l.type == 2 && l.depth == depth) return &l;
+    for (auto& l : g_rt_layers)
+        if (l.depth == depth) return &l;
+    return nullptr;
+}
+
 int kwik_layer_create(double depth, const std::string& name) {
     RtLayer l;
     l.id = g_next_layer_id++;
@@ -714,11 +733,28 @@ Value kwik_create_instance(int obj_index, double x, double y, double depth, bool
     sp->object_index = obj_index;
     init_instance_vars(sp.get(), &g_objects_rt[obj_index]);
     if (use_depth) sp->depth = depth;
+    if (RtLayer* layer = instance_layer_for_depth(sp->depth)) {
+        sp->layer_id = layer->id;
+        sp->layer_name = layer->name;
+    }
     g_instances.push_back(sp);
     Instance* raw = sp.get();
     fire(raw, EVK_PRE_CREATE, 0);
     fire(raw, EVK_CREATE, 0);
     return Value((double)raw->id);
+}
+
+Value kwik_create_instance_on_layer(int obj_index, double x, double y, const Value& layer_value) {
+    RtLayer* layer = layer_from_value(layer_value);
+    if (!layer) return Value(-4.0);
+    Value out = kwik_create_instance(obj_index, x, y, layer->depth, true);
+    Instance* inst = kwik_instance_by_id((int)(double)out);
+    if (inst) {
+        inst->layer_id = layer->id;
+        inst->layer_name = layer->name;
+        inst->depth = layer->depth;
+    }
+    return out;
 }
 
 void kwik_destroy_instance(Instance* inst, bool run_event) {
@@ -1405,7 +1441,8 @@ GMLFN(instance_create_depth) {
 GMLFN(instance_create_layer) {
     (void)self;
     if (argc < 4) return Value(-4.0);
-    return kwik_create_instance((int)(double)args[3], (double)args[0], (double)args[1], 0.0, false);
+    return kwik_create_instance_on_layer((int)(double)args[3], (double)args[0], (double)args[1],
+                                         args[2]);
 }
 
 GMLFN(instance_destroy) {
@@ -1749,6 +1786,8 @@ GMLFN(instance_copy) {
     sp->id = g_next_instance_id++;
     sp->object_index = self->object_index;
     sp->depth = self->depth;
+    sp->layer_id = self->layer_id;
+    sp->layer_name = self->layer_name;
     sp->visible = self->visible;
     sp->persistent = self->persistent;
     sp->m_speed = self->m_speed;
@@ -1773,7 +1812,34 @@ GMLFN(instance_id_get) {
     return Value(-4.0);
 }
 
-GMLFN(instance_deactivate_layer) { (void)self; (void)args; (void)argc; return Value(); }
+static bool inst_on_layer(Instance* inst, RtLayer* layer) {
+    if (!inst || !layer) return false;
+    if (inst->layer_id == layer->id) return true;
+    return inst->layer_id < 0 && inst->layer_name.empty() && inst->depth == layer->depth;
+}
+
+GMLFN(instance_activate_layer) {
+    (void)self;
+    if (argc < 1) return Value();
+    RtLayer* layer = layer_from_value(args[0]);
+    if (!layer) return Value();
+    for (auto& sp : g_instances)
+        if (!sp->dead && inst_on_layer(sp.get(), layer)) sp->active = true;
+    return Value();
+}
+
+GMLFN(instance_deactivate_layer) {
+    if (argc < 1) return Value();
+    RtLayer* layer = layer_from_value(args[0]);
+    if (!layer) return Value();
+    bool notme = argc > 1 && gml_truthy(args[1]);
+    for (auto& sp : g_instances) {
+        if (sp->dead) continue;
+        if (notme && sp.get() == self) continue;
+        if (inst_on_layer(sp.get(), layer)) sp->active = false;
+    }
+    return Value();
+}
 
 GMLFN(mouse_check_button_released) {
     (void)self;
@@ -1797,6 +1863,16 @@ GMLFN(alarm_set) {
             it->second.arr->items[idx] = Value((double)args[1]);
     }
     return Value();
+}
+
+GMLFN(alarm_get) {
+    if (!self || argc < 1) return Value(-1.0);
+    auto it = self->vars.find("alarm");
+    if (it == self->vars.end() || it->second.type != Value::ARR || !it->second.arr)
+        return Value(-1.0);
+    int idx = (int)(double)args[0];
+    if (idx < 0 || (size_t)idx >= it->second.arr->items.size()) return Value(-1.0);
+    return it->second.arr->items[idx];
 }
 
 GMLFN(camera_get_active) {
@@ -2864,6 +2940,7 @@ static void load_room(int index, bool clear_persistent) {
     }
 
     std::vector<Instance*> created;
+    std::vector<const InstanceInit*> created_init;
     for (int i = 0; i < room.instance_count; ++i) {
         const InstanceInit& init = room.instances[i];
         if (init.object_index < 0 || init.object_index >= g_object_count_rt) continue;
@@ -2879,18 +2956,23 @@ static void load_room(int index, bool clear_persistent) {
         sp->var("image_angle") = Value(init.angle);
         if (init.image_index > 0) sp->var("image_index") = Value((double)init.image_index);
         sp->depth = init.depth;
+        if (RtLayer* layer = instance_layer_for_depth(init.depth)) {
+            sp->layer_id = layer->id;
+            sp->layer_name = layer->name;
+        }
         g_instances.push_back(sp);
         created.push_back(sp.get());
+        created_init.push_back(&init);
     }
 
     for (size_t i = 0; i < created.size(); ++i) {
         fire(created[i], EVK_PRE_CREATE, 0);
-        const InstanceInit& init = room.instances[i];
+        const InstanceInit& init = *created_init[i];
         if (init.precreate_code && !created[i]->dead) init.precreate_code(created[i], nullptr, 0);
     }
     for (size_t i = 0; i < created.size(); ++i) {
         fire(created[i], EVK_CREATE, 0);
-        const InstanceInit& init = room.instances[i];
+        const InstanceInit& init = *created_init[i];
         if (init.creation_code && !created[i]->dead) init.creation_code(created[i], nullptr, 0);
     }
 

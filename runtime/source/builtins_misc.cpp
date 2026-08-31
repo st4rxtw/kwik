@@ -5,12 +5,22 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <string>
 #include <utility>
+#ifdef _WIN32
+#include <windows.h>
+#elif !defined(__vita__)
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 namespace gml {
 
 static double A(const Value* args, int argc, int i, double dflt = 0.0) {
     return i < argc ? (double)args[i] : dflt;
+}
+static std::string S(const Value* args, int argc, int i) {
+    return i < argc ? (std::string)args[i] : std::string();
 }
 
 static bool autoz_enabled() {
@@ -221,6 +231,33 @@ GMLFN(window_set_position) {
     (void)self;
     render_set_window_position((int)A(args, argc, 0), (int)A(args, argc, 1));
     return Value();
+}
+
+GMLFN(url_open_ext) {
+    (void)self;
+    std::string url = S(args, argc, 0);
+    if (url.empty()) return Value(0.0);
+#ifdef _WIN32
+    std::string target = S(args, argc, 1);
+    HINSTANCE r = ShellExecuteA(nullptr, "open", url.c_str(), nullptr,
+                                target.empty() ? nullptr : target.c_str(), SW_SHOWNORMAL);
+    return Value((intptr_t)r > 32 ? 1.0 : 0.0);
+#elif defined(__vita__)
+    return Value(0.0);
+#else
+    pid_t pid = fork();
+    if (pid < 0) return Value(0.0);
+    if (pid == 0) {
+        pid_t grandchild = fork();
+        if (grandchild < 0) _exit(127);
+        if (grandchild > 0) _exit(0);
+        execlp("xdg-open", "xdg-open", url.c_str(), (char*)nullptr);
+        _exit(127);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return Value(1.0);
+#endif
 }
 
 static Value g_scissor_saved;
