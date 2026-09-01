@@ -187,7 +187,7 @@ static int bytes_to_slots(LiftCtx& ctx, const std::vector<Slot>& s, int from_top
         --idx;
         ++n;
     }
-    if (total != bytes && ctx.warn_count++ < 8)
+    if (total < bytes && ctx.warn_count++ < 8)
         std::fprintf(stderr, "[lift] %s: byte/slot mismatch (%d wanted, %d got)\n",
                      ctx.e.name.c_str(), bytes, total);
     return n;
@@ -650,9 +650,11 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                 if (out)
                     *out << "    kwik_copy_static_from(__statics, " << S(base) << ");\n    "
                          << S(base) << " = Value();\n";
+            } else if (fn == "@@throw@@") {
+                if (out) *out << "    return Value();\n";
+                falls = false;
             } else if (fn == "@@try_hook@@" || fn == "@@try_unhook@@" ||
-                       fn == "@@throw@@" || fn == "@@finish_catch@@" ||
-                       fn == "@@finish_finally@@") {
+                       fn == "@@finish_catch@@" || fn == "@@finish_finally@@") {
                 if (out) *out << "    " << S(base) << " = Value();\n";
             } else if (fn == "@@NewGMLArray@@") {
                 emit_args("kwik_new_array(", ")");
@@ -670,7 +672,7 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                 emit_args(builtin_call_name(fn) + "(self, ", ")");
             }
             pop(argcN);
-            push(16);
+            if (falls) push(16);
             break;
         }
 
