@@ -54,5 +54,5 @@ Kwik is licensed under the GPL 3.0 license. Check the [LICENSE](LICENSE) file fo
     
 ## Credits
 
-- [YoYo Games](https://gamemaker.io/en) - For making GameMaker Studio 2 & it's [HTML5 Runtime](https://github.com/YoYoGames/GameMaker-HTML5).
+- [YoYo Games](https://gamemaker.io/en) - For making GameMaker Studio 2 & its [HTML5 Runtime](https://github.com/YoYoGames/GameMaker-HTML5).
 - [Butterscotch & it's contributers](https://github.com/ButterscotchRunner/Butterscotch) - I initially referenced Butterscotch during the beginning of kwik's development before switching to [GameMaker's HTML5 Runtime](https://github.com/YoYoGames/GameMaker-HTML5)
