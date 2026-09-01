@@ -129,6 +129,15 @@ double kwik_sound_length_seconds(int what);
 double kwik_voice_gain(int what);
 double kwik_voice_pitch(int what);
 bool kwik_voice_paused(int what);
+int kwik_audio_play_pcm(short* pcm, unsigned int channels, unsigned int rate,
+                        unsigned long long frames, bool loop, float volume);
+void kwik_audio_stop_handle(int handle);
+void kwik_audio_pause_handle(int handle);
+void kwik_audio_resume_handle(int handle);
+void kwik_audio_set_handle_volume(int handle, float volume);
+void kwik_audio_set_handle_looping(int handle, bool loop);
+void kwik_audio_seek_handle(int handle, double seconds);
+void kwik_video_focus_pause(bool paused);
 unsigned int kwik_image_texture(int image, int& w, int& h);
 void kwik_flush_textures();
 

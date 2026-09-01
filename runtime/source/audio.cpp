@@ -307,6 +307,75 @@ static Voice* voice_of_handle(int h) {
     return g_voices[i];
 }
 
+int kwik_audio_play_pcm(short* pcm, unsigned int channels, unsigned int rate,
+                        unsigned long long frames, bool loop, float volume) {
+    if (!pcm || channels == 0 || rate == 0 || frames == 0 || !ensure_engine()) {
+        if (pcm) std::free(pcm);
+        return -1;
+    }
+    Voice* v = new Voice();
+    if (!finish_voice_from_pcm(v, pcm, channels, rate, frames)) {
+        if (v->buffer) {
+            ma_audio_buffer_uninit(v->buffer);
+            delete v->buffer;
+        }
+        if (v->pcm) std::free(v->pcm);
+        delete v;
+        return -1;
+    }
+    v->base_gain = volume;
+    v->gain = 1.0f;
+    ma_sound_set_volume(&v->snd, volume);
+    ma_sound_set_looping(&v->snd, loop ? MA_TRUE : MA_FALSE);
+    ma_sound_start(&v->snd);
+    v->active = true;
+    return kHandleBase + store_voice(v);
+}
+
+void kwik_audio_stop_handle(int handle) {
+    int i = handle - kHandleBase;
+    if (i < 0 || (size_t)i >= g_voices.size() || !g_voices[i]) return;
+    free_voice(g_voices[i]);
+    g_voices[i] = nullptr;
+}
+
+void kwik_audio_pause_handle(int handle) {
+    Voice* v = voice_of_handle(handle);
+    if (v && v->active && !v->paused) {
+        ma_sound_stop(&v->snd);
+        v->paused = true;
+    }
+}
+
+void kwik_audio_resume_handle(int handle) {
+    Voice* v = voice_of_handle(handle);
+    if (v && v->active && v->paused) {
+        ma_sound_start(&v->snd);
+        v->paused = false;
+    }
+}
+
+void kwik_audio_set_handle_volume(int handle, float volume) {
+    Voice* v = voice_of_handle(handle);
+    if (!v) return;
+    v->base_gain = volume;
+    v->gain = 1.0f;
+    v->fade_target = -1.0f;
+    ma_sound_set_volume(&v->snd, volume);
+}
+
+void kwik_audio_set_handle_looping(int handle, bool loop) {
+    Voice* v = voice_of_handle(handle);
+    if (v) ma_sound_set_looping(&v->snd, loop ? MA_TRUE : MA_FALSE);
+}
+
+void kwik_audio_seek_handle(int handle, double seconds) {
+    Voice* v = voice_of_handle(handle);
+    if (!v || !v->buffer) return;
+    ma_uint32 rate = v->buffer->ref.sampleRate;
+    ma_sound_seek_to_pcm_frame(&v->snd, (ma_uint64)(seconds * rate));
+}
+
 template <typename F>
 static void for_matching(int what, F f) {
     if (what >= kHandleBase) {

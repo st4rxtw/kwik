@@ -3650,12 +3650,14 @@ restart_game:
         std::getenv("KWIK_AUTOZ") != nullptr || std::getenv("KWIK_NOFOCUS_PAUSE") != nullptr;
     while (!render_should_close() && !g_game_end_requested) {
         if (!ignore_focus && !render_has_focus()) {
+            kwik_video_focus_pause(true);
             render_present_last();
             kwik_sleep_us(30000);
             last_t = now_ms() / 1000.0;
             accumulator = 0.0;
             continue;
         }
+        kwik_video_focus_pause(false);
         double t = now_ms() / 1000.0;
         accumulator += t - last_t;
         last_t = t;

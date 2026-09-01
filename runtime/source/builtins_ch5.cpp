@@ -5,9 +5,23 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <vector>
+
+#ifdef KWIK_USE_FFMPEG
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavutil/avutil.h>
+#include <libavutil/channel_layout.h>
+#include <libavutil/pixfmt.h>
+#include <libswresample/swresample.h>
+#include <libswscale/swscale.h>
+}
+#endif
 
 namespace gml {
 
@@ -1236,7 +1250,7 @@ GMLFN(part_emitter_burst) { (void)self; (void)args; (void)argc; return Value(); 
 GMLFN(part_emitter_stream) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(part_emitter_destroy_all) { (void)self; (void)args; (void)argc; return Value(); }
 
-struct VideoCompatState {
+struct VideoState {
     bool open = false;
     bool loop = false;
     bool paused = false;
@@ -1244,74 +1258,492 @@ struct VideoCompatState {
     unsigned long long start_frame = 0;
     double volume = 1.0;
     double position_ms = 0.0;
+    double duration_ms = 0.0;
+    double start_time_ms = 0.0;
+    double focus_pause_ms = 0.0;
+    int surface = -1;
+    int width = 0;
+    int height = 0;
+    bool have_frame = false;
+    bool focus_paused = false;
+#ifdef KWIK_USE_FFMPEG
+    AVFormatContext* format = nullptr;
+    AVCodecContext* codec = nullptr;
+    SwsContext* sws = nullptr;
+    AVFrame* frame = nullptr;
+    AVPacket* packet = nullptr;
+    int stream = -1;
+    double fps = 30.0;
+    double last_frame_ms = -1.0;
+    bool decoder_eof = false;
+    bool using_ffmpeg = false;
+    int audio_handle = -1;
+    std::vector<unsigned char> rgba;
+#endif
 };
 
-static VideoCompatState g_video;
+static VideoState g_video;
 
-GMLFN(video_open) {
-    (void)args; (void)argc;
-    g_video.open = true;
+#ifdef KWIK_USE_FFMPEG
+static double rational_to_double(AVRational r, double fallback = 0.0) {
+    return r.num != 0 && r.den != 0 ? av_q2d(r) : fallback;
+}
+
+static void video_free_decoder() {
+    if (g_video.audio_handle >= 0) {
+        kwik_audio_stop_handle(g_video.audio_handle);
+        g_video.audio_handle = -1;
+    }
+    if (g_video.packet) {
+        av_packet_free(&g_video.packet);
+        g_video.packet = nullptr;
+    }
+    if (g_video.frame) {
+        av_frame_free(&g_video.frame);
+        g_video.frame = nullptr;
+    }
+    if (g_video.sws) {
+        sws_freeContext(g_video.sws);
+        g_video.sws = nullptr;
+    }
+    if (g_video.codec) {
+        avcodec_free_context(&g_video.codec);
+        g_video.codec = nullptr;
+    }
+    if (g_video.format) {
+        avformat_close_input(&g_video.format);
+        g_video.format = nullptr;
+    }
+    g_video.stream = -1;
+    g_video.using_ffmpeg = false;
+    g_video.decoder_eof = false;
+    g_video.last_frame_ms = -1.0;
+    g_video.rgba.clear();
+}
+
+static bool video_upload_current_frame() {
+    if (!g_video.codec || !g_video.frame) return false;
+    int w = g_video.codec->width;
+    int h = g_video.codec->height;
+    if (w <= 0 || h <= 0) return false;
+
+    g_video.sws = sws_getCachedContext(g_video.sws, w, h, g_video.codec->pix_fmt, w, h,
+                                       AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+    if (!g_video.sws) return false;
+
+    g_video.rgba.resize((size_t)w * h * 4);
+    uint8_t* dst[4] = {g_video.rgba.data(), nullptr, nullptr, nullptr};
+    int dst_stride[4] = {w * 4, 0, 0, 0};
+    sws_scale(g_video.sws, g_video.frame->data, g_video.frame->linesize, 0, h, dst, dst_stride);
+
+    if (g_video.surface < 0 || g_video.width != w || g_video.height != h) {
+        if (g_video.surface >= 0) render_surface_free(g_video.surface);
+        g_video.surface = render_surface_create(w, h);
+        if (g_video.surface < 0) return false;
+        g_video.width = w;
+        g_video.height = h;
+    }
+
+    unsigned int tex = render_upload_texture(g_video.rgba.data(), w, h);
+    if (!tex) return false;
+    if (render_surface_set_target(g_video.surface)) {
+        render_surface_clear(0, 0.0);
+        render_draw_quad(tex, 0, 0, w, h, 0, 0, 1, 1, 0, 0.f, 0.f, 1.f, 1.f, 0xFFFFFF, 1.0);
+        render_surface_reset_target();
+    }
+    render_free_texture(tex);
+    g_video.have_frame = true;
+
+    int64_t pts = g_video.frame->best_effort_timestamp;
+    if (pts != AV_NOPTS_VALUE) {
+        g_video.last_frame_ms =
+            pts * rational_to_double(g_video.format->streams[g_video.stream]->time_base) * 1000.0;
+    } else {
+        double step = 1000.0 / std::max(1.0, g_video.fps);
+        g_video.last_frame_ms = g_video.last_frame_ms < 0.0 ? 0.0 : g_video.last_frame_ms + step;
+    }
+    return true;
+}
+
+static bool video_decode_one_frame() {
+    if (!g_video.using_ffmpeg || !g_video.codec) return false;
+    while (true) {
+        int rr = avcodec_receive_frame(g_video.codec, g_video.frame);
+        if (rr == 0) return video_upload_current_frame();
+        if (rr == AVERROR_EOF) {
+            g_video.decoder_eof = true;
+            return false;
+        }
+        if (rr != AVERROR(EAGAIN)) return false;
+
+        if (g_video.decoder_eof) return false;
+        int pr = av_read_frame(g_video.format, g_video.packet);
+        if (pr < 0) {
+            avcodec_send_packet(g_video.codec, nullptr);
+            g_video.decoder_eof = true;
+            continue;
+        }
+        if (g_video.packet->stream_index == g_video.stream)
+            avcodec_send_packet(g_video.codec, g_video.packet);
+        av_packet_unref(g_video.packet);
+    }
+}
+
+static void video_seek_decoder(double ms) {
+    if (!g_video.using_ffmpeg || g_video.stream < 0) return;
+    AVStream* st = g_video.format->streams[g_video.stream];
+    int64_t ts = (int64_t)((ms / 1000.0) / rational_to_double(st->time_base, 1.0));
+    av_seek_frame(g_video.format, g_video.stream, ts, AVSEEK_FLAG_BACKWARD);
+    avcodec_flush_buffers(g_video.codec);
+    g_video.decoder_eof = false;
+    g_video.last_frame_ms = -1.0;
+    g_video.have_frame = false;
+}
+
+static bool video_open_decoder(const std::string& path) {
+    video_free_decoder();
+    if (avformat_open_input(&g_video.format, path.c_str(), nullptr, nullptr) < 0) return false;
+    if (avformat_find_stream_info(g_video.format, nullptr) < 0) {
+        video_free_decoder();
+        return false;
+    }
+    int si = av_find_best_stream(g_video.format, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    if (si < 0) {
+        video_free_decoder();
+        return false;
+    }
+    g_video.stream = si;
+    AVStream* st = g_video.format->streams[si];
+    const AVCodec* dec = avcodec_find_decoder(st->codecpar->codec_id);
+    if (!dec) {
+        video_free_decoder();
+        return false;
+    }
+    g_video.codec = avcodec_alloc_context3(dec);
+    if (!g_video.codec || avcodec_parameters_to_context(g_video.codec, st->codecpar) < 0 ||
+        avcodec_open2(g_video.codec, dec, nullptr) < 0) {
+        video_free_decoder();
+        return false;
+    }
+    g_video.frame = av_frame_alloc();
+    g_video.packet = av_packet_alloc();
+    if (!g_video.frame || !g_video.packet) {
+        video_free_decoder();
+        return false;
+    }
+
+    double fps = rational_to_double(st->avg_frame_rate);
+    if (fps <= 0.0) fps = rational_to_double(st->r_frame_rate);
+    g_video.fps = fps > 0.0 ? fps : 30.0;
+    if (st->duration != AV_NOPTS_VALUE)
+        g_video.duration_ms = st->duration * rational_to_double(st->time_base) * 1000.0;
+    else if (g_video.format->duration != AV_NOPTS_VALUE)
+        g_video.duration_ms = g_video.format->duration / 1000.0;
+    else
+        g_video.duration_ms = 0.0;
+    g_video.using_ffmpeg = true;
+    return true;
+}
+
+static int video_decode_audio_file(const std::string& path, bool loop, float volume) {
+    AVFormatContext* fmt = nullptr;
+    AVCodecContext* ctx = nullptr;
+    SwrContext* swr = nullptr;
+    AVFrame* frame = nullptr;
+    AVPacket* pkt = nullptr;
+    int handle = -1;
+    std::vector<unsigned char> pcm_bytes;
+
+    auto cleanup = [&]() {
+        if (pkt) av_packet_free(&pkt);
+        if (frame) av_frame_free(&frame);
+        if (swr) swr_free(&swr);
+        if (ctx) avcodec_free_context(&ctx);
+        if (fmt) avformat_close_input(&fmt);
+    };
+
+    if (avformat_open_input(&fmt, path.c_str(), nullptr, nullptr) < 0) {
+        cleanup();
+        return -1;
+    }
+    if (avformat_find_stream_info(fmt, nullptr) < 0) {
+        cleanup();
+        return -1;
+    }
+    int si = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+    if (si < 0) {
+        cleanup();
+        return -1;
+    }
+    AVStream* st = fmt->streams[si];
+    const AVCodec* dec = avcodec_find_decoder(st->codecpar->codec_id);
+    if (!dec) {
+        cleanup();
+        return -1;
+    }
+    ctx = avcodec_alloc_context3(dec);
+    if (!ctx || avcodec_parameters_to_context(ctx, st->codecpar) < 0 ||
+        avcodec_open2(ctx, dec, nullptr) < 0) {
+        cleanup();
+        return -1;
+    }
+    if (ctx->ch_layout.nb_channels <= 0)
+        av_channel_layout_default(&ctx->ch_layout, ctx->ch_layout.nb_channels > 0 ?
+                                  ctx->ch_layout.nb_channels : 2);
+
+    AVChannelLayout out_layout;
+    av_channel_layout_default(&out_layout, ctx->ch_layout.nb_channels > 0 ?
+                              ctx->ch_layout.nb_channels : 2);
+    int in_rate = ctx->sample_rate > 0 ? ctx->sample_rate : 48000;
+    int out_rate = in_rate;
+    if (swr_alloc_set_opts2(&swr, &out_layout, AV_SAMPLE_FMT_S16, out_rate,
+                            &ctx->ch_layout, ctx->sample_fmt, in_rate, 0, nullptr) < 0 ||
+        swr_init(swr) < 0) {
+        av_channel_layout_uninit(&out_layout);
+        cleanup();
+        return -1;
+    }
+    int out_channels = out_layout.nb_channels;
+    av_channel_layout_uninit(&out_layout);
+
+    frame = av_frame_alloc();
+    pkt = av_packet_alloc();
+    if (!frame || !pkt) {
+        cleanup();
+        return -1;
+    }
+
+    auto receive_frames = [&]() {
+        while (true) {
+            int rr = avcodec_receive_frame(ctx, frame);
+            if (rr == AVERROR(EAGAIN) || rr == AVERROR_EOF) return rr;
+            if (rr < 0) return rr;
+            int dst_samples = (int)av_rescale_rnd(swr_get_delay(swr, in_rate) +
+                                                  frame->nb_samples, out_rate, in_rate,
+                                                  AV_ROUND_UP);
+            std::vector<unsigned char> tmp((size_t)dst_samples * out_channels * sizeof(short));
+            uint8_t* dst[1] = {tmp.data()};
+            int converted = swr_convert(swr, dst, dst_samples,
+                                        (const uint8_t**)frame->extended_data, frame->nb_samples);
+            if (converted < 0) return converted;
+            size_t bytes = (size_t)converted * out_channels * sizeof(short);
+            pcm_bytes.insert(pcm_bytes.end(), tmp.begin(), tmp.begin() + bytes);
+            av_frame_unref(frame);
+        }
+    };
+
+    while (av_read_frame(fmt, pkt) >= 0) {
+        if (pkt->stream_index == si) {
+            int sr = avcodec_send_packet(ctx, pkt);
+            av_packet_unref(pkt);
+            if (sr < 0) break;
+            int rr = receive_frames();
+            if (rr < 0 && rr != AVERROR(EAGAIN) && rr != AVERROR_EOF) break;
+        } else {
+            av_packet_unref(pkt);
+        }
+    }
+    avcodec_send_packet(ctx, nullptr);
+    receive_frames();
+
+    int delay_samples = (int)swr_get_delay(swr, in_rate);
+    if (delay_samples > 0) {
+        std::vector<unsigned char> tmp((size_t)delay_samples * out_channels * sizeof(short));
+        uint8_t* dst[1] = {tmp.data()};
+        int converted = swr_convert(swr, dst, delay_samples, nullptr, 0);
+        if (converted > 0) {
+            size_t bytes = (size_t)converted * out_channels * sizeof(short);
+            pcm_bytes.insert(pcm_bytes.end(), tmp.begin(), tmp.begin() + bytes);
+        }
+    }
+
+    if (!pcm_bytes.empty()) {
+        short* pcm = (short*)std::malloc(pcm_bytes.size());
+        if (pcm) {
+            std::memcpy(pcm, pcm_bytes.data(), pcm_bytes.size());
+            unsigned long long frames = pcm_bytes.size() / (sizeof(short) * out_channels);
+            handle = kwik_audio_play_pcm(pcm, (unsigned)out_channels, (unsigned)out_rate, frames,
+                                         loop, volume);
+        }
+    }
+
+    cleanup();
+    return handle;
+}
+#endif
+
+static void video_reset_common() {
+    if (g_video.surface >= 0) {
+        render_surface_free(g_video.surface);
+        g_video.surface = -1;
+    }
+    g_video.open = false;
     g_video.paused = false;
     g_video.end_queued = false;
-    g_video.start_frame = g_frame_counter;
     g_video.position_ms = 0.0;
+    g_video.duration_ms = 0.0;
+    g_video.start_time_ms = 0.0;
+    g_video.focus_pause_ms = 0.0;
+    g_video.width = 0;
+    g_video.height = 0;
+    g_video.have_frame = false;
+    g_video.focus_paused = false;
+}
+
+static void video_queue_end_once(Instance* self) {
+    if (!g_video.end_queued) {
+        g_video.end_queued = true;
+        queue_video_event(self, "video_end");
+    }
+}
+
+GMLFN(video_open) {
+    std::string path = argc > 0 ? kwik_resolve_read(S(args, argc, 0)) : std::string();
+#ifdef KWIK_USE_FFMPEG
+    video_free_decoder();
+#endif
+    video_reset_common();
+    g_video.open = true;
+    g_video.paused = false;
+    g_video.start_frame = g_frame_counter;
+    g_video.start_time_ms = render_time_ms();
+    g_video.position_ms = 0.0;
+#ifdef KWIK_USE_FFMPEG
+    if (!path.empty() && !video_open_decoder(path)) {
+        std::fprintf(stderr, "[kwik] video_open failed for '%s'; using compatibility timer\n",
+                     path.c_str());
+    }
+    if (g_video.using_ffmpeg)
+        g_video.audio_handle = video_decode_audio_file(path, g_video.loop, (float)g_video.volume);
+#else
+    (void)path;
+#endif
     queue_video_event(self, "video_start");
     return Value(1.0);
 }
 GMLFN(video_close) {
     (void)self; (void)args; (void)argc;
-    g_video.open = false;
-    g_video.paused = false;
-    g_video.end_queued = false;
-    g_video.position_ms = 0.0;
+#ifdef KWIK_USE_FFMPEG
+    video_free_decoder();
+#endif
+    video_reset_common();
     return Value();
 }
 GMLFN(video_get_status) {
     (void)self; (void)args; (void)argc;
     if (!g_video.open) return Value(0.0);
-    return Value(g_video.paused ? 3.0 : 2.0);
+    return Value(g_video.paused || g_video.focus_paused ? 3.0 : 2.0);
 }
 GMLFN(video_draw) {
     (void)args; (void)argc;
-    if (g_video.open && !g_video.paused) {
+    if (g_video.open && !g_video.paused && !g_video.focus_paused) {
+#ifdef KWIK_USE_FFMPEG
+        if (g_video.using_ffmpeg) {
+            g_video.position_ms = std::max(0.0, render_time_ms() - g_video.start_time_ms);
+            double lead_ms = 1000.0 / std::max(1.0, g_video.fps);
+            while (!g_video.decoder_eof &&
+                   (!g_video.have_frame || g_video.last_frame_ms < g_video.position_ms + lead_ms)) {
+                if (!video_decode_one_frame()) break;
+            }
+            if (g_video.decoder_eof) {
+                if (g_video.loop) {
+                    video_seek_decoder(0.0);
+                    g_video.start_time_ms = render_time_ms();
+                    g_video.position_ms = 0.0;
+                    g_video.end_queued = false;
+                } else {
+                    video_queue_end_once(self);
+                }
+            }
+        } else
+#endif
+        {
         unsigned long long elapsed = g_frame_counter - g_video.start_frame;
         g_video.position_ms = elapsed * (1000.0 / std::max(1.0, g_room_speed_v));
         if (!g_video.loop && elapsed >= 8 && !g_video.end_queued) {
-            g_video.end_queued = true;
-            queue_video_event(self, "video_end");
+            video_queue_end_once(self);
         } else if (g_video.loop && elapsed >= 8) {
             g_video.start_frame = g_frame_counter;
             g_video.position_ms = 0.0;
         }
+        }
     }
     Value out = mk_array();
-    out.arr->items.push_back(Value(g_video.open && !g_video.paused ? 0.0 : -1.0));
-    out.arr->items.push_back(Value(-1.0));
+    out.arr->items.push_back(Value(g_video.open && g_video.have_frame ? 0.0 : -1.0));
+    out.arr->items.push_back(Value((double)g_video.surface));
     out.arr->items.push_back(Value(-1.0));
     return out;
 }
 GMLFN(video_set_volume) {
     (void)self;
     g_video.volume = std::clamp(A(args, argc, 0, 1.0), 0.0, 1.0);
+#ifdef KWIK_USE_FFMPEG
+    if (g_video.audio_handle >= 0)
+        kwik_audio_set_handle_volume(g_video.audio_handle, (float)g_video.volume);
+#endif
     return Value();
 }
-GMLFN(video_pause) { (void)self; (void)args; (void)argc; g_video.paused = true; return Value(); }
-GMLFN(video_resume) { (void)self; (void)args; (void)argc; g_video.paused = false; return Value(); }
+GMLFN(video_pause) {
+    (void)self; (void)args; (void)argc;
+    g_video.paused = true;
+#ifdef KWIK_USE_FFMPEG
+    if (g_video.audio_handle >= 0) kwik_audio_pause_handle(g_video.audio_handle);
+#endif
+    return Value();
+}
+GMLFN(video_resume) {
+    (void)self; (void)args; (void)argc;
+    g_video.paused = false;
+    g_video.start_time_ms = render_time_ms() - g_video.position_ms;
+#ifdef KWIK_USE_FFMPEG
+    if (!g_video.focus_paused && g_video.audio_handle >= 0)
+        kwik_audio_resume_handle(g_video.audio_handle);
+#endif
+    return Value();
+}
 GMLFN(video_enable_loop) {
     (void)self;
     g_video.loop = gml_truthy(argc > 0 ? args[0] : Value(0.0));
+#ifdef KWIK_USE_FFMPEG
+    if (g_video.audio_handle >= 0) kwik_audio_set_handle_looping(g_video.audio_handle, g_video.loop);
+#endif
     return Value();
 }
 GMLFN(video_seek_to) {
     (void)self;
     g_video.position_ms = A(args, argc, 0, 0.0);
     g_video.start_frame = g_frame_counter;
+    g_video.start_time_ms = render_time_ms() - g_video.position_ms;
+#ifdef KWIK_USE_FFMPEG
+    video_seek_decoder(g_video.position_ms);
+    if (g_video.audio_handle >= 0) kwik_audio_seek_handle(g_video.audio_handle, g_video.position_ms / 1000.0);
+#endif
     return Value();
 }
-GMLFN(video_get_duration) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(video_get_duration) { (void)self; (void)args; (void)argc; return Value(g_video.duration_ms); }
 GMLFN(video_get_position) { (void)self; (void)args; (void)argc; return Value(g_video.position_ms); }
 GMLFN(video_get_format) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(video_is_looping) { (void)self; (void)args; (void)argc; return Value(g_video.loop ? 1.0 : 0.0); }
+
+void kwik_video_focus_pause(bool paused) {
+    if (!g_video.open || g_video.focus_paused == paused) return;
+    g_video.focus_paused = paused;
+    if (paused) {
+        g_video.focus_pause_ms = render_time_ms();
+#ifdef KWIK_USE_FFMPEG
+        if (g_video.audio_handle >= 0) kwik_audio_pause_handle(g_video.audio_handle);
+#endif
+    } else {
+        double now = render_time_ms();
+        if (g_video.focus_pause_ms > 0.0)
+            g_video.start_time_ms += now - g_video.focus_pause_ms;
+        g_video.focus_pause_ms = 0.0;
+#ifdef KWIK_USE_FFMPEG
+        if (!g_video.paused && g_video.audio_handle >= 0)
+            kwik_audio_resume_handle(g_video.audio_handle);
+#endif
+    }
+}
 
 GMLFN(gif_open) { (void)self; (void)args; (void)argc; return Value(-1.0); }
 GMLFN(gif_add_surface) { (void)self; (void)args; (void)argc; return Value(); }
