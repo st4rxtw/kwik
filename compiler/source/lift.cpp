@@ -50,6 +50,20 @@ static std::string builtin_call_name(const std::string& raw) {
     return sanitize(raw);
 }
 
+static std::string fnref_symbol_name(const GameData& gd, const std::string& fn) {
+    if (fn.rfind("gml_", 0) == 0) return fn;
+    int32_t idx = gd.script_code_index(fn);
+    if (idx >= 0 && (size_t)idx < gd.code().size()) return gd.code()[idx].name;
+    return fn;
+}
+
+static std::string fnref_display_name(const std::string& raw, const std::string& symbol) {
+    if (raw.rfind("gml_", 0) != 0) return raw;
+    if (symbol.rfind("gml_Script_", 0) == 0) return symbol.substr(11);
+    if (symbol.rfind("gml_GlobalScript_", 0) == 0) return symbol.substr(17);
+    return symbol;
+}
+
 static int width_of_type(uint8_t t) {
     switch (t) {
         case 0x0: case 0x3: return 8;
@@ -364,9 +378,9 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
             } else if (in.type1 == 0x2) {
                 std::string fn = gd.function_at_call(in.address + 4);
                 if (!fn.empty()) {
-                    std::string plain =
-                        fn.rfind("gml_Script_", 0) == 0 ? fn.substr(11) : fn;
-                    rhs = "kwik_make_fnref(&" + sanitize(fn) + ", " + quote(plain) + ")";
+                    std::string symbol = fnref_symbol_name(gd, fn);
+                    std::string plain = fnref_display_name(fn, symbol);
+                    rhs = "kwik_make_fnref(&" + sanitize(symbol) + ", " + quote(plain) + ")";
                 } else {
                     rhs = std::to_string((int32_t)in.extra);
                     is_c = true;
@@ -812,9 +826,10 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                     std::string fn = gd.function_at_call(in.address + 4);
                     if (fn.empty() && atype == 5) fn = gd.function_by_index((uint32_t)aidx);
                     if (!fn.empty()) {
-                        std::string plain = fn.rfind("gml_Script_", 0) == 0 ? fn.substr(11) : fn;
+                        std::string symbol = fnref_symbol_name(gd, fn);
+                        std::string plain = fnref_display_name(fn, symbol);
                         if (out)
-                            *out << "    " << S(d()) << " = kwik_make_fnref(&" << sanitize(fn)
+                            *out << "    " << S(d()) << " = kwik_make_fnref(&" << sanitize(symbol)
                                  << ", " << quote(plain) << ");\n";
                     } else if (atype == 5) {
                         warn(ctx, in.address, "pushref: unknown script index");

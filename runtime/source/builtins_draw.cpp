@@ -122,6 +122,14 @@ GMLFN(font_add_sprite_ext) {
                                   (int)(double)args[3]);
     return Value(rt < 0 ? -1.0 : (double)(rt + 10000));
 }
+GMLFN(font_delete) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(font_exists) {
+    (void)self;
+    if (argc < 1) return Value(0.0);
+    int id = (int)A(args, argc, 0);
+    if (id >= 10000) return Value(1.0);
+    return Value(id >= 0 && id < g_font_count && kwik_font_for_asset(id) >= 0);
+}
 
 GMLFN(string_width) {
     (void)self;
@@ -527,6 +535,7 @@ GMLFN(sprite_get_yoffset) {
     const KwikSprite* s = kwik_sprite_at((int)A(args, argc, 0, -1));
     return Value(s ? (double)s->origin_y : 0.0);
 }
+GMLFN(sprite_flush) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(sprite_create_from_surface) {
     (void)self;
     if (argc < 5) return Value(-1.0);

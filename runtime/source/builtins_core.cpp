@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <cctype>
 
 namespace gml {
 
@@ -233,6 +234,14 @@ GMLFN(string_replace_all) {
     }
     return Value(out);
 }
+GMLFN(string_trim) {
+    (void)self;
+    std::string s = S(args, argc, 0);
+    size_t a = 0, b = s.size();
+    while (a < b && std::isspace((unsigned char)s[a])) ++a;
+    while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
+    return Value(s.substr(a, b - a));
+}
 GMLFN(string_lower) {
     (void)self;
     std::string s = S(args, argc, 0);
@@ -323,6 +332,20 @@ GMLFN(is_array) { (void)self; return Value(argc > 0 && args[0].type == Value::AR
 GMLFN(is_undefined) { (void)self; return Value(argc == 0 || args[0].type == Value::UNDEF); }
 GMLFN(is_bool) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(is_struct) { (void)self; return Value(argc > 0 && args[0].type == Value::OBJ); }
+GMLFN(is_instanceof) {
+    (void)self;
+    const Instance* obj = nullptr;
+    const Value* ctor = nullptr;
+    for (int i = 0; i < argc; ++i) {
+        if (!obj && args[i].type == Value::OBJ && args[i].obj) obj = args[i].obj.get();
+        else if (!ctor && args[i].type == Value::FN) ctor = &args[i];
+    }
+    if (!obj || !obj->is_struct || !ctor || !ctor->fn) return Value(0.0);
+    if (obj->constructor == ctor->fn) return Value(1.0);
+    if (obj->constructor_name && ctor->fn_name && std::strcmp(obj->constructor_name, ctor->fn_name) == 0)
+        return Value(1.0);
+    return Value(0.0);
+}
 GMLFN(is_method) { (void)self; return Value(argc > 0 && args[0].type == Value::FN); }
 GMLFN(typeof_fn) {
     (void)self;
@@ -367,6 +390,9 @@ GMLFN(variable_struct_exists) {
     Instance* t = kwik_resolve_target(self, args[0]);
     return Value(t && t->has((std::string)args[1]));
 }
+GMLFN(struct_set) { return variable_struct_set(self, args, argc); }
+GMLFN(struct_get) { return variable_struct_get(self, args, argc); }
+GMLFN(struct_exists) { return variable_struct_exists(self, args, argc); }
 
 GMLFN(array_create) {
     (void)self;
@@ -387,6 +413,41 @@ GMLFN(array_push) {
     if (argc < 1 || args[0].type != Value::ARR || !args[0].arr) return Value();
     for (int i = 1; i < argc; ++i) args[0].arr->items.push_back(args[i]);
     return Value();
+}
+GMLFN(array_concat) {
+    (void)self;
+    Value out = kwik_new_array(nullptr, 0);
+    for (int i = 0; i < argc; ++i) {
+        if (args[i].type == Value::ARR && args[i].arr) {
+            const auto& src = args[i].arr->items;
+            out.arr->items.insert(out.arr->items.end(), src.begin(), src.end());
+        } else {
+            out.arr->items.push_back(args[i]);
+        }
+    }
+    return out;
+}
+static bool value_equals_deep(const Value& a, const Value& b, int depth = 0) {
+    if (a.type != Value::ARR || b.type != Value::ARR) return gml_truthy(gml_eq(a, b));
+    if (!a.arr || !b.arr) return a.arr == b.arr;
+    if (a.arr == b.arr) return true;
+    if (depth > 32 || a.arr->items.size() != b.arr->items.size()) return false;
+    for (size_t i = 0; i < a.arr->items.size(); ++i)
+        if (!value_equals_deep(a.arr->items[i], b.arr->items[i], depth + 1)) return false;
+    return true;
+}
+GMLFN(array_equals) {
+    (void)self;
+    if (argc < 2) return Value(0.0);
+    return Value(value_equals_deep(args[0], args[1]) ? 1.0 : 0.0);
+}
+GMLFN(array_get_index) {
+    (void)self;
+    if (argc < 2 || args[0].type != Value::ARR || !args[0].arr) return Value(-1.0);
+    const auto& v = args[0].arr->items;
+    for (size_t i = 0; i < v.size(); ++i)
+        if (gml_truthy(gml_eq(v[i], args[1]))) return Value((double)i);
+    return Value(-1.0);
 }
 GMLFN(array_pop) {
     (void)self;

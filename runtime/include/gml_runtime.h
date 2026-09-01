@@ -75,6 +75,8 @@ struct Instance : std::enable_shared_from_this<Instance> {
     int id = 0;
     int object_index = -1;
     bool is_struct = false;
+    ScriptFn constructor = nullptr;
+    const char* constructor_name = "";
     bool dead = false;
     bool active = true;
     bool persistent = false;
@@ -404,15 +406,16 @@ GMLFN(string_char_at); GMLFN(string_copy); GMLFN(string_delete); GMLFN(string_di
 GMLFN(string_hash_to_newline); GMLFN(string_insert); GMLFN(string_length); GMLFN(string_letters);
 GMLFN(string_lower); GMLFN(string_pos); GMLFN(string_repeat); GMLFN(string_replace);
 GMLFN(string_replace_all); GMLFN(string_split); GMLFN(string_upper); GMLFN(string_format);
-GMLFN(string_width); GMLFN(string_height);
+GMLFN(string_trim); GMLFN(string_width); GMLFN(string_height);
 
 GMLFN(is_string); GMLFN(is_real); GMLFN(is_array); GMLFN(is_undefined); GMLFN(is_bool);
-GMLFN(is_struct); GMLFN(is_method); GMLFN(typeof_fn); GMLFN(bool_fn);
+GMLFN(is_struct); GMLFN(is_instanceof); GMLFN(is_method); GMLFN(typeof_fn); GMLFN(bool_fn);
 GMLFN(variable_global_exists); GMLFN(variable_instance_exists); GMLFN(variable_struct_set);
 GMLFN(variable_struct_get); GMLFN(variable_struct_exists);
+GMLFN(struct_set); GMLFN(struct_get); GMLFN(struct_exists);
 
 GMLFN(array_create); GMLFN(array_length); GMLFN(array_length_1d); GMLFN(array_push);
-GMLFN(array_contains); GMLFN(object_exists);
+GMLFN(array_concat); GMLFN(array_contains); GMLFN(array_equals); GMLFN(array_get_index); GMLFN(object_exists);
 GMLFN(array_pop); GMLFN(array_resize); GMLFN(array_copy); GMLFN(array_delete); GMLFN(array_insert);
 
 GMLFN(ds_exists); GMLFN(ds_list_add); GMLFN(ds_list_create); GMLFN(ds_list_destroy);
@@ -429,7 +432,8 @@ GMLFN(ini_open); GMLFN(ini_open_from_string); GMLFN(ini_close); GMLFN(ini_read_r
 GMLFN(ini_read_string); GMLFN(ini_write_real); GMLFN(ini_write_string);
 GMLFN(ini_section_exists); GMLFN(ini_key_exists); GMLFN(ini_section_delete); GMLFN(ini_key_delete);
 GMLFN(directory_exists); GMLFN(directory_create);
-GMLFN(file_exists); GMLFN(file_copy); GMLFN(file_delete); GMLFN(file_rename); GMLFN(file_text_open_read);
+GMLFN(file_exists); GMLFN(file_copy); GMLFN(file_delete); GMLFN(file_rename);
+GMLFN(file_find_first); GMLFN(file_find_next); GMLFN(file_find_close); GMLFN(file_text_open_read);
 GMLFN(file_text_open_write); GMLFN(file_text_close); GMLFN(file_text_eof);
 GMLFN(file_text_read_real); GMLFN(file_text_read_string); GMLFN(file_text_readln);
 GMLFN(file_text_write_real); GMLFN(file_text_write_string); GMLFN(file_text_writeln);
@@ -449,15 +453,16 @@ GMLFN(point_in_rectangle); GMLFN(move_towards_point); GMLFN(move_snap); GMLFN(mo
 
 GMLFN(event_user); GMLFN(event_perform); GMLFN(event_inherited_fn);
 GMLFN(object_get_sprite); GMLFN(object_get_name); GMLFN(object_get_parent);
-GMLFN(object_is_ancestor); GMLFN(script_execute); GMLFN(method); GMLFN(asset_get_index);
+GMLFN(object_is_ancestor); GMLFN(script_execute); GMLFN(script_get_name); GMLFN(method); GMLFN(asset_get_index);
 
 GMLFN(room_goto); GMLFN(room_goto_next); GMLFN(room_goto_previous); GMLFN(room_next);
 GMLFN(room_previous); GMLFN(room_restart); GMLFN(room_get_name); GMLFN(room_exists);
-GMLFN(game_end); GMLFN(game_restart); GMLFN(game_change);
+GMLFN(game_end); GMLFN(game_restart); GMLFN(game_change); GMLFN(method_call);
 
 GMLFN(sprite_exists); GMLFN(sprite_get_height); GMLFN(sprite_get_width); GMLFN(sprite_get_name);
 GMLFN(sprite_get_number); GMLFN(sprite_get_xoffset); GMLFN(sprite_get_yoffset);
-GMLFN(sprite_create_from_surface); GMLFN(sprite_add_from_surface); GMLFN(sprite_delete); GMLFN(font_add_sprite_ext);
+GMLFN(sprite_create_from_surface); GMLFN(sprite_add_from_surface); GMLFN(sprite_delete); GMLFN(sprite_flush);
+GMLFN(font_add_sprite_ext); GMLFN(font_delete); GMLFN(font_exists);
 GMLFN(path_start); GMLFN(path_end);
 
 GMLFN(draw_arrow); GMLFN(draw_set_circle_precision); GMLFN(draw_circle); GMLFN(draw_circle_color); GMLFN(draw_circle_colour);
@@ -536,7 +541,9 @@ GMLFN(gamepad_set_axis_deadzone);
 GMLFN(gamepad_button_check_released); GMLFN(gamepad_button_count); GMLFN(gamepad_button_value);
 GMLFN(exception_unhandled_handler);
 
-GMLFN(audio_create_stream); GMLFN(audio_destroy_stream); GMLFN(audio_group_is_loaded);
+GMLFN(audio_bus_create); GMLFN(audio_create_stream); GMLFN(audio_destroy_stream); GMLFN(audio_effect_create);
+GMLFN(audio_emitter_bus);
+GMLFN(audio_group_is_loaded);
 GMLFN(audio_group_load); GMLFN(audio_group_set_gain); GMLFN(audio_is_playing);
 GMLFN(audio_pause_all); GMLFN(audio_pause_sound); GMLFN(audio_play_sound); GMLFN(audio_resume_all);
 GMLFN(audio_resume_sound); GMLFN(audio_set_master_gain); GMLFN(audio_master_gain);
@@ -547,7 +554,8 @@ GMLFN(audio_sound_set_track_position); GMLFN(audio_stop_all); GMLFN(audio_stop_s
 
 GMLFN(show_debug_message); GMLFN(show_error); GMLFN(show_message);
 GMLFN(lerp); GMLFN(median); GMLFN(degtorad); GMLFN(radtodeg); GMLFN(randomise);
-GMLFN(game_get_speed); GMLFN(game_set_speed); GMLFN(array_get); GMLFN(array_length_2d); GMLFN(array_height_2d);
+GMLFN(game_get_speed); GMLFN(game_set_speed); GMLFN(array_get); GMLFN(__array_get__);
+GMLFN(array_length_2d); GMLFN(array_height_2d);
 GMLFN(make_colour_rgb); GMLFN(make_colour_hsv); GMLFN(merge_colour);
 GMLFN(variable_global_set); GMLFN(variable_global_get); GMLFN(variable_instance_get); GMLFN(variable_instance_set);
 GMLFN(variable_instance_get_names); GMLFN(event_inherited); GMLFN(get_string); GMLFN(get_string_async);
@@ -576,7 +584,7 @@ GMLFN(ds_priority_size); GMLFN(ds_priority_find_min); GMLFN(ds_priority_find_max
 GMLFN(ds_priority_change_priority); GMLFN(ds_priority_find_priority); GMLFN(ds_priority_delete_value);
 GMLFN(ds_priority_write); GMLFN(ds_priority_read);
 GMLFN(ds_queue_create);
-GMLFN(path_add); GMLFN(path_add_point); GMLFN(path_delete); GMLFN(path_exists);
+GMLFN(path_add); GMLFN(path_add_point); GMLFN(path_clear_points); GMLFN(path_delete); GMLFN(path_exists);
 GMLFN(path_get_x); GMLFN(path_get_y); GMLFN(path_set_closed); GMLFN(path_set_kind);
 GMLFN(path_set_precision);
 GMLFN(mp_grid_create); GMLFN(mp_grid_destroy); GMLFN(mp_grid_clear_all); GMLFN(mp_grid_add_cell);
@@ -595,9 +603,10 @@ GMLFN(layer_sprite_change); GMLFN(layer_sprite_get_id); GMLFN(layer_sprite_get_i
 GMLFN(layer_sprite_get_speed); GMLFN(layer_sprite_get_x); GMLFN(layer_sprite_get_xscale);
 GMLFN(layer_sprite_get_y); GMLFN(layer_sprite_get_yscale); GMLFN(layer_sprite_speed);
 GMLFN(layer_sprite_x); GMLFN(layer_sprite_y); GMLFN(layer_get_fx); GMLFN(layer_set_fx);
-GMLFN(layer_clear_fx); GMLFN(layer_tilemap_get_id);
+GMLFN(layer_clear_fx); GMLFN(layer_tilemap_get_id); GMLFN(layer_tilemap_exists);
 GMLFN(fx_create); GMLFN(fx_set_parameter);
-GMLFN(tilemap_get_x); GMLFN(tilemap_x); GMLFN(vertex_format_add_texcoord);
+GMLFN(tilemap_get_x); GMLFN(tilemap_get_y); GMLFN(tilemap_x); GMLFN(tilemap_y);
+GMLFN(vertex_format_add_texcoord);
 GMLFN(date_current_datetime); GMLFN(current_time_fn); GMLFN(get_timer);
 GMLFN(environment_get_variable); GMLFN(os_get_info); GMLFN(os_get_language); GMLFN(os_is_paused);
 GMLFN(os_check_permission); GMLFN(os_request_permission); GMLFN(show_debug_overlay);
@@ -631,7 +640,7 @@ GMLFN(device_mouse_dbclick_enable); GMLFN(device_mouse_x_to_gui); GMLFN(device_m
 GMLFN(display_set_gui_maximize); GMLFN(display_set_gui_size); GMLFN(window_has_focus);
 GMLFN(window_get_x); GMLFN(window_get_y); GMLFN(window_set_position); GMLFN(shaders_are_supported);
 GMLFN(gpu_get_scissor); GMLFN(gpu_set_scissor); GMLFN(is_callable); GMLFN(is_handle);
-GMLFN(os_get_region); GMLFN(room_get_info); GMLFN(struct_get_from_hash); GMLFN(url_open_ext);
+GMLFN(os_get_region); GMLFN(room_get_info); GMLFN(struct_get_from_hash); GMLFN(url_open); GMLFN(url_open_ext);
 GMLFN(audio_emitter_create);
 GMLFN(audio_emitter_exists);
 GMLFN(audio_emitter_falloff);
@@ -956,6 +965,7 @@ GMLFN(tile_set_mirror);
 GMLFN(tile_set_rotate);
 GMLFN(tile_set_empty);
 GMLFN(variable_struct_get_names);
+GMLFN(struct_get_names);
 GMLFN(vertex_begin);
 GMLFN(vertex_color);
 GMLFN(vertex_colour);

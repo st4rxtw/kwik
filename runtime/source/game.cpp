@@ -814,6 +814,8 @@ Value kwik_new_object(Instance* self, const Value* args, int argc) {
     auto sp = std::make_shared<Instance>();
     Value out = kwik_register_struct_value(sp);
     if (argc > 0 && args[0].type == Value::FN && args[0].fn) {
+        sp->constructor = args[0].fn;
+        sp->constructor_name = args[0].fn_name;
         Instance* saved_other = g_other_ptr;
         g_other_ptr = self;
         args[0].fn(sp.get(), argc > 1 ? args + 1 : nullptr, argc - 1);
@@ -2127,6 +2129,16 @@ GMLFN(method) {
     return out;
 }
 
+GMLFN(method_call) {
+    if (argc < 1) return Value();
+    if (argc >= 2 && args[1].type == Value::ARR && args[1].arr) {
+        const auto& items = args[1].arr->items;
+        return kwik_call_value(self, args[0], items.empty() ? nullptr : items.data(),
+                               (int)items.size());
+    }
+    return kwik_call_value(self, args[0], argc > 1 ? args + 1 : nullptr, argc - 1);
+}
+
 GMLFN(script_execute) {
     if (argc < 1) return Value();
     return kwik_call_value(self, args[0], args + 1, argc - 1);
@@ -2134,6 +2146,18 @@ GMLFN(script_execute) {
 
 static const ScriptEntry* g_script_entries = nullptr;
 static int g_script_entry_count = 0;
+
+GMLFN(script_get_name) {
+    (void)self;
+    if (argc < 1) return Value("");
+    if (args[0].type == Value::FN) {
+        if (args[0].fn_name && args[0].fn_name[0]) return Value(args[0].fn_name);
+        for (int i = 0; i < g_script_entry_count; ++i)
+            if (g_script_entries[i].fn == args[0].fn)
+                return Value(g_script_entries[i].name ? g_script_entries[i].name : "");
+    }
+    return Value("");
+}
 
 GMLFN(asset_get_index) {
     (void)self;

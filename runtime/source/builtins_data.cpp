@@ -3,6 +3,7 @@
 #include "render.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -816,6 +817,104 @@ GMLFN(file_copy) {
     std::fclose(in);
     std::fclose(out);
     return Value(1.0);
+}
+
+static std::vector<std::string> g_file_find_results;
+static size_t g_file_find_pos = 0;
+
+static std::string normalize_file_find_path(std::string s) {
+    for (char& c : s)
+        if (c == '\\') c = '/';
+    return s;
+}
+
+static bool file_find_wildcard_match(const std::string& pattern, const std::string& name) {
+    size_t p = 0, n = 0;
+    size_t star = std::string::npos, retry = 0;
+    while (n < name.size()) {
+        if (p < pattern.size() &&
+            (pattern[p] == '?' ||
+             std::tolower((unsigned char)pattern[p]) == std::tolower((unsigned char)name[n]))) {
+            ++p;
+            ++n;
+        } else if (p < pattern.size() && pattern[p] == '*') {
+            star = p++;
+            retry = n;
+        } else if (star != std::string::npos) {
+            p = star + 1;
+            n = ++retry;
+        } else {
+            return false;
+        }
+    }
+    while (p < pattern.size() && pattern[p] == '*') ++p;
+    return p == pattern.size();
+}
+
+static bool file_find_attrs_match(const std::filesystem::directory_entry& entry, int attr) {
+    std::error_code ec;
+    bool is_dir = entry.is_directory(ec);
+    if (is_dir) return (attr & 0x10) != 0;
+    std::string name = entry.path().filename().string();
+    if (!name.empty() && name[0] == '.' && (attr & 0x02) == 0) return false;
+    return true;
+}
+
+static std::vector<std::filesystem::path> file_find_candidate_dirs(const std::string& dir) {
+    std::vector<std::filesystem::path> dirs;
+    std::filesystem::path p(dir.empty() ? "." : dir);
+    if (p.is_absolute()) {
+        dirs.push_back(p);
+        return dirs;
+    }
+    if (!g_save_dir.empty()) dirs.emplace_back(std::filesystem::path(g_save_dir) / p);
+    dirs.push_back(p);
+    if (!g_game_dir.empty()) dirs.emplace_back(std::filesystem::path(g_game_dir) / p);
+    return dirs;
+}
+
+GMLFN(file_find_first) {
+    (void)self;
+    g_file_find_results.clear();
+    g_file_find_pos = 0;
+    if (argc < 1) return Value("");
+
+    std::string mask = normalize_file_find_path(S(args, argc, 0));
+    int attr = (int)A(args, argc, 1);
+    size_t slash = mask.find_last_of('/');
+    std::string dir = slash == std::string::npos ? "" : mask.substr(0, slash);
+    std::string pattern = slash == std::string::npos ? mask : mask.substr(slash + 1);
+    if (pattern.empty()) pattern = "*";
+
+    for (const std::filesystem::path& base : file_find_candidate_dirs(dir)) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(base, ec)) continue;
+        for (const auto& entry : std::filesystem::directory_iterator(base, ec)) {
+            if (ec) break;
+            std::string name = entry.path().filename().string();
+            if (file_find_wildcard_match(pattern, name) && file_find_attrs_match(entry, attr))
+                g_file_find_results.push_back(name);
+        }
+        if (!g_file_find_results.empty()) break;
+    }
+
+    std::sort(g_file_find_results.begin(), g_file_find_results.end());
+    g_file_find_results.erase(std::unique(g_file_find_results.begin(), g_file_find_results.end()),
+                              g_file_find_results.end());
+    return g_file_find_results.empty() ? Value("") : Value(g_file_find_results[0]);
+}
+
+GMLFN(file_find_next) {
+    (void)self; (void)args; (void)argc;
+    if (g_file_find_pos + 1 >= g_file_find_results.size()) return Value("");
+    return Value(g_file_find_results[++g_file_find_pos]);
+}
+
+GMLFN(file_find_close) {
+    (void)self; (void)args; (void)argc;
+    g_file_find_results.clear();
+    g_file_find_pos = 0;
+    return Value();
 }
 
 struct TextFile {

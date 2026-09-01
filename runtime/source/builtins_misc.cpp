@@ -233,6 +233,8 @@ GMLFN(window_set_position) {
     return Value();
 }
 
+GMLFN(url_open) { return url_open_ext(self, args, argc); }
+
 GMLFN(url_open_ext) {
     (void)self;
     std::string url = S(args, argc, 0);

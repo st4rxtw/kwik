@@ -104,6 +104,7 @@ GMLFN(array_get) {
     if (argc < 2) return Value();
     return kwik_array_elem(args[0], (int)(double)args[1]);
 }
+GMLFN(__array_get__) { return array_get(self, args, argc); }
 GMLFN(array_length_2d) {
     (void)self;
     if (argc < 2 || args[0].type != Value::ARR || !args[0].arr) return Value(0.0);
@@ -151,6 +152,11 @@ GMLFN(path_add) { (void)self; (void)args; (void)argc; return Value((double)kwik_
 GMLFN(path_add_point) {
     (void)self;
     if (argc >= 3) kwik_path_add_point((int)A(args, argc, 0), A(args, argc, 1), A(args, argc, 2));
+    return Value();
+}
+GMLFN(path_clear_points) {
+    (void)self;
+    if (argc >= 1) kwik_path_clear((int)A(args, argc, 0));
     return Value();
 }
 GMLFN(path_delete) {
@@ -684,8 +690,53 @@ GMLFN(layer_tilemap_get_id) {
     if (!l || l->grid_blob < 0) return Value(-1.0);
     return Value((double)(900000 + l->id));
 }
-GMLFN(tilemap_get_x) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(tilemap_x) { (void)self; (void)args; (void)argc; return Value(); }
+
+static RtLayer* tilemap_layer_from_value(const Value& v) {
+    int id = (int)(double)v;
+    if (id >= 900000) id -= 900000;
+    RtLayer* l = kwik_layer_by_id(id);
+    return l && l->grid_blob >= 0 ? l : nullptr;
+}
+
+static bool tilemap_value_matches_layer(const Value& v, const RtLayer* l) {
+    if (!l) return false;
+    int id = (int)(double)v;
+    return id == l->id || id == 900000 + l->id;
+}
+
+GMLFN(layer_tilemap_exists) {
+    (void)self;
+    if (argc < 1) return Value(0.0);
+    RtLayer* a = tilemap_layer_from_value(args[0]);
+    if (argc < 2) return Value(a ? 1.0 : 0.0);
+    RtLayer* b = tilemap_layer_from_value(args[1]);
+    bool ok = (a && (tilemap_value_matches_layer(args[1], a) || a == b)) ||
+              (b && tilemap_value_matches_layer(args[0], b));
+    return Value(ok ? 1.0 : 0.0);
+}
+
+GMLFN(tilemap_get_x) {
+    (void)self;
+    RtLayer* l = argc > 0 ? tilemap_layer_from_value(args[0]) : nullptr;
+    return Value(l ? l->x : 0.0);
+}
+GMLFN(tilemap_get_y) {
+    (void)self;
+    RtLayer* l = argc > 0 ? tilemap_layer_from_value(args[0]) : nullptr;
+    return Value(l ? l->y : 0.0);
+}
+GMLFN(tilemap_x) {
+    (void)self;
+    RtLayer* l = argc > 0 ? tilemap_layer_from_value(args[0]) : nullptr;
+    if (l && argc > 1) l->x = (double)args[1];
+    return Value();
+}
+GMLFN(tilemap_y) {
+    (void)self;
+    RtLayer* l = argc > 0 ? tilemap_layer_from_value(args[0]) : nullptr;
+    if (l && argc > 1) l->y = (double)args[1];
+    return Value();
+}
 
 struct DsPriority {
     std::multimap<double, Value> data;

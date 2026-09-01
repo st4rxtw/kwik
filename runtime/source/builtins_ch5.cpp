@@ -185,6 +185,7 @@ GMLFN(variable_struct_get_names) {
         for (const auto& kv : args[0].obj->vars) out.arr->items.push_back(Value(kv.first));
     return out;
 }
+GMLFN(struct_get_names) { return variable_struct_get_names(self, args, argc); }
 
 GMLFN(string_count) {
     (void)self;
@@ -1776,9 +1777,18 @@ GMLFN(audio_play_sound_at) {
     Value a[3] = {args[0], Value(0.0), argc > 7 ? args[7] : Value(0.0)};
     return audio_play_sound(self, a, 3);
 }
+static int g_next_audio_bus_id = 9000;
 static int g_next_emitter_id = 1;
+GMLFN(audio_bus_create) { (void)self; (void)args; (void)argc; return Value((double)g_next_audio_bus_id++); }
+GMLFN(audio_effect_create) {
+    (void)self;
+    auto eff = std::make_shared<Instance>();
+    eff->vars["type"] = argc > 0 ? args[0] : Value(0.0);
+    return kwik_register_struct_value(eff);
+}
 GMLFN(audio_emitter_create) { (void)self; (void)args; (void)argc; return Value((double)g_next_emitter_id++); }
 GMLFN(audio_emitter_exists) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(audio_emitter_bus) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(audio_emitter_free) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(audio_emitter_position) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(audio_emitter_gain) { (void)self; (void)args; (void)argc; return Value(); }
