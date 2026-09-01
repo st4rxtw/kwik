@@ -1201,7 +1201,11 @@ GMLFN(vertex_submit) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_delete_buffer) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_freeze) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_create_buffer_ext) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(vertex_format_add_position) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(vertex_format_add_position) {
+    (void)self; (void)args; (void)argc;
+    kwik_vertex_format_add_rt(2, 1);
+    return Value();
+}
 
 static int g_next_part_id = 1;
 GMLFN(part_system_create) { (void)self; (void)args; (void)argc; return Value((double)g_next_part_id++); }

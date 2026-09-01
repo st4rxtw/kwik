@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 namespace gml {
 
@@ -12,6 +13,85 @@ static double A(const Value* args, int argc, int i, double dflt = 0.0) {
 }
 static unsigned int C(const Value* args, int argc, int i, unsigned int dflt = 0xFFFFFF) {
     return i < argc ? (unsigned int)(long long)(double)args[i] : dflt;
+}
+
+struct VertexFormatElement {
+    int type = 0;
+    int usage = 0;
+    int offset = 0;
+    unsigned int bit = 0;
+};
+
+struct VertexFormat {
+    std::vector<VertexFormatElement> elements;
+    int byte_size = 0;
+    unsigned int bit_mask = 0;
+    unsigned int next_bit = 1;
+};
+
+static std::vector<VertexFormat> g_vertex_formats;
+static VertexFormat g_build_vertex_format;
+static bool g_building_vertex_format = false;
+
+static int vertex_format_type_size(int type) {
+    switch (type) {
+        case 1: return 4;
+        case 2: return 8;
+        case 3: return 12;
+        case 4: return 16;
+        case 5: return 4;
+        case 6: return 4;
+        default: return 0;
+    }
+}
+
+static bool vertex_format_equal(const VertexFormat& a, const VertexFormat& b) {
+    if (a.byte_size != b.byte_size || a.bit_mask != b.bit_mask ||
+        a.elements.size() != b.elements.size())
+        return false;
+    for (size_t i = 0; i < a.elements.size(); ++i) {
+        const VertexFormatElement& ae = a.elements[i];
+        const VertexFormatElement& be = b.elements[i];
+        if (ae.type != be.type || ae.usage != be.usage || ae.offset != be.offset ||
+            ae.bit != be.bit)
+            return false;
+    }
+    return true;
+}
+
+void kwik_vertex_format_begin_rt() {
+    if (g_building_vertex_format) return;
+    g_build_vertex_format = VertexFormat();
+    g_building_vertex_format = true;
+}
+
+void kwik_vertex_format_add_rt(int type, int usage) {
+    if (!g_building_vertex_format) return;
+    if (type < 1 || type > 6 || usage < 1 || usage > 14) return;
+    int size = vertex_format_type_size(type);
+    if (size <= 0) return;
+
+    VertexFormatElement el;
+    el.type = type;
+    el.usage = usage;
+    el.offset = g_build_vertex_format.byte_size;
+    el.bit = g_build_vertex_format.next_bit;
+    g_build_vertex_format.elements.push_back(el);
+    g_build_vertex_format.byte_size += size;
+    g_build_vertex_format.bit_mask |= el.bit;
+    if (g_build_vertex_format.next_bit < 0x80000000u)
+        g_build_vertex_format.next_bit <<= 1;
+}
+
+int kwik_vertex_format_end_rt() {
+    if (!g_building_vertex_format) return -1;
+    g_building_vertex_format = false;
+    for (size_t i = 0; i < g_vertex_formats.size(); ++i) {
+        if (vertex_format_equal(g_vertex_formats[i], g_build_vertex_format))
+            return (int)i;
+    }
+    g_vertex_formats.push_back(g_build_vertex_format);
+    return (int)g_vertex_formats.size() - 1;
 }
 
 GMLFN(draw_set_color) { (void)self; render_set_color(C(args, argc, 0)); return Value(); }
@@ -378,12 +458,40 @@ GMLFN(texturegroup_get_textures) {
 GMLFN(application_surface_draw_enable) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(application_surface_enable) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_create_buffer) { (void)self; (void)args; (void)argc; return Value(-1.0); }
-GMLFN(vertex_format_add_colour) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(vertex_format_add_normal) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(vertex_format_add_position_3d) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(vertex_format_add_textcoord) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(vertex_format_begin) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(vertex_format_end) { (void)self; (void)args; (void)argc; return Value(-1.0); }
+GMLFN(vertex_format_add_colour) {
+    (void)self; (void)args; (void)argc;
+    kwik_vertex_format_add_rt(5, 2);
+    return Value();
+}
+GMLFN(vertex_format_add_custom) {
+    (void)self;
+    kwik_vertex_format_add_rt((int)A(args, argc, 0), (int)A(args, argc, 1));
+    return Value();
+}
+GMLFN(vertex_format_add_normal) {
+    (void)self; (void)args; (void)argc;
+    kwik_vertex_format_add_rt(3, 3);
+    return Value();
+}
+GMLFN(vertex_format_add_position_3d) {
+    (void)self; (void)args; (void)argc;
+    kwik_vertex_format_add_rt(3, 1);
+    return Value();
+}
+GMLFN(vertex_format_add_textcoord) {
+    (void)self; (void)args; (void)argc;
+    kwik_vertex_format_add_rt(2, 4);
+    return Value();
+}
+GMLFN(vertex_format_begin) {
+    (void)self; (void)args; (void)argc;
+    kwik_vertex_format_begin_rt();
+    return Value();
+}
+GMLFN(vertex_format_end) {
+    (void)self; (void)args; (void)argc;
+    return Value((double)kwik_vertex_format_end_rt());
+}
 
 GMLFN(sprite_exists) {
     (void)self;

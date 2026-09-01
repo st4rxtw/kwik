@@ -138,6 +138,9 @@ void kwik_audio_set_handle_volume(int handle, float volume);
 void kwik_audio_set_handle_looping(int handle, bool loop);
 void kwik_audio_seek_handle(int handle, double seconds);
 void kwik_video_focus_pause(bool paused);
+void kwik_vertex_format_begin_rt();
+void kwik_vertex_format_add_rt(int type, int usage);
+int kwik_vertex_format_end_rt();
 unsigned int kwik_image_texture(int image, int& w, int& h);
 void kwik_flush_textures();
 

@@ -483,6 +483,7 @@ GMLFN(gpu_set_texfilter_ext);
 GMLFN(surface_get_width); GMLFN(surface_get_height); GMLFN(texture_is_ready);
 GMLFN(texture_prefetch); GMLFN(sprite_prefetch); GMLFN(texturegroup_get_textures); GMLFN(application_surface_draw_enable);
 GMLFN(application_surface_enable); GMLFN(vertex_create_buffer); GMLFN(vertex_format_add_colour);
+GMLFN(vertex_format_add_custom);
 GMLFN(vertex_format_add_normal); GMLFN(vertex_format_add_position_3d);
 GMLFN(vertex_format_add_textcoord); GMLFN(vertex_format_begin); GMLFN(vertex_format_end);
 

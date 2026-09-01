@@ -78,7 +78,11 @@ GMLFN(keyboard_unset_map) {
         kwik_keyboard_unset_map((int)A(args, argc, 0));
     return Value();
 }
-GMLFN(vertex_format_add_texcoord) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(vertex_format_add_texcoord) {
+    (void)self; (void)args; (void)argc;
+    kwik_vertex_format_add_rt(2, 4);
+    return Value();
+}
 
 GMLFN(object_exists) {
     (void)self;
