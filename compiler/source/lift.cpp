@@ -657,8 +657,7 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                 if (out) *out << "    " << S(base) << " = Value(-4.0);\n";
             } else if (fn == "@@SetStatic@@") {
                 ctx.uses_statics = true;
-                if (out)
-                    *out << "    __static_ok = true;\n    " << S(base) << " = Value();\n";
+                if (out) *out << "    " << S(base) << " = Value();\n";
             } else if (fn == "@@CopyStatic@@") {
                 ctx.uses_statics = true;
                 if (out)
