@@ -103,6 +103,9 @@ GMLFN(keyboard_check_released) {
 }
 GMLFN(keyboard_key_press) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(keyboard_key_release) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(keyboard_virtual_show) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(keyboard_virtual_hide) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(keyboard_virtual_status) { (void)self; (void)args; (void)argc; return Value(0.0); }
 
 GMLFN(mouse_check_button) {
     (void)self;
@@ -122,18 +125,25 @@ GMLFN(exception_unhandled_handler) {
 }
 
 GMLFN(gamepad_is_connected) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(gamepad_enumerate) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(gamepad_get_device_count) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_button_check) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_button_check_pressed) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_button_check_released) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_button_count) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_button_value) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(gamepad_hat_count) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(gamepad_axis_count) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_axis_value) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_get_description) { (void)self; (void)args; (void)argc; return Value(""); }
 GMLFN(gamepad_get_guid) { (void)self; (void)args; (void)argc; return Value("none"); }
 GMLFN(gamepad_test_mapping) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(gamepad_set_vibration) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(gamepad_set_axis_deadzone) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(ps5_gamepad_set_trigger_effect_feedback) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(ps5_gamepad_set_trigger_effect_off) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(ps5_gamepad_set_trigger_effect_vibration) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(ps5_gamepad_set_trigger_effect_weapon) { (void)self; (void)args; (void)argc; return Value(); }
 
 GMLFN(os_get_info) { (void)self; (void)args; (void)argc; return ds_map_create(self, nullptr, 0); }
 GMLFN(os_get_language) { (void)self; (void)args; (void)argc; return Value("en"); }
@@ -186,6 +196,10 @@ GMLFN(psn_unlock_trophy) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(switch_accounts_is_user_open) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(switch_accounts_open_user) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(switch_accounts_select_account) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(switch_controller_acceleration) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(switch_controller_angular_velocity) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(switch_controller_joycon_left_connected) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(switch_controller_joycon_right_connected) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(switch_controller_set_supported_styles) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(switch_controller_support_get_selected_id) { (void)self; (void)args; (void)argc; return Value(-1.0); }
 GMLFN(switch_controller_support_set_defaults) { (void)self; (void)args; (void)argc; return Value(); }
@@ -216,8 +230,18 @@ GMLFN(device_mouse_check_button_pressed) {
     (void)self;
     return Value(render_mouse_pressed((int)A(args, argc, 1) - 1));
 }
+GMLFN(device_mouse_check_button_released) {
+    (void)self;
+    return Value(render_mouse_released((int)A(args, argc, 1) - 1));
+}
+GMLFN(device_mouse_x) { (void)self; (void)args; (void)argc; return Value(render_mouse_x()); }
+GMLFN(device_mouse_y) { (void)self; (void)args; (void)argc; return Value(render_mouse_y()); }
+GMLFN(device_mouse_raw_x) { (void)self; (void)args; (void)argc; return Value(render_mouse_x()); }
+GMLFN(device_mouse_raw_y) { (void)self; (void)args; (void)argc; return Value(render_mouse_y()); }
 GMLFN(device_mouse_x_to_gui) { (void)self; (void)args; (void)argc; return Value(render_mouse_x()); }
 GMLFN(device_mouse_y_to_gui) { (void)self; (void)args; (void)argc; return Value(render_mouse_y()); }
+GMLFN(display_mouse_get_x) { (void)self; (void)args; (void)argc; return Value(render_mouse_x()); }
+GMLFN(display_mouse_get_y) { (void)self; (void)args; (void)argc; return Value(render_mouse_y()); }
 GMLFN(display_set_gui_size) {
     (void)self;
     render_set_gui_size((int)A(args, argc, 0), (int)A(args, argc, 1));

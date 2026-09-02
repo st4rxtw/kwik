@@ -1479,6 +1479,7 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     mk << "COMPILEOPTS += -I Game -I .\n";
     mk << "SOURCES := $(wildcard Game/*.cpp)\n";
     mk << "OBJECTS := $(patsubst Game/%.cpp,out/%.o,$(SOURCES))\n";
+    mk << "OBJECTS_RSP := out/objects.rsp\n";
     mk << "BACKEND_CFLAGS := $(shell pkg-config --cflags glfw3)\n";
     mk << "BACKEND_LIBS := $(shell pkg-config --libs glfw3) -lGL\n";
     mk << "FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil libswscale libswresample 2>/dev/null)\n";
@@ -1497,6 +1498,7 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     mk << "VITA_RUNTIME_BUILD ?= $(VITA_BUILD)/runtime-build\n";
     mk << "VITA_RUNTIME := $(VITA_RUNTIME_BUILD)/runtime/libkwik_runtime.a\n";
     mk << "VITA_OBJECTS := $(patsubst Game/%.cpp,$(VITA_BUILD)/%.o,$(SOURCES))\n";
+    mk << "VITA_OBJECTS_RSP := $(VITA_BUILD)/objects.rsp\n";
     mk << "VITA_COMPILEOPTS ?= -std=c++20 -O2 -I Game -I .\n";
     mk << "VITA_LDFLAGS ?= -Wl,-q -Wl,-z,nocopyreloc\n";
     mk << "VITA_PKG_CONFIG := PKG_CONFIG_DIR= PKG_CONFIG_PATH= PKG_CONFIG_SYSROOT_DIR= PKG_CONFIG_LIBDIR=$(VITASDK)/arm-vita-eabi/lib/pkgconfig:$(VITASDK)/arm-vita-eabi/share/pkgconfig pkg-config\n";
@@ -1506,8 +1508,11 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     mk << "VITA_LINKLIBS := $(VITA_RUNTIME) $(VITA_FFMPEG_LIBS) -lvitaGL -lSceCommonDialog_stub -lSceGxm_stub -lSceDisplay_stub -lSceAppMgr_stub -lSceCtrl_stub -lSceAudio_stub -lmathneon -lvitashark -lSceShaccCgExt -ltaihen_stub -lSceShaccCg_stub -lSceKernelDmacMgr_stub -lpthread -lm\n\n";
     mk << ".PHONY: all clean vita vita-runtime vita-vpk\n\n";
     mk << "all: $(TARGET)\n\n";
-    mk << "$(TARGET): $(OBJECTS) $(KWIK_RUNTIME)\n";
-    mk << "\t$(COMPILER) $(OBJECTS) -o $@ $(LINKLIBS)\n\n";
+    mk << "$(TARGET): $(OBJECTS_RSP) $(KWIK_RUNTIME)\n";
+    mk << "\t$(COMPILER) @$(OBJECTS_RSP) -o $@ $(LINKLIBS)\n\n";
+    mk << "$(OBJECTS_RSP): $(OBJECTS)\n";
+    mk << "\t@mkdir -p out\n";
+    mk << "\t$(file >$@,$(OBJECTS))\n\n";
     mk << "out/%.o: Game/%.cpp Game/pch.hpp\n";
     mk << "\t@mkdir -p out\n";
     mk << "\t$(COMPILER) $(COMPILEOPTS) -c -o $@ $<\n\n";
@@ -1520,8 +1525,11 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     mk << "$(VITA_BUILD)/%.o: Game/%.cpp Game/pch.hpp\n";
     mk << "\t@mkdir -p \"$(VITA_BUILD)\"\n";
     mk << "\t$(VITA_CXX) $(VITA_COMPILEOPTS) -c -o $@ $<\n\n";
-    mk << "$(VITA_BUILD)/$(TARGET).elf: $(VITA_OBJECTS) $(VITA_RUNTIME)\n";
-    mk << "\t$(VITA_CXX) $(VITA_LDFLAGS) $(VITA_OBJECTS) -o $@ $(VITA_LINKLIBS)\n\n";
+    mk << "$(VITA_BUILD)/$(TARGET).elf: $(VITA_OBJECTS_RSP) $(VITA_RUNTIME)\n";
+    mk << "\t$(VITA_CXX) $(VITA_LDFLAGS) @$(VITA_OBJECTS_RSP) -o $@ $(VITA_LINKLIBS)\n\n";
+    mk << "$(VITA_OBJECTS_RSP): $(VITA_OBJECTS)\n";
+    mk << "\t@mkdir -p \"$(VITA_BUILD)\"\n";
+    mk << "\t$(file >$@,$(VITA_OBJECTS))\n\n";
     mk << "$(VITA_BUILD)/$(TARGET).velf: $(VITA_BUILD)/$(TARGET).elf\n";
     mk << "\t$(VITASDK)/bin/vita-elf-create $< $@\n\n";
     mk << "$(VITA_BUILD)/eboot.bin: $(VITA_BUILD)/$(TARGET).velf\n";

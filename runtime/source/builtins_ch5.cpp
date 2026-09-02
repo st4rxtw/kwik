@@ -186,6 +186,12 @@ GMLFN(variable_struct_get_names) {
     return out;
 }
 GMLFN(struct_get_names) { return variable_struct_get_names(self, args, argc); }
+GMLFN(struct_names_count) {
+    (void)self;
+    if (argc >= 1 && args[0].type == Value::OBJ && args[0].obj)
+        return Value((double)args[0].obj->vars.size());
+    return Value(0.0);
+}
 
 GMLFN(string_count) {
     (void)self;
@@ -1196,8 +1202,15 @@ GMLFN(vertex_position) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_position_3d) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_color) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_colour) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(vertex_rgba) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(vertex_argb) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_normal) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_texcoord) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(vertex_float1) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(vertex_float2) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(vertex_float3) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(vertex_float4) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(vertex_ubyte4) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_submit) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_delete_buffer) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_freeze) { (void)self; (void)args; (void)argc; return Value(); }

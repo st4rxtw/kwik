@@ -634,6 +634,16 @@ GMLFN(window_mouse_set_locked) {
     return Value();
 }
 
+GMLFN(application_get_position) {
+    (void)self; (void)args; (void)argc;
+    Value out = kwik_new_array(nullptr, 0);
+    out.arr->items.push_back(Value(0.0));
+    out.arr->items.push_back(Value(0.0));
+    out.arr->items.push_back(Value((double)render_app_width()));
+    out.arr->items.push_back(Value((double)render_app_height()));
+    return out;
+}
+
 GMLFN(display_get_width) { (void)self; (void)args; (void)argc; return Value((double)render_display_width()); }
 GMLFN(display_get_height) { (void)self; (void)args; (void)argc; return Value((double)render_display_height()); }
 GMLFN(display_get_gui_width) { (void)self; (void)args; (void)argc; return Value((double)render_gui_width()); }

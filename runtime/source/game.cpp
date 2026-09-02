@@ -48,6 +48,22 @@ bool g_game_restart_requested = false;
 bool g_room_restart_requested = false;
 unsigned long long g_frame_counter = 0;
 
+struct TimeSource {
+    int parent = 1;
+    double period = 1.0;
+    int units = 1;
+    Value callback;
+    std::vector<Value> callback_args;
+    long long reps_initial = 1;
+    long long reps_remaining = 1;
+    long long reps_completed = 0;
+    int state = 0;
+    double elapsed = 0.0;
+};
+
+static std::unordered_map<int, TimeSource> g_time_sources;
+static int g_next_time_source = 2;
+
 ObjectDef* g_objects_rt = nullptr;
 int g_object_count_rt = 0;
 const RoomDef* g_room_defs_rt = nullptr;
@@ -848,6 +864,201 @@ Value kwik_call_method(Instance* self, const Value& fnval, const Value& target,
     }
     if (fnval.type == Value::FN && fnval.fn) return fnval.fn(callee, args, argc);
     return Value();
+}
+
+static bool time_source_exists_id(int id) {
+    return id == 0 || id == 1 || g_time_sources.find(id) != g_time_sources.end();
+}
+
+static TimeSource* time_source_find(int id) {
+    auto it = g_time_sources.find(id);
+    return it == g_time_sources.end() ? nullptr : &it->second;
+}
+
+static double time_source_period(double period, int units) {
+    if (units == 0) return std::max(period, 0.000001);
+    return std::max(1.0, std::floor(period));
+}
+
+static std::vector<Value> time_source_args(const Value& v) {
+    if (v.type == Value::ARR && v.arr) return v.arr->items;
+    if (v.type != Value::UNDEF) return {v};
+    return {};
+}
+
+static void time_source_configure(TimeSource& ts, double period, int units, const Value& callback,
+                                  const Value& callback_args, long long reps) {
+    ts.period = time_source_period(period, units);
+    ts.units = units == 0 ? 0 : 1;
+    ts.callback = callback;
+    ts.callback_args = time_source_args(callback_args);
+    ts.reps_initial = reps;
+    ts.reps_remaining = reps;
+    ts.reps_completed = 0;
+    ts.elapsed = 0.0;
+    ts.state = 0;
+}
+
+static void tick_time_sources() {
+    std::vector<int> ids;
+    ids.reserve(g_time_sources.size());
+    for (const auto& kv : g_time_sources) ids.push_back(kv.first);
+
+    for (int id : ids) {
+        auto it = g_time_sources.find(id);
+        if (it == g_time_sources.end()) continue;
+        TimeSource& ts = it->second;
+        if (ts.state != 1 || ts.reps_remaining == 0) continue;
+
+        ts.elapsed += ts.units == 0 ? render_delta_time() : 1.0;
+        int guard = 0;
+        while (ts.elapsed >= ts.period && ts.reps_remaining != 0 && guard++ < 16) {
+            ++ts.reps_completed;
+            if (ts.reps_remaining > 0) --ts.reps_remaining;
+
+            bool finished = ts.reps_remaining == 0;
+            if (finished) {
+                ts.elapsed = ts.period;
+                ts.state = 3;
+            } else {
+                ts.elapsed = std::fmod(ts.elapsed, ts.period);
+            }
+
+            Value callback = ts.callback;
+            std::vector<Value> callback_args = ts.callback_args;
+            if (callback.type == Value::FN && callback.fn) {
+                kwik_call_value(g_dummy_instance, callback,
+                                callback_args.empty() ? nullptr : callback_args.data(),
+                                (int)callback_args.size());
+            }
+
+            if (g_time_sources.find(id) == g_time_sources.end() || finished) break;
+        }
+    }
+}
+
+GMLFN(time_source_create) {
+    int parent = argc > 0 ? (int)(double)args[0] : 1;
+    if (!time_source_exists_id(parent)) return Value(-1.0);
+
+    TimeSource ts;
+    ts.parent = parent;
+    double period = argc > 1 ? (double)args[1] : 1.0;
+    int units = argc > 2 ? (int)(double)args[2] : 1;
+    Value callback = argc > 3 ? args[3] : Value();
+    Value callback_args = argc > 4 ? args[4] : kwik_new_array(nullptr, 0);
+    long long reps = argc > 5 ? (long long)std::llround((double)args[5]) : 1;
+    time_source_configure(ts, period, units, callback, callback_args, reps);
+
+    int id = g_next_time_source++;
+    g_time_sources[id] = std::move(ts);
+    return Value((double)id);
+}
+
+GMLFN(time_source_destroy) {
+    (void)self;
+    if (argc < 1) return Value();
+    int id = (int)(double)args[0];
+    if (id >= 2) g_time_sources.erase(id);
+    return Value();
+}
+
+GMLFN(time_source_exists) {
+    (void)self;
+    if (argc < 1) return Value(0.0);
+    return Value(time_source_exists_id((int)(double)args[0]) ? 1.0 : 0.0);
+}
+
+GMLFN(time_source_start) {
+    (void)self;
+    if (argc < 1) return Value();
+    if (TimeSource* ts = time_source_find((int)(double)args[0])) {
+        ts->elapsed = 0.0;
+        ts->state = 1;
+    }
+    return Value();
+}
+
+GMLFN(time_source_stop) {
+    (void)self;
+    if (argc < 1) return Value();
+    if (TimeSource* ts = time_source_find((int)(double)args[0])) ts->state = 3;
+    return Value();
+}
+
+GMLFN(time_source_pause) {
+    (void)self;
+    if (argc < 1) return Value();
+    if (TimeSource* ts = time_source_find((int)(double)args[0]); ts && ts->state == 1) ts->state = 2;
+    return Value();
+}
+
+GMLFN(time_source_resume) {
+    (void)self;
+    if (argc < 1) return Value();
+    if (TimeSource* ts = time_source_find((int)(double)args[0]); ts && ts->state == 2) ts->state = 1;
+    return Value();
+}
+
+GMLFN(time_source_reset) {
+    (void)self;
+    if (argc < 1) return Value();
+    if (TimeSource* ts = time_source_find((int)(double)args[0])) {
+        ts->elapsed = 0.0;
+        ts->reps_completed = 0;
+        ts->reps_remaining = ts->reps_initial;
+        ts->state = 0;
+    }
+    return Value();
+}
+
+GMLFN(time_source_reconfigure) {
+    (void)self;
+    if (argc < 4) return Value();
+    TimeSource* ts = time_source_find((int)(double)args[0]);
+    if (!ts) return Value();
+    Value callback_args = argc > 4 ? args[4] : kwik_new_array(nullptr, 0);
+    long long reps = argc > 5 ? (long long)std::llround((double)args[5]) : 1;
+    time_source_configure(*ts, (double)args[1], (int)(double)args[2], args[3], callback_args, reps);
+    return Value();
+}
+
+GMLFN(time_source_get_period) {
+    (void)self;
+    TimeSource* ts = argc > 0 ? time_source_find((int)(double)args[0]) : nullptr;
+    return ts ? Value(ts->period) : Value();
+}
+
+GMLFN(time_source_get_reps_completed) {
+    (void)self;
+    TimeSource* ts = argc > 0 ? time_source_find((int)(double)args[0]) : nullptr;
+    return ts ? Value((double)ts->reps_completed) : Value();
+}
+
+GMLFN(time_source_get_reps_remaining) {
+    (void)self;
+    TimeSource* ts = argc > 0 ? time_source_find((int)(double)args[0]) : nullptr;
+    return ts ? Value((double)ts->reps_remaining) : Value();
+}
+
+GMLFN(time_source_get_units) {
+    (void)self;
+    TimeSource* ts = argc > 0 ? time_source_find((int)(double)args[0]) : nullptr;
+    return ts ? Value((double)ts->units) : Value();
+}
+
+GMLFN(time_source_get_time_remaining) {
+    (void)self;
+    TimeSource* ts = argc > 0 ? time_source_find((int)(double)args[0]) : nullptr;
+    return ts ? Value(std::max(0.0, ts->period - ts->elapsed)) : Value();
+}
+
+GMLFN(time_source_get_state) {
+    (void)self;
+    int id = argc > 0 ? (int)(double)args[0] : -1;
+    if (id == 0 || id == 1) return Value(1.0);
+    TimeSource* ts = time_source_find(id);
+    return ts ? Value((double)ts->state) : Value();
 }
 
 enum class SpecialVar : unsigned char {
@@ -3349,6 +3560,7 @@ static void run_step_phase() {
         run_alarms(inst);
     }
 
+    tick_time_sources();
     tick_call_later();
 
     {

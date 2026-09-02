@@ -104,6 +104,17 @@ GMLFN(point_distance) {
     (void)self;
     return Value(std::hypot(A(args, argc, 2) - A(args, argc, 0), A(args, argc, 3) - A(args, argc, 1)));
 }
+GMLFN(point_in_circle) {
+    (void)self;
+    double px = A(args, argc, 0);
+    double py = A(args, argc, 1);
+    double cx = A(args, argc, 2);
+    double cy = A(args, argc, 3);
+    double r = A(args, argc, 4);
+    double dx = px - cx;
+    double dy = py - cy;
+    return Value(dx * dx + dy * dy <= r * r);
+}
 GMLFN(lengthdir_x) { (void)self; return Value(A(args, argc, 0) * std::cos(A(args, argc, 1) * M_PI / 180.0)); }
 GMLFN(lengthdir_y) { (void)self; return Value(-A(args, argc, 0) * std::sin(A(args, argc, 1) * M_PI / 180.0)); }
 GMLFN(angle_difference) {
@@ -159,6 +170,51 @@ GMLFN(__string__) {
         ++i;
     }
     return Value(out);
+}
+GMLFN(string_ext) { return __string__(self, args, argc); }
+GMLFN(base64_decode) {
+    (void)self;
+    return argc > 0 ? args[0] : Value("");
+}
+GMLFN(base64_encode) {
+    (void)self;
+    return argc > 0 ? args[0] : Value("");
+}
+GMLFN(string_concat) {
+    (void)self;
+    std::string out;
+    for (int i = 0; i < argc; ++i) out += (std::string)args[i];
+    return Value(out);
+}
+GMLFN(string_concat_ext) {
+    (void)self;
+    if (argc < 1 || args[0].type != Value::ARR || !args[0].arr) return Value("");
+    const auto& items = args[0].arr->items;
+    int n = (int)items.size();
+    int offset = argc > 1 ? (int)A(args, argc, 1) : 0;
+    int length = argc > 2 ? (int)A(args, argc, 2) : n;
+    int step = length < 0 ? -1 : 1;
+    int loops = std::abs(length);
+    if (offset < 0) offset = n + offset;
+    std::string out;
+    for (int i = 0, idx = offset; i < loops && idx >= 0 && idx < n; ++i, idx += step)
+        out += (std::string)items[(size_t)idx];
+    return Value(out);
+}
+GMLFN(string_foreach) {
+    if (argc < 2) return Value();
+    std::string s = S(args, argc, 0);
+    int pos = argc > 2 ? (int)A(args, argc, 2) : 1;
+    int length = argc > 3 ? (int)A(args, argc, 3) : (int)s.size();
+    int offset = pos > 0 ? pos - 1 : pos;
+    if (offset < 0) offset = (int)s.size() + offset;
+    int step = length < 0 ? -1 : 1;
+    int loops = std::abs(length);
+    for (int i = 0, idx = offset; i < loops && idx >= 0 && idx < (int)s.size(); ++i, idx += step) {
+        Value call_args[2] = {Value(std::string(1, s[(size_t)idx])), Value((double)(idx + 1))};
+        kwik_call_value(self, args[1], call_args, 2);
+    }
+    return Value();
 }
 GMLFN(string_length) { (void)self; return Value((double)S(args, argc, 0).size()); }
 GMLFN(string_byte_length) { (void)self; return Value((double)S(args, argc, 0).size()); }
@@ -332,6 +388,15 @@ GMLFN(is_array) { (void)self; return Value(argc > 0 && args[0].type == Value::AR
 GMLFN(is_undefined) { (void)self; return Value(argc == 0 || args[0].type == Value::UNDEF); }
 GMLFN(is_bool) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(is_struct) { (void)self; return Value(argc > 0 && args[0].type == Value::OBJ); }
+GMLFN(instanceof) {
+    (void)self;
+    if (argc < 1) return Value();
+    if (args[0].type == Value::OBJ && args[0].obj && args[0].obj->is_struct &&
+        args[0].obj->constructor)
+        return kwik_make_fnref(args[0].obj->constructor, args[0].obj->constructor_name);
+    if (args[0].type == Value::FN) return args[0];
+    return Value();
+}
 GMLFN(is_instanceof) {
     (void)self;
     const Instance* obj = nullptr;
@@ -360,6 +425,44 @@ GMLFN(typeof_fn) {
     }
 }
 GMLFN(bool_fn) { (void)self; return Value(argc > 0 && gml_truthy(args[0])); }
+
+static Value variable_clone_value(
+    const Value& v, std::unordered_map<const GmlArray*, Value>& arrays,
+    std::unordered_map<const Instance*, Value>& structs, int depth = 0) {
+    if (depth > 64) return v;
+    if (v.type == Value::ARR && v.arr) {
+        auto it = arrays.find(v.arr.get());
+        if (it != arrays.end()) return it->second;
+        Value out = kwik_new_array(nullptr, 0);
+        arrays[v.arr.get()] = out;
+        out.arr->owner = v.arr->owner;
+        out.arr->items.reserve(v.arr->items.size());
+        for (const Value& item : v.arr->items)
+            out.arr->items.push_back(variable_clone_value(item, arrays, structs, depth + 1));
+        return out;
+    }
+    if (v.type == Value::OBJ && v.obj && v.obj->is_struct) {
+        auto it = structs.find(v.obj.get());
+        if (it != structs.end()) return it->second;
+        auto s = std::make_shared<Instance>();
+        s->constructor = v.obj->constructor;
+        s->constructor_name = v.obj->constructor_name;
+        Value out = kwik_register_struct_value(s);
+        structs[v.obj.get()] = out;
+        for (const auto& kv : v.obj->vars)
+            s->vars[kv.first] = variable_clone_value(kv.second, arrays, structs, depth + 1);
+        return out;
+    }
+    return v;
+}
+
+GMLFN(variable_clone) {
+    (void)self;
+    if (argc < 1) return Value();
+    std::unordered_map<const GmlArray*, Value> arrays;
+    std::unordered_map<const Instance*, Value> structs;
+    return variable_clone_value(args[0], arrays, structs);
+}
 
 GMLFN(variable_global_exists) {
     (void)self;
@@ -393,6 +496,13 @@ GMLFN(variable_struct_exists) {
 GMLFN(struct_set) { return variable_struct_set(self, args, argc); }
 GMLFN(struct_get) { return variable_struct_get(self, args, argc); }
 GMLFN(struct_exists) { return variable_struct_exists(self, args, argc); }
+GMLFN(struct_remove) {
+    if (argc < 2) return Value(0.0);
+    Instance* t = kwik_resolve_target(self, args[0]);
+    if (!t) return Value(0.0);
+    std::string n = (std::string)args[1];
+    return Value(t->vars.erase(n) != 0);
+}
 
 GMLFN(array_create) {
     (void)self;
@@ -448,6 +558,44 @@ GMLFN(array_get_index) {
     for (size_t i = 0; i < v.size(); ++i)
         if (gml_truthy(gml_eq(v[i], args[1]))) return Value((double)i);
     return Value(-1.0);
+}
+GMLFN(array_map_ext) {
+    Value out = kwik_new_array(nullptr, 0);
+    if (argc < 2 || args[0].type != Value::ARR || !args[0].arr) return out;
+    auto items = args[0].arr->items;
+    out.arr->items.reserve(items.size());
+    for (size_t i = 0; i < items.size(); ++i) {
+        Value call_args[3] = {items[i], Value((double)i), args[0]};
+        out.arr->items.push_back(kwik_call_value(self, args[1], call_args, 3));
+    }
+    return out;
+}
+GMLFN(array_foreach) {
+    if (argc < 2 || args[0].type != Value::ARR || !args[0].arr) return Value();
+    auto items = args[0].arr->items;
+    for (size_t i = 0; i < items.size(); ++i) {
+        Value call_args[3] = {items[i], Value((double)i), args[0]};
+        kwik_call_value(self, args[1], call_args, 3);
+    }
+    return Value();
+}
+GMLFN(array_filter) {
+    Value out = kwik_new_array(nullptr, 0);
+    if (argc < 2 || args[0].type != Value::ARR || !args[0].arr) return out;
+    auto items = args[0].arr->items;
+    out.arr->items.reserve(items.size());
+    for (size_t i = 0; i < items.size(); ++i) {
+        Value call_args[3] = {items[i], Value((double)i), args[0]};
+        if (gml_truthy(kwik_call_value(self, args[1], call_args, 3)))
+            out.arr->items.push_back(items[i]);
+    }
+    return out;
+}
+GMLFN(array_last) {
+    (void)self;
+    if (argc < 1 || args[0].type != Value::ARR || !args[0].arr || args[0].arr->items.empty())
+        return Value();
+    return args[0].arr->items.back();
 }
 GMLFN(array_pop) {
     (void)self;

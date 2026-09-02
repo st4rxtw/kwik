@@ -445,6 +445,22 @@ GMLFN(audio_is_playing) {
     return Value(playing);
 }
 
+GMLFN(audio_sound_get_asset) {
+    (void)self;
+    if (argc < 1) return Value(-1.0);
+    int what = (int)(double)args[0];
+    if (what >= kHandleBase) {
+        Voice* v = voice_of_handle(what);
+        if (!v) return Value(-1.0);
+        if (v->asset >= 0) return Value((double)v->asset);
+        if (v->stream >= 0) return Value((double)v->stream);
+        return Value(-1.0);
+    }
+    if ((what >= kStreamBase && what < kHandleBase) || (what >= 0 && what < g_sound_count))
+        return Value((double)what);
+    return Value(-1.0);
+}
+
 GMLFN(audio_pause_sound) {
     (void)self;
     if (argc < 1) return Value();
