@@ -1,6 +1,6 @@
 # kwik
 
-Kwik is a fast, open source, cross-platform & recompiler for GameMaker Studio 2.
+Kwik is a fast, open source, cross-platform runtime & recompiler for GameMaker Studio 2.
 
 > [!CAUTION]
 > This project is still in development, things may break here and there.
