@@ -8,7 +8,10 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <vector>
+
+#include "nlohmann/json.hpp"
 
 namespace gml {
 
@@ -494,66 +497,97 @@ GMLFN(json_encode) {
     return Value(out);
 }
 
-static bool json_parse_struct(JsonParser& jp, Instance* self, Value& out);
+static bool json_to_value(const nlohmann::json& j, Instance* self, Value& out) {
+    if (j.is_null()) {
+        out = Value();
+        return true;
+    }
+    if (j.is_boolean()) {
+        out = Value(j.get<bool>());
+        return true;
+    }
+    if (j.is_number()) {
+        out = Value(j.get<double>());
+        return true;
+    }
+    if (j.is_string()) {
+        out = Value(j.get<std::string>());
+        return true;
+    }
+    if (j.is_array()) {
+        out = kwik_new_array(nullptr, 0);
+        if (!out.arr) return false;
+        for (const auto& item : j) {
+            Value v;
+            if (!json_to_value(item, self, v)) return false;
+            out.arr->items.push_back(v);
+        }
+        return true;
+    }
+    if (j.is_object()) {
+        out = kwik_new_object(self, nullptr, 0);
+        if (!out.obj) return false;
+        for (const auto& item : j.items()) {
+            Value v;
+            if (!json_to_value(item.value(), self, v)) return false;
+            out.obj->var(item.key()) = v;
+        }
+        return true;
+    }
+    return false;
+}
 
 GMLFN(json_parse) {
     (void)self;
     std::string src = S(args, argc, 0);
-    JsonParser jp{src.c_str(), src.c_str() + src.size()};
+    nlohmann::json j = nlohmann::json::parse(src, nullptr, false);
+    if (j.is_discarded()) return Value();
     Value out;
-    if (!json_parse_struct(jp, self, out)) return Value();
+    if (!json_to_value(j, self, out)) return Value();
     return out;
 }
 
-static bool json_parse_struct(JsonParser& jp, Instance* self, Value& out) {
-    jp.skip_ws();
-    if (jp.p >= jp.end) return false;
-    if (*jp.p == '{') {
-        ++jp.p;
-        Value obj = kwik_new_object(self, nullptr, 0);
-        jp.skip_ws();
-        if (jp.p < jp.end && *jp.p == '}') { ++jp.p; out = obj; return true; }
-        while (jp.p < jp.end) {
-            jp.skip_ws();
-            std::string key;
-            if (!jp.parse_string(key)) return false;
-            jp.skip_ws();
-            if (jp.p >= jp.end || *jp.p != ':') return false;
-            ++jp.p;
-            Value v;
-            if (!json_parse_struct(jp, self, v)) return false;
-            if (obj.obj) obj.obj->var(key) = v;
-            jp.skip_ws();
-            if (jp.p < jp.end && *jp.p == ',') { ++jp.p; continue; }
-            break;
+static nlohmann::json value_to_json(const Value& v, std::set<const void*>& seen_arrays,
+                                    std::set<const void*>& seen_objects) {
+    switch (v.type) {
+        case Value::UNDEF: return nullptr;
+        case Value::REAL: return v.num;
+        case Value::STR: return v.str;
+        case Value::ARR: {
+            if (!v.arr) return nullptr;
+            const void* key = v.arr.get();
+            if (seen_arrays.count(key)) return nullptr;
+            seen_arrays.insert(key);
+            nlohmann::json out = nlohmann::json::array();
+            for (const Value& item : v.arr->items)
+                out.push_back(value_to_json(item, seen_arrays, seen_objects));
+            seen_arrays.erase(key);
+            return out;
         }
-        jp.skip_ws();
-        if (jp.p < jp.end && *jp.p == '}') ++jp.p;
-        out = obj;
-        return true;
-    }
-    if (*jp.p == '[') {
-        ++jp.p;
-        Value arr = kwik_new_array(nullptr, 0);
-        jp.skip_ws();
-        if (jp.p < jp.end && *jp.p == ']') { ++jp.p; out = arr; return true; }
-        while (jp.p < jp.end) {
-            Value v;
-            if (!json_parse_struct(jp, self, v)) return false;
-            arr.arr->items.push_back(v);
-            jp.skip_ws();
-            if (jp.p < jp.end && *jp.p == ',') { ++jp.p; continue; }
-            break;
+        case Value::OBJ: {
+            if (!v.obj) return nullptr;
+            const void* key = v.obj.get();
+            if (seen_objects.count(key)) return nullptr;
+            seen_objects.insert(key);
+            nlohmann::json out = nlohmann::json::object();
+            for (const auto& kv : v.obj->vars)
+                out[kv.first] = value_to_json(kv.second, seen_arrays, seen_objects);
+            seen_objects.erase(key);
+            return out;
         }
-        jp.skip_ws();
-        if (jp.p < jp.end && *jp.p == ']') ++jp.p;
-        out = arr;
-        return true;
+        case Value::FN:
+            return nullptr;
     }
-    return jp.parse_ds(out);
+    return nullptr;
 }
 
-GMLFN(json_stringify) { (void)args; (void)argc; return kwik_missing(self, "json_stringify"); }
+GMLFN(json_stringify) {
+    (void)self;
+    std::set<const void*> seen_arrays;
+    std::set<const void*> seen_objects;
+    nlohmann::json j = value_to_json(argc > 0 ? args[0] : Value(), seen_arrays, seen_objects);
+    return Value(j.dump());
+}
 
 static Value csv_row_value(const std::vector<std::string>& cells) {
     Value row = kwik_new_array(nullptr, 0);

@@ -61,6 +61,7 @@ target_include_directories(kwik_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inclu
 target_include_directories(kwik_runtime PRIVATE
     ${KWIK_THIRD_PARTY}/stb
     ${KWIK_THIRD_PARTY}/miniaudio
+    ${KWIK_THIRD_PARTY}
 )
 
 if(KWIK_BACKEND STREQUAL "vitagl")
