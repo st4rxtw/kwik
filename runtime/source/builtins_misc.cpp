@@ -9,6 +9,7 @@
 #include <utility>
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
 #elif !defined(__vita__)
 #include <sys/wait.h>
 #include <unistd.h>
