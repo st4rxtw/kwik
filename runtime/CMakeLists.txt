@@ -57,6 +57,10 @@ add_library(kwik_runtime STATIC
 
 set_target_properties(kwik_runtime PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 
+if(MSVC)
+    set_property(TARGET kwik_runtime PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+endif()
+
 target_include_directories(kwik_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(kwik_runtime PRIVATE
     ${KWIK_THIRD_PARTY}/stb

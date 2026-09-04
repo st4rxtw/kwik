@@ -1443,6 +1443,20 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     fs::path kwik_runtime;
 #endif
 
+#ifdef _WIN32
+    if (kwik_runtime.empty() || !fs::exists(kwik_runtime)) {
+        fs::path runtime_build = kwik_runtime;
+        if (runtime_build.filename() == "libkwik_runtime.a") runtime_build = runtime_build.parent_path();
+        for (const char* configuration : { "Debug", "Release" }) {
+            fs::path candidate = runtime_build / configuration / "kwik_runtime.lib";
+            if (fs::exists(candidate)) {
+                kwik_runtime = candidate;
+                break;
+            }
+        }
+    }
+#endif
+
     if (kwik_root.empty()) return false;
 
     auto write_header = [&](const fs::path& dst, const std::string& text) {
@@ -1462,14 +1476,44 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     if (!write_header(root / "KwikValue.h", "#pragma once\n#include <KwikGML.h>\n")) return false;
 
     if (kwik_runtime.empty() || !fs::exists(kwik_runtime)) {
+#ifdef _WIN32
+        std::fprintf(stderr, "[lift] kwik_runtime.lib not found in build/runtime/Debug or build/runtime/Release; build kwik_runtime before exporting\n");
+#else
         std::fprintf(stderr, "[lift] libkwik_runtime.a not found; build kwik_runtime before exporting\n");
+#endif
         return false;
     }
-    fs::copy_file(kwik_runtime, root / "libkwik_runtime.a", fs::copy_options::overwrite_existing, ec);
+#ifdef _WIN32
+    const char* exported_runtime_name = "kwik_runtime.lib";
+#else
+    const char* exported_runtime_name = "libkwik_runtime.a";
+#endif
+    fs::copy_file(kwik_runtime, root / exported_runtime_name, fs::copy_options::overwrite_existing, ec);
     if (ec) return false;
 
     std::ofstream mk(root / "makefile", std::ios::binary);
     if (!mk) return false;
+#ifdef _WIN32
+    mk << "COMPILER ?= cl\n";
+    mk << "GLFW_DIR ?= C:/Libraries/glfw\n";
+    mk << "KWIK_RUNTIME ?= kwik_runtime.lib\n";
+    mk << "TARGET ?= $(notdir $(CURDIR))\n";
+    mk << "COMPILEOPTS ?= /std:c++20 /O2 /EHsc /MD\n";
+    mk << "COMPILEOPTS += /I Game /I . /I \"$(GLFW_DIR)/include\"\n";
+    mk << "SOURCES := $(wildcard Game/*.cpp)\n";
+    mk << "OBJECTS := $(patsubst Game/%.cpp,out/%.obj,$(SOURCES))\n";
+    mk << "LINKLIBS := $(KWIK_RUNTIME) \"$(GLFW_DIR)/lib/glfw3.lib\" legacy_stdio_definitions.lib opengl32.lib gdi32.lib user32.lib shell32.lib\n\n";
+    mk << ".PHONY: all clean\n\n";
+    mk << "all: $(TARGET)\n\n";
+    mk << "$(TARGET): $(OBJECTS) $(KWIK_RUNTIME)\n";
+    mk << "\t$(COMPILER) $(OBJECTS) /Fe:$@ $(LINKLIBS)\n\n";
+    mk << "out/%.obj: Game/%.cpp Game/pch.hpp\n";
+    mk << "\t@if not exist out mkdir out\n";
+    mk << "\t$(COMPILER) $(COMPILEOPTS) /c /Fo\"$@\" \"$<\"\n\n";
+    mk << "clean:\n";
+    mk << "\t@if exist out rmdir /s /q out\n";
+    mk << "\t@if exist $(TARGET).exe del /q $(TARGET).exe\n";
+#else
     mk << "SHELL := /bin/bash\n";
     mk << "COMPILER ?= c++\n";
     mk << "KWIK_RUNTIME ?= libkwik_runtime.a\n";
@@ -1540,6 +1584,7 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     mk << "\t@set -e; args=\"-s $(VITA_BUILD)/param.sfo -b $(VITA_BUILD)/eboot.bin\"; if [ -f Assets.dat ]; then args=\"$$args -a Assets.dat=Assets.dat\"; fi; if [ -f sce_sys/icon0.png ]; then args=\"$$args -a sce_sys/icon0.png=sce_sys/icon0.png\"; fi; if [ -d sce_sys/livearea ]; then while IFS= read -r f; do args=\"$$args -a $$f=$$f\"; done < <(find sce_sys/livearea -type f -print); fi; eval \"$(VITASDK)/bin/vita-pack-vpk $$args $(TARGET).vpk\"\n\n";
     mk << "clean:\n";
     mk << "\trm -rf out $(TARGET) $(TARGET).vpk\n";
+#endif
     mk.close();
 
     fs::remove(root / "CMakeLists.txt", ec);
