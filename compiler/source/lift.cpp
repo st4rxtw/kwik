@@ -1260,7 +1260,7 @@ bool emit_cpp(const GameData&, const std::string&) {
     return false;
 }
 
-bool emit_dir(const GameData& gd, const std::string& out_dir) {
+bool emit_dir(const GameData& gd, const std::string& out_dir, const ExportOptions& options) {
     namespace fs = std::filesystem;
     fs::path root(out_dir);
     fs::path game_dir = root / "Game";
@@ -1407,8 +1407,13 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     }
     data << "    { \"\", nullptr },\n};\n";
     data << "static const int g_script_entry_count = " << script_count << ";\n\n";
-    data << "int main(int argc, char** argv) {\n";
-    data << "    kwik_set_program_args(argc, argv);\n";
+    if (options.target == "nx") {
+        data << "void kwik_game_main() {\n";
+        data << "    kwik_set_program_args(0, nullptr);\n";
+    } else {
+        data << "int main(int argc, char** argv) {\n";
+        data << "    kwik_set_program_args(argc, argv);\n";
+    }
     data << "    kwik_fill_objects();\n";
     data << "    GameTables t{};\n";
     data << "    t.objects = g_objects;\n";
@@ -1421,16 +1426,47 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     }
     data << "    t.scripts = g_script_entries;\n";
     data << "    t.script_count = g_script_entry_count;\n";
-    data << "    t.assets_path = \"Assets.dat\";\n";
+    data << "    t.assets_path = \"" << (options.target == "nx" ? "rom:/Assets.dat" : "Assets.dat") << "\";\n";
     data << "    t.game_name = " << quote(gd.display_name()) << ";\n";
     data << "    t.save_id = " << quote(gd.game_name()) << ";\n";
     data << "    t.window_w = " << gd.window_w() << ";\n";
     data << "    t.window_h = " << gd.window_h() << ";\n";
     data << "    t.game_fps = " << gd.game_fps() << ";\n";
     data << "    t.start_room = " << gd.start_room() << ";\n";
-    data << "    return gml::run_game(t);\n";
+    if (options.target == "nx")
+        data << "    (void)gml::run_game(t);\n";
+    else
+        data << "    return gml::run_game(t);\n";
     data << "}\n";
     data.close();
+
+    if (options.target == "nx") {
+        std::ofstream nx_main(root / "nnMain.cpp", std::ios::binary);
+        if (!nx_main) return false;
+        nx_main << "#include <cstdlib>\n";
+        nx_main << "#include <nn/fs.h>\n\n";
+        nx_main << "#include \"NXSave.hpp\"\n\n";
+        nx_main << "extern void kwik_game_main();\n\n";
+        nx_main << "extern \"C\" void nnMain() {\n";
+        nx_main << "    std::size_t rom_cache_size = 0;\n";
+        nx_main << "    if (nn::fs::QueryMountRomCacheSize(&rom_cache_size).IsFailure()) return;\n";
+        nx_main << "    void* rom_cache = std::malloc(rom_cache_size);\n";
+        nx_main << "    if (rom_cache == nullptr) return;\n";
+        nx_main << "    if (nn::fs::MountRom(\"rom\", rom_cache, rom_cache_size).IsFailure()) {\n";
+        nx_main << "        std::free(rom_cache);\n";
+        nx_main << "        return;\n";
+        nx_main << "    }\n";
+        nx_main << "    if (!NXSave_Init()) {\n";
+        nx_main << "        nn::fs::Unmount(\"rom\");\n";
+        nx_main << "        std::free(rom_cache);\n";
+        nx_main << "        return;\n";
+        nx_main << "    }\n";
+        nx_main << "    kwik_game_main();\n";
+        nx_main << "    NXSave_Shutdown();\n";
+        nx_main << "    nn::fs::Unmount(\"rom\");\n";
+        nx_main << "    std::free(rom_cache);\n";
+        nx_main << "}\n";
+    }
 
 #ifdef KWIK_SOURCE_ROOT
     fs::path kwik_root = KWIK_SOURCE_ROOT;
@@ -1474,6 +1510,120 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     if (!write_header(root / "KwikRef.h", "#pragma once\n#include <memory>\n")) return false;
     if (!write_header(root / "KwikSlot.h", "#pragma once\n#include <vector>\n")) return false;
     if (!write_header(root / "KwikValue.h", "#pragma once\n#include <KwikGML.h>\n")) return false;
+
+    if (options.target == "nx") {
+        auto read_text = [](const fs::path& path, std::string& out) {
+            std::ifstream input(path, std::ios::binary);
+            if (!input) return false;
+            out.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+            return true;
+        };
+        auto replace_all = [](std::string& text, const std::string& token, const std::string& value) {
+            size_t pos = 0;
+            while ((pos = text.find(token, pos)) != std::string::npos) {
+                text.replace(pos, token.size(), value);
+                pos += value.size();
+            }
+        };
+        auto xml_escape = [](std::string text) {
+            size_t pos = 0;
+            while ((pos = text.find('&', pos)) != std::string::npos) { text.replace(pos, 1, "&amp;"); pos += 5; }
+            pos = 0;
+            while ((pos = text.find('<', pos)) != std::string::npos) { text.replace(pos, 1, "&lt;"); pos += 4; }
+            pos = 0;
+            while ((pos = text.find('>', pos)) != std::string::npos) { text.replace(pos, 1, "&gt;"); pos += 4; }
+            return text;
+        };
+
+        fs::path template_dir = fs::absolute(options.nx_template_dir);
+        fs::path runtime_root = fs::absolute(options.nx_runtime_root);
+        fs::path icon_path = template_dir / "NintendoSDK_Application.bmp";
+        if (!fs::exists(runtime_root / "NX64/Debug/kwik_runtime.a")) {
+            std::fprintf(stderr, "[lift] NX runtime not found at %s\n",
+                         (runtime_root / "NX64/Debug/kwik_runtime.a").string().c_str());
+            return false;
+        }
+        if (!fs::is_regular_file(icon_path)) {
+            std::fprintf(stderr, "[lift] NX icon not found at %s\n", icon_path.string().c_str());
+            return false;
+        }
+        fs::create_directories(root / "romfs", ec);
+        if (ec) {
+            std::fprintf(stderr, "[lift] could not create NX romfs directory: %s\n", ec.message().c_str());
+            return false;
+        }
+        fs::copy_file(root / "Assets.dat", root / "romfs/Assets.dat",
+                      fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            std::fprintf(stderr, "[lift] could not stage Assets.dat in NX romfs: %s\n", ec.message().c_str());
+            return false;
+        }
+
+        std::string project_name = sanitize(gd.game_name());
+        if (project_name.empty() || project_name == "_") project_name = "KwikGame";
+        const std::string project_guid = "74A2622E-32B8-4EE4-9A76-7CCF52AB7EA1";
+        std::ostringstream sources;
+        for (const auto& entry : fs::directory_iterator(game_dir)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".cpp")
+                sources << "    <ClCompile Include=\"Game\\" << xml_escape(entry.path().filename().string())
+                        << "\" />\n";
+        }
+
+        std::ostringstream configurations;
+        std::ostringstream property_sheets;
+        for (const char* configuration : {"Debug", "Develop", "Release"}) {
+            configurations
+                << "  <PropertyGroup Condition=\"'$(Configuration)|$(Platform)'=='" << configuration
+                << "|NX64'\" Label=\"Configuration\">\n"
+                << "    <ConfigurationType>Application</ConfigurationType>\n"
+                << "    <UseDebugLibraries>" << (std::strcmp(configuration, "Debug") == 0 ? "true" : "false") << "</UseDebugLibraries>\n"
+                << "    <PlatformToolset>v143</PlatformToolset>\n"
+                << "    <NintendoSdkRoot>$(NINTENDO_SDK_ROOT)</NintendoSdkRoot>\n"
+                << "    <NintendoSdkSpec>NX</NintendoSdkSpec>\n"
+                << "    <NintendoSdkBuildType>" << configuration << "</NintendoSdkBuildType>\n"
+                << "  </PropertyGroup>\n";
+            property_sheets
+                << "  <ImportGroup Label=\"PropertySheets\" Condition=\"'$(Configuration)|$(Platform)'=='"
+                << configuration << "|NX64'\">\n"
+                << "    <Import Project=\"ImportNintendoSdk.props\" Condition=\"exists('ImportNintendoSdk.props')\" />\n"
+                << "  </ImportGroup>\n";
+        }
+
+        std::string project_template;
+        std::string solution_template;
+        std::string metadata_template;
+        std::string sdk_props_template;
+        if (!read_text(template_dir / "KwikGameNX.vcxproj.in", project_template) ||
+            !read_text(template_dir / "KwikGameNX.sln.in", solution_template) ||
+            !read_text(template_dir / "Application.aarch64.lp64.nmeta.in", metadata_template) ||
+            !read_text(template_dir / "ImportNintendoSdk.props.in", sdk_props_template)) {
+            std::fprintf(stderr, "[lift] could not read NX templates from %s\n", template_dir.string().c_str());
+            return false;
+        }
+        for (std::string* text : {&project_template, &solution_template}) {
+            replace_all(*text, "@PROJECT_NAME@", project_name);
+            replace_all(*text, "@PROJECT_GUID@", project_guid);
+        }
+        replace_all(metadata_template, "@PROJECT_NAME@", project_name);
+        replace_all(project_template, "@GAME_SOURCES@", sources.str());
+        replace_all(project_template, "@CONFIGURATIONS@", configurations.str());
+        replace_all(project_template, "@PROPERTY_SHEETS@", property_sheets.str());
+        replace_all(project_template, "@RUNTIME_ROOT@", xml_escape(runtime_root.string()));
+
+        if (!write_header(root / (project_name + ".vcxproj"), project_template) ||
+            !write_header(root / (project_name + ".sln"), solution_template) ||
+            !write_header(root / "Application.aarch64.lp64.nmeta", metadata_template) ||
+            !write_header(root / "ImportNintendoSdk.props", sdk_props_template)) return false;
+        fs::copy_file(icon_path, root / "NintendoSDK_Application.bmp",
+                      fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            std::fprintf(stderr, "[lift] could not copy NX icon: %s\n", ec.message().c_str());
+            return false;
+        }
+        fs::remove(root / "makefile", ec);
+        std::printf("wrote NX64 Visual Studio project %s.sln\n", project_name.c_str());
+        return true;
+    }
 
     if (kwik_runtime.empty() || !fs::exists(kwik_runtime)) {
 #ifdef _WIN32

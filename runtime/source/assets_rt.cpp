@@ -1,6 +1,9 @@
 #include "gml_runtime.h"
 #include "engine_internal.h"
 #include "render.h"
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+#include "NXFile.hpp"
+#endif
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -29,6 +32,42 @@ static std::vector<uint8_t> g_assets;
 static bool g_assets_tried = false;
 static std::vector<LoadedImage> g_images;
 
+static bool read_asset_file(const char* path, std::vector<unsigned char>& out) {
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    NXFile* file = NXFile_Open(path, "rb");
+    if (!file) return false;
+    if (NXFile_Seek(file, 0, SEEK_END) != 0) {
+        NXFile_Close(file);
+        return false;
+    }
+    long size = NXFile_Tell(file);
+    if (size <= 0 || NXFile_Seek(file, 0, SEEK_SET) != 0) {
+        NXFile_Close(file);
+        return false;
+    }
+    out.resize(static_cast<size_t>(size));
+    size_t count = NXFile_Read(out.data(), 1, out.size(), file);
+    NXFile_Close(file);
+    out.resize(count);
+    return !out.empty();
+#else
+    std::FILE* file = std::fopen(path, "rb");
+    if (!file) return false;
+    std::fseek(file, 0, SEEK_END);
+    long size = std::ftell(file);
+    std::fseek(file, 0, SEEK_SET);
+    if (size <= 0) {
+        std::fclose(file);
+        return false;
+    }
+    out.resize(static_cast<size_t>(size));
+    size_t count = std::fread(out.data(), 1, out.size(), file);
+    std::fclose(file);
+    out.resize(count);
+    return !out.empty();
+#endif
+}
+
 static uint32_t rd32(size_t o) {
     if (o + 4 > g_assets.size()) return 0;
     return g_assets[o] | (g_assets[o + 1] << 8) | (g_assets[o + 2] << 16) |
@@ -39,20 +78,8 @@ static void ensure_assets() {
     if (g_assets_tried) return;
     g_assets_tried = true;
     const char* path = g_assets_path.empty() ? "Assets.dat" : g_assets_path.c_str();
-    std::FILE* f = std::fopen(path, "rb");
-    if (f) {
-        std::fseek(f, 0, SEEK_END);
-        long n = std::ftell(f);
-        std::fseek(f, 0, SEEK_SET);
-        if (n > 0) {
-            g_assets.resize(n);
-            size_t got = std::fread(g_assets.data(), 1, n, f);
-            g_assets.resize(got);
-        }
-        std::fclose(f);
-    } else {
+    if (!read_asset_file(path, g_assets))
         std::fprintf(stderr, "[kwik] could not open %s\n", path);
-    }
     g_images.resize(g_image_count);
 }
 
@@ -321,13 +348,8 @@ uint32_t* kwik_tilemap_grid_mut(int blob, int cells) {
 }
 
 static bool load_sprite_from_file(const std::string& path, int xorig, int yorig, KwikSprite& s) {
-    std::FILE* f = std::fopen(kwik_resolve_read(path).c_str(), "rb");
-    if (!f) return false;
     std::vector<unsigned char> bytes;
-    char tmp[8192];
-    size_t n;
-    while ((n = std::fread(tmp, 1, sizeof(tmp), f)) > 0) bytes.insert(bytes.end(), tmp, tmp + n);
-    std::fclose(f);
+    if (!read_asset_file(kwik_resolve_read(path).c_str(), bytes)) return false;
     int w, h, ch;
     unsigned char* pixels =
         stbi_load_from_memory(bytes.data(), (int)bytes.size(), &w, &h, &ch, 4);

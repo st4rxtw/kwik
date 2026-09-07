@@ -1,5 +1,8 @@
 #include "gml_runtime.h"
 #include "engine_internal.h"
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+#include "NXFile.hpp"
+#endif
 
 #define MINIAUDIO_IMPLEMENTATION
 #define MA_NO_ENCODING
@@ -202,6 +205,24 @@ static bool init_voice_pcm(Voice* v, const unsigned char* data, unsigned int siz
 }
 
 static bool read_file_bytes(const std::string& path, std::vector<unsigned char>& out) {
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    NXFile* file = NXFile_Open(path.c_str(), "rb");
+    if (!file) return false;
+    if (NXFile_Seek(file, 0, SEEK_END) != 0) {
+        NXFile_Close(file);
+        return false;
+    }
+    long size = NXFile_Tell(file);
+    if (size <= 0 || NXFile_Seek(file, 0, SEEK_SET) != 0) {
+        NXFile_Close(file);
+        return false;
+    }
+    out.resize(static_cast<size_t>(size));
+    size_t count = NXFile_Read(out.data(), 1, out.size(), file);
+    NXFile_Close(file);
+    out.resize(count);
+    return !out.empty();
+#else
     std::FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) return false;
     std::fseek(f, 0, SEEK_END);
@@ -216,6 +237,7 @@ static bool read_file_bytes(const std::string& path, std::vector<unsigned char>&
     std::fclose(f);
     out.resize(got);
     return !out.empty();
+#endif
 }
 
 static Voice* start_voice(int what, bool loop) {

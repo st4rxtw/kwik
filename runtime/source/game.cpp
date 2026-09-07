@@ -4,6 +4,10 @@
 
 #include "gml_runtime.h"
 #include "engine_internal.h"
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+#include "NXFile.hpp"
+#include "NXSave.hpp"
+#endif
 #include "render.h"
 
 #include <algorithm>
@@ -80,20 +84,39 @@ static std::string normalize_slashes(const std::string& s) {
 
 std::string kwik_save_path(const std::string& rel_) {
     std::string rel = normalize_slashes(rel_);
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    const size_t mount = rel.find(':');
+    if (mount != std::string::npos) {
+        if (rel.compare(0, mount, "save") == 0)
+            return rel;
+        rel = rel.substr(mount + 1);
+    }
+    while (rel.rfind("./", 0) == 0)
+        rel.erase(0, 2);
+    while (!rel.empty() && rel.front() == '/')
+        rel.erase(0, 1);
+#endif
     if (rel.empty() || rel[0] == '/' || g_save_dir.empty()) return rel;
     return g_save_dir + "/" + rel;
 }
 
 static bool readable_file(const std::string& path) {
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    NXFile* file = NXFile_Open(path.c_str(), "rb");
+    if (!file) return false;
+    NXFile_Close(file);
+    return true;
+#else
     std::FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) return false;
     std::fclose(f);
     return true;
+#endif
 }
 
 std::string kwik_resolve_read(const std::string& rel_) {
     std::string rel = normalize_slashes(rel_);
-    if (rel.empty() || rel[0] == '/') return rel;
+    if (rel.empty() || rel[0] == '/' || rel.find(':') != std::string::npos) return rel;
     if (!g_save_dir.empty()) {
         std::string in_save = g_save_dir + "/" + rel;
         if (readable_file(in_save)) return in_save;
@@ -3769,6 +3792,8 @@ static std::string executable_dir() {
     DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
     if (n == 0 || n == MAX_PATH) return "";
     return std::filesystem::path(buf).parent_path().string();
+#elif defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    return "rom:";
 #elif defined(__vita__)
     return "app0:";
 #else
@@ -3823,9 +3848,17 @@ int run_game(const GameTables& tables) {
             root = std::string(home ? home : ".") + "/.local/share";
         }
 #endif
+    #if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+        g_save_dir = "save:";
+    #else
         g_save_dir = root + "/kwik/saves/" + clean;
+    #endif
         std::error_code ec;
+    #if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+        ec.clear();
+    #else
         std::filesystem::create_directories(g_save_dir, ec);
+    #endif
         if (ec) {
             std::fprintf(stderr, "[kwik] could not create save dir %s\n", g_save_dir.c_str());
             g_save_dir.clear();
