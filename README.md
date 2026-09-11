@@ -36,7 +36,8 @@ Kwik is a fast, open source, cross-platform runtime & recompiler for GameMaker S
 
 ## Development
 
-There is a release build but I heavily recommend using the [dev](https://github.com/st4rxtw/kwik/tree/dev) branch since it implements more GMS2 functions that your project probably uses.
+There are release builds but I heavily recommend using the [dev](https://github.com/st4rxtw/kwik/tree/dev) branch since it implements more GMS2 functions that your project probably uses. (Unless the main branch is up-to-date with the dev branch)
+
 The best way to set up kwik is:
 1. Clone the repository
 2. Build kwik compiler & runtime (if you're on Windows OR building for PSVita check the [docs](docs/) folder)
