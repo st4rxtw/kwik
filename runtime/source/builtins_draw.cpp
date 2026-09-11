@@ -260,19 +260,55 @@ GMLFN(draw_surface_ext) {
     return Value();
 }
 
+static void draw_rectangle_transformed(double x1, double y1, double x2, double y2, unsigned int c1,
+                                       unsigned int c2, unsigned int c3, unsigned int c4,
+                                       bool outline, double alpha) {
+    double px[4], py[4];
+    kwik_world_transform_point(x1, y1, px[0], py[0]);
+    kwik_world_transform_point(x2 + 1, y1, px[1], py[1]);
+    kwik_world_transform_point(x2 + 1, y2 + 1, px[2], py[2]);
+    kwik_world_transform_point(x1, y2 + 1, px[3], py[3]);
+    if (outline) {
+        render_primitive_begin(3, 0);
+        for (int i = 0; i < 4; ++i) render_primitive_vertex(px[i], py[i], 0, 0, c1, alpha, false);
+        render_primitive_vertex(px[0], py[0], 0, 0, c1, alpha, false);
+        render_primitive_end();
+        return;
+    }
+    render_primitive_begin(4, 0);
+    unsigned int cc[4] = {c1, c2, c3, c4};
+    const int idx[6] = {0, 1, 2, 0, 2, 3};
+    for (int i : idx) render_primitive_vertex(px[i], py[i], 0, 0, cc[i], alpha, false);
+    render_primitive_end();
+}
+
 GMLFN(draw_rectangle) {
     (void)self;
     if (argc < 5) return Value();
-    render_draw_rectangle(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2), A(args, argc, 3),
-                          gml_truthy(args[4]));
+    double x1 = A(args, argc, 0), y1 = A(args, argc, 1), x2 = A(args, argc, 2),
+           y2 = A(args, argc, 3);
+    bool outline = gml_truthy(args[4]);
+    if (kwik_world_transform_active()) {
+        unsigned int c = render_get_color();
+        draw_rectangle_transformed(x1, y1, x2, y2, c, c, c, c, outline, render_get_alpha());
+        return Value();
+    }
+    render_draw_rectangle(x1, y1, x2, y2, outline);
     return Value();
 }
 GMLFN(draw_rectangle_color) {
     (void)self;
     if (argc < 9) return Value();
-    render_draw_rectangle_color(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2),
-                                A(args, argc, 3), C(args, argc, 4), C(args, argc, 5),
-                                C(args, argc, 6), C(args, argc, 7), gml_truthy(args[8]));
+    double x1 = A(args, argc, 0), y1 = A(args, argc, 1), x2 = A(args, argc, 2),
+           y2 = A(args, argc, 3);
+    unsigned int c1 = C(args, argc, 4), c2 = C(args, argc, 5), c3 = C(args, argc, 6),
+                c4 = C(args, argc, 7);
+    bool outline = gml_truthy(args[8]);
+    if (kwik_world_transform_active()) {
+        draw_rectangle_transformed(x1, y1, x2, y2, c1, c2, c3, c4, outline, render_get_alpha());
+        return Value();
+    }
+    render_draw_rectangle_color(x1, y1, x2, y2, c1, c2, c3, c4, outline);
     return Value();
 }
 GMLFN(draw_rectangle_colour) { return draw_rectangle_color(self, args, argc); }

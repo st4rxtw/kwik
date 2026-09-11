@@ -731,6 +731,7 @@ void kwik_draw_text_ext_rt(double x, double y, const std::string& text, double s
 
 void kwik_draw_text_rt(double x, double y, const std::string& text, double xs, double ys,
                        double angle) {
+    if (kwik_world_transform_active()) kwik_world_transform_compose(x, y, angle, xs, ys);
     int font = current_font_or_default();
     static int dbg_left = std::getenv("KWIK_DEBUG_TEXT") ? 40 : 0;
     if (dbg_left > 0 && !text.empty()) {

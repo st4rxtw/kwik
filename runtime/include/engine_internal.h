@@ -93,6 +93,10 @@ void kwik_draw_image_part(int image, double sx, double sy, double sw, double sh,
 void kwik_draw_image_part_rot(int image, double sx, double sy, double sw, double sh, double dx,
                               double dy, double ox, double oy, double xs, double ys, double angle,
                               unsigned int blend, double alpha);
+bool kwik_world_transform_active();
+void kwik_world_transform_point(double x, double y, double& ox, double& oy);
+void kwik_world_transform_compose(double& x, double& y, double& angle_deg, double& xscale,
+                                  double& yscale);
 bool kwik_ds_list_push(int list, const Value& v);
 extern int g_gpu_blendmode;
 extern int g_gpu_blend_src;

@@ -651,6 +651,39 @@ static void add_world_matrix(const double m[16]) {
     set_world_matrix(out);
 }
 
+static bool g_world_active = false;
+
+static bool mat16_is_identity(const double* m) {
+    static const double id[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    for (int i = 0; i < 16; ++i)
+        if (std::fabs(m[i] - id[i]) > 1e-9) return false;
+    return true;
+}
+
+bool kwik_world_transform_active() { return g_world_active; }
+
+void kwik_world_transform_point(double x, double y, double& ox, double& oy) {
+    const double* m = g_matrix_store[2];
+    ox = x * m[0] + y * m[4] + m[12];
+    oy = x * m[1] + y * m[5] + m[13];
+}
+
+void kwik_world_transform_compose(double& x, double& y, double& angle_deg, double& xscale,
+                                  double& yscale) {
+    const double* m = g_matrix_store[2];
+    double ox, oy;
+    kwik_world_transform_point(x, y, ox, oy);
+    double wrot_deg = std::atan2(m[1], m[0]) * 180.0 / 3.14159265358979323846;
+    double wsx = std::sqrt(m[0] * m[0] + m[1] * m[1]);
+    double rad = wrot_deg * 3.14159265358979323846 / 180.0;
+    double wsy = m[4] * -std::sin(rad) + m[5] * std::cos(rad);
+    x = ox;
+    y = oy;
+    angle_deg -= wrot_deg;
+    xscale *= wsx;
+    yscale *= wsy;
+}
+
 GMLFN(matrix_build_identity) {
     (void)self; (void)args; (void)argc;
     static const double id[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
@@ -754,6 +787,7 @@ GMLFN(matrix_set) {
         mat_read(args[1], g_matrix_store[which]);
         render_set_matrix(which, g_matrix_store[which]);
     }
+    if (which == 2) g_world_active = !mat16_is_identity(g_matrix_store[2]);
     return Value();
 }
 GMLFN(matrix_multiply) {
