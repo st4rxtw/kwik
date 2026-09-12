@@ -50,6 +50,20 @@ static std::string builtin_call_name(const std::string& raw) {
     return sanitize(raw);
 }
 
+static std::string fnref_symbol_name(const GameData& gd, const std::string& fn) {
+    if (fn.rfind("gml_", 0) == 0) return fn;
+    int32_t idx = gd.script_code_index(fn);
+    if (idx >= 0 && (size_t)idx < gd.code().size()) return gd.code()[idx].name;
+    return fn;
+}
+
+static std::string fnref_display_name(const std::string& raw, const std::string& symbol) {
+    if (raw.rfind("gml_", 0) != 0) return raw;
+    if (symbol.rfind("gml_Script_", 0) == 0) return symbol.substr(11);
+    if (symbol.rfind("gml_GlobalScript_", 0) == 0) return symbol.substr(17);
+    return symbol;
+}
+
 static int width_of_type(uint8_t t) {
     switch (t) {
         case 0x0: case 0x3: return 8;
@@ -187,7 +201,7 @@ static int bytes_to_slots(LiftCtx& ctx, const std::vector<Slot>& s, int from_top
         --idx;
         ++n;
     }
-    if (total != bytes && ctx.warn_count++ < 8)
+    if (total < bytes && ctx.warn_count++ < 8)
         std::fprintf(stderr, "[lift] %s: byte/slot mismatch (%d wanted, %d got)\n",
                      ctx.e.name.c_str(), bytes, total);
     return n;
@@ -364,9 +378,9 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
             } else if (in.type1 == 0x2) {
                 std::string fn = gd.function_at_call(in.address + 4);
                 if (!fn.empty()) {
-                    std::string plain =
-                        fn.rfind("gml_Script_", 0) == 0 ? fn.substr(11) : fn;
-                    rhs = "kwik_make_fnref(&" + sanitize(fn) + ", " + quote(plain) + ")";
+                    std::string symbol = fnref_symbol_name(gd, fn);
+                    std::string plain = fnref_display_name(fn, symbol);
+                    rhs = "kwik_make_fnref(&" + sanitize(symbol) + ", " + quote(plain) + ")";
                 } else {
                     rhs = std::to_string((int32_t)in.extra);
                     is_c = true;
@@ -641,18 +655,21 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                     *out << "    " << S(base) << " = " << S(d() - 1) << ";\n";
             } else if (fn == "@@NullObject@@") {
                 if (out) *out << "    " << S(base) << " = Value(-4.0);\n";
+            } else if (fn == "@@Global@@") {
+                if (out) *out << "    " << S(base) << " = Value(-5.0);\n";
             } else if (fn == "@@SetStatic@@") {
                 ctx.uses_statics = true;
-                if (out)
-                    *out << "    __static_ok = true;\n    " << S(base) << " = Value();\n";
+                if (out) *out << "    " << S(base) << " = Value();\n";
             } else if (fn == "@@CopyStatic@@") {
                 ctx.uses_statics = true;
                 if (out)
                     *out << "    kwik_copy_static_from(__statics, " << S(base) << ");\n    "
                          << S(base) << " = Value();\n";
+            } else if (fn == "@@throw@@") {
+                if (out) *out << "    return Value();\n";
+                falls = false;
             } else if (fn == "@@try_hook@@" || fn == "@@try_unhook@@" ||
-                       fn == "@@throw@@" || fn == "@@finish_catch@@" ||
-                       fn == "@@finish_finally@@") {
+                       fn == "@@finish_catch@@" || fn == "@@finish_finally@@") {
                 if (out) *out << "    " << S(base) << " = Value();\n";
             } else if (fn == "@@NewGMLArray@@") {
                 emit_args("kwik_new_array(", ")");
@@ -670,7 +687,7 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                 emit_args(builtin_call_name(fn) + "(self, ", ")");
             }
             pop(argcN);
-            push(16);
+            if (falls) push(16);
             break;
         }
 
@@ -810,9 +827,10 @@ static void exec_instr(LiftCtx& ctx, size_t i, StackState& st, std::ostream* out
                     std::string fn = gd.function_at_call(in.address + 4);
                     if (fn.empty() && atype == 5) fn = gd.function_by_index((uint32_t)aidx);
                     if (!fn.empty()) {
-                        std::string plain = fn.rfind("gml_Script_", 0) == 0 ? fn.substr(11) : fn;
+                        std::string symbol = fnref_symbol_name(gd, fn);
+                        std::string plain = fnref_display_name(fn, symbol);
                         if (out)
-                            *out << "    " << S(d()) << " = kwik_make_fnref(&" << sanitize(fn)
+                            *out << "    " << S(d()) << " = kwik_make_fnref(&" << sanitize(symbol)
                                  << ", " << quote(plain) << ");\n";
                     } else if (atype == 5) {
                         warn(ctx, in.address, "pushref: unknown script index");
@@ -1127,7 +1145,8 @@ static void emit_object_table(std::ostream& os, const GameData& gd) {
         os << "    { ObjectDef& d = g_objects[" << i << "]; d.name = " << quote(g.name)
            << "; d.sprite_index = " << g.sprite_index << "; d.parent_index = " << g.parent_index
            << "; d.mask_index = " << g.mask_index << "; d.persistent = " << (g.persistent ? 1 : 0)
-           << "; d.visible = " << (g.visible ? 1 : 0) << "; d.depth = " << g.depth << ";";
+           << "; d.visible = " << (g.visible ? 1 : 0) << "; d.solid = " << (g.solid ? 1 : 0)
+           << "; d.depth = " << g.depth << ";";
         set(os, "pre_create", s.pre_create);
         set(os, "create", s.create);
         set(os, "destroy", s.destroy);
@@ -1243,7 +1262,7 @@ bool emit_cpp(const GameData&, const std::string&) {
     return false;
 }
 
-bool emit_dir(const GameData& gd, const std::string& out_dir) {
+bool emit_dir(const GameData& gd, const std::string& out_dir, const ExportOptions& options) {
     namespace fs = std::filesystem;
     fs::path root(out_dir);
     fs::path game_dir = root / "Game";
@@ -1390,8 +1409,13 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     }
     data << "    { \"\", nullptr },\n};\n";
     data << "static const int g_script_entry_count = " << script_count << ";\n\n";
-    data << "int main(int argc, char** argv) {\n";
-    data << "    kwik_set_program_args(argc, argv);\n";
+    if (options.target == "nx") {
+        data << "void kwik_game_main() {\n";
+        data << "    kwik_set_program_args(0, nullptr);\n";
+    } else {
+        data << "int main(int argc, char** argv) {\n";
+        data << "    kwik_set_program_args(argc, argv);\n";
+    }
     data << "    kwik_fill_objects();\n";
     data << "    GameTables t{};\n";
     data << "    t.objects = g_objects;\n";
@@ -1404,16 +1428,47 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     }
     data << "    t.scripts = g_script_entries;\n";
     data << "    t.script_count = g_script_entry_count;\n";
-    data << "    t.assets_path = \"Assets.dat\";\n";
+    data << "    t.assets_path = \"" << (options.target == "nx" ? "rom:/Assets.dat" : "Assets.dat") << "\";\n";
     data << "    t.game_name = " << quote(gd.display_name()) << ";\n";
     data << "    t.save_id = " << quote(gd.game_name()) << ";\n";
     data << "    t.window_w = " << gd.window_w() << ";\n";
     data << "    t.window_h = " << gd.window_h() << ";\n";
     data << "    t.game_fps = " << gd.game_fps() << ";\n";
     data << "    t.start_room = " << gd.start_room() << ";\n";
-    data << "    return gml::run_game(t);\n";
+    if (options.target == "nx")
+        data << "    (void)gml::run_game(t);\n";
+    else
+        data << "    return gml::run_game(t);\n";
     data << "}\n";
     data.close();
+
+    if (options.target == "nx") {
+        std::ofstream nx_main(root / "nnMain.cpp", std::ios::binary);
+        if (!nx_main) return false;
+        nx_main << "#include <cstdlib>\n";
+        nx_main << "#include <nn/fs.h>\n\n";
+        nx_main << "#include \"NXSave.hpp\"\n\n";
+        nx_main << "extern void kwik_game_main();\n\n";
+        nx_main << "extern \"C\" void nnMain() {\n";
+        nx_main << "    std::size_t rom_cache_size = 0;\n";
+        nx_main << "    if (nn::fs::QueryMountRomCacheSize(&rom_cache_size).IsFailure()) return;\n";
+        nx_main << "    void* rom_cache = std::malloc(rom_cache_size);\n";
+        nx_main << "    if (rom_cache == nullptr) return;\n";
+        nx_main << "    if (nn::fs::MountRom(\"rom\", rom_cache, rom_cache_size).IsFailure()) {\n";
+        nx_main << "        std::free(rom_cache);\n";
+        nx_main << "        return;\n";
+        nx_main << "    }\n";
+        nx_main << "    if (!NXSave_Init()) {\n";
+        nx_main << "        nn::fs::Unmount(\"rom\");\n";
+        nx_main << "        std::free(rom_cache);\n";
+        nx_main << "        return;\n";
+        nx_main << "    }\n";
+        nx_main << "    kwik_game_main();\n";
+        nx_main << "    NXSave_Shutdown();\n";
+        nx_main << "    nn::fs::Unmount(\"rom\");\n";
+        nx_main << "    std::free(rom_cache);\n";
+        nx_main << "}\n";
+    }
 
 #ifdef KWIK_SOURCE_ROOT
     fs::path kwik_root = KWIK_SOURCE_ROOT;
@@ -1424,6 +1479,20 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     fs::path kwik_runtime = KWIK_RUNTIME_ARCHIVE;
 #else
     fs::path kwik_runtime;
+#endif
+
+#ifdef _WIN32
+    if (kwik_runtime.empty() || !fs::exists(kwik_runtime)) {
+        fs::path runtime_build = kwik_runtime;
+        if (runtime_build.filename() == "libkwik_runtime.a") runtime_build = runtime_build.parent_path();
+        for (const char* configuration : { "Debug", "Release" }) {
+            fs::path candidate = runtime_build / configuration / "kwik_runtime.lib";
+            if (fs::exists(candidate)) {
+                kwik_runtime = candidate;
+                break;
+            }
+        }
+    }
 #endif
 
     if (kwik_root.empty()) return false;
@@ -1444,33 +1513,175 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     if (!write_header(root / "KwikSlot.h", "#pragma once\n#include <vector>\n")) return false;
     if (!write_header(root / "KwikValue.h", "#pragma once\n#include <KwikGML.h>\n")) return false;
 
+    if (options.target == "nx") {
+        auto read_text = [](const fs::path& path, std::string& out) {
+            std::ifstream input(path, std::ios::binary);
+            if (!input) return false;
+            out.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+            return true;
+        };
+        auto replace_all = [](std::string& text, const std::string& token, const std::string& value) {
+            size_t pos = 0;
+            while ((pos = text.find(token, pos)) != std::string::npos) {
+                text.replace(pos, token.size(), value);
+                pos += value.size();
+            }
+        };
+        auto xml_escape = [](std::string text) {
+            size_t pos = 0;
+            while ((pos = text.find('&', pos)) != std::string::npos) { text.replace(pos, 1, "&amp;"); pos += 5; }
+            pos = 0;
+            while ((pos = text.find('<', pos)) != std::string::npos) { text.replace(pos, 1, "&lt;"); pos += 4; }
+            pos = 0;
+            while ((pos = text.find('>', pos)) != std::string::npos) { text.replace(pos, 1, "&gt;"); pos += 4; }
+            return text;
+        };
+
+        fs::path template_dir = fs::absolute(options.nx_template_dir);
+        fs::path runtime_root = fs::absolute(options.nx_runtime_root);
+        fs::path icon_path = template_dir / "NintendoSDK_Application.bmp";
+        if (!fs::exists(runtime_root / "NX64/Debug/kwik_runtime.a")) {
+            std::fprintf(stderr, "[lift] NX runtime not found at %s\n",
+                         (runtime_root / "NX64/Debug/kwik_runtime.a").string().c_str());
+            return false;
+        }
+        if (!fs::is_regular_file(icon_path)) {
+            std::fprintf(stderr, "[lift] NX icon not found at %s\n", icon_path.string().c_str());
+            return false;
+        }
+        fs::create_directories(root / "romfs", ec);
+        if (ec) {
+            std::fprintf(stderr, "[lift] could not create NX romfs directory: %s\n", ec.message().c_str());
+            return false;
+        }
+        fs::copy_file(root / "Assets.dat", root / "romfs/Assets.dat",
+                      fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            std::fprintf(stderr, "[lift] could not stage Assets.dat in NX romfs: %s\n", ec.message().c_str());
+            return false;
+        }
+
+        std::string project_name = sanitize(gd.game_name());
+        if (project_name.empty() || project_name == "_") project_name = "KwikGame";
+        const std::string project_guid = "74A2622E-32B8-4EE4-9A76-7CCF52AB7EA1";
+        std::ostringstream sources;
+        for (const auto& entry : fs::directory_iterator(game_dir)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".cpp")
+                sources << "    <ClCompile Include=\"Game\\" << xml_escape(entry.path().filename().string())
+                        << "\" />\n";
+        }
+
+        std::ostringstream configurations;
+        std::ostringstream property_sheets;
+        for (const char* configuration : {"Debug", "Develop", "Release"}) {
+            configurations
+                << "  <PropertyGroup Condition=\"'$(Configuration)|$(Platform)'=='" << configuration
+                << "|NX64'\" Label=\"Configuration\">\n"
+                << "    <ConfigurationType>Application</ConfigurationType>\n"
+                << "    <UseDebugLibraries>" << (std::strcmp(configuration, "Debug") == 0 ? "true" : "false") << "</UseDebugLibraries>\n"
+                << "    <PlatformToolset>v143</PlatformToolset>\n"
+                << "    <NintendoSdkRoot>$(NINTENDO_SDK_ROOT)</NintendoSdkRoot>\n"
+                << "    <NintendoSdkSpec>NX</NintendoSdkSpec>\n"
+                << "    <NintendoSdkBuildType>" << configuration << "</NintendoSdkBuildType>\n"
+                << "  </PropertyGroup>\n";
+            property_sheets
+                << "  <ImportGroup Label=\"PropertySheets\" Condition=\"'$(Configuration)|$(Platform)'=='"
+                << configuration << "|NX64'\">\n"
+                << "    <Import Project=\"ImportNintendoSdk.props\" Condition=\"exists('ImportNintendoSdk.props')\" />\n"
+                << "  </ImportGroup>\n";
+        }
+
+        std::string project_template;
+        std::string solution_template;
+        std::string metadata_template;
+        std::string sdk_props_template;
+        if (!read_text(template_dir / "KwikGameNX.vcxproj.in", project_template) ||
+            !read_text(template_dir / "KwikGameNX.sln.in", solution_template) ||
+            !read_text(template_dir / "Application.aarch64.lp64.nmeta.in", metadata_template) ||
+            !read_text(template_dir / "ImportNintendoSdk.props.in", sdk_props_template)) {
+            std::fprintf(stderr, "[lift] could not read NX templates from %s\n", template_dir.string().c_str());
+            return false;
+        }
+        for (std::string* text : {&project_template, &solution_template}) {
+            replace_all(*text, "@PROJECT_NAME@", project_name);
+            replace_all(*text, "@PROJECT_GUID@", project_guid);
+        }
+        replace_all(metadata_template, "@PROJECT_NAME@", project_name);
+        replace_all(project_template, "@GAME_SOURCES@", sources.str());
+        replace_all(project_template, "@CONFIGURATIONS@", configurations.str());
+        replace_all(project_template, "@PROPERTY_SHEETS@", property_sheets.str());
+        replace_all(project_template, "@RUNTIME_ROOT@", xml_escape(runtime_root.string()));
+
+        if (!write_header(root / (project_name + ".vcxproj"), project_template) ||
+            !write_header(root / (project_name + ".sln"), solution_template) ||
+            !write_header(root / "Application.aarch64.lp64.nmeta", metadata_template) ||
+            !write_header(root / "ImportNintendoSdk.props", sdk_props_template)) return false;
+        fs::copy_file(icon_path, root / "NintendoSDK_Application.bmp",
+                      fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            std::fprintf(stderr, "[lift] could not copy NX icon: %s\n", ec.message().c_str());
+            return false;
+        }
+        fs::remove(root / "makefile", ec);
+        std::printf("wrote NX64 Visual Studio project %s.sln\n", project_name.c_str());
+        return true;
+    }
+
     if (kwik_runtime.empty() || !fs::exists(kwik_runtime)) {
+#ifdef _WIN32
+        std::fprintf(stderr, "[lift] kwik_runtime.lib not found in build/runtime/Debug or build/runtime/Release; build kwik_runtime before exporting\n");
+#else
         std::fprintf(stderr, "[lift] libkwik_runtime.a not found; build kwik_runtime before exporting\n");
+#endif
         return false;
     }
-    fs::copy_file(kwik_runtime, root / "libkwik_runtime.a", fs::copy_options::overwrite_existing, ec);
+#ifdef _WIN32
+    const char* exported_runtime_name = "kwik_runtime.lib";
+#else
+    const char* exported_runtime_name = "libkwik_runtime.a";
+#endif
+    fs::copy_file(kwik_runtime, root / exported_runtime_name, fs::copy_options::overwrite_existing, ec);
     if (ec) return false;
 
     std::ofstream mk(root / "makefile", std::ios::binary);
     if (!mk) return false;
+#ifdef _WIN32
+    mk << "COMPILER ?= cl\n";
+    mk << "GLFW_DIR ?= C:/Libraries/glfw\n";
+    mk << "KWIK_RUNTIME ?= kwik_runtime.lib\n";
+    mk << "TARGET ?= $(notdir $(CURDIR))\n";
+    mk << "COMPILEOPTS ?= /std:c++20 /O2 /EHsc /MD\n";
+    mk << "COMPILEOPTS += /I Game /I . /I \"$(GLFW_DIR)/include\"\n";
+    mk << "SOURCES := $(wildcard Game/*.cpp)\n";
+    mk << "OBJECTS := $(patsubst Game/%.cpp,out/%.obj,$(SOURCES))\n";
+    mk << "LINKLIBS := $(KWIK_RUNTIME) \"$(GLFW_DIR)/lib/glfw3.lib\" legacy_stdio_definitions.lib opengl32.lib gdi32.lib user32.lib shell32.lib\n\n";
+    mk << ".PHONY: all clean\n\n";
+    mk << "all: $(TARGET)\n\n";
+    mk << "$(TARGET): $(OBJECTS) $(KWIK_RUNTIME)\n";
+    mk << "\t$(COMPILER) $(OBJECTS) /Fe:$@ $(LINKLIBS)\n\n";
+    mk << "out/%.obj: Game/%.cpp Game/pch.hpp\n";
+    mk << "\t@if not exist out mkdir out\n";
+    mk << "\t$(COMPILER) $(COMPILEOPTS) /c /Fo\"$@\" \"$<\"\n\n";
+    mk << "clean:\n";
+    mk << "\t@if exist out rmdir /s /q out\n";
+    mk << "\t@if exist $(TARGET).exe del /q $(TARGET).exe\n";
+#else
     mk << "SHELL := /bin/bash\n";
     mk << "COMPILER ?= c++\n";
     mk << "KWIK_RUNTIME ?= libkwik_runtime.a\n";
-    mk << "KWIK_BACKEND ?= glfw\n";
     mk << "TARGET ?= $(notdir $(CURDIR))\n";
     mk << "COMPILEOPTS ?= -std=c++20 -O2\n";
     mk << "COMPILEOPTS += -I Game -I .\n";
     mk << "SOURCES := $(wildcard Game/*.cpp)\n";
     mk << "OBJECTS := $(patsubst Game/%.cpp,out/%.o,$(SOURCES))\n";
-    mk << "ifeq ($(KWIK_BACKEND),sdl2)\n";
-    mk << "BACKEND_CFLAGS := $(shell pkg-config --cflags sdl2)\n";
-    mk << "BACKEND_LIBS := $(shell pkg-config --libs sdl2)\n";
-    mk << "else\n";
+    mk << "OBJECTS_RSP := out/objects.rsp\n";
     mk << "BACKEND_CFLAGS := $(shell pkg-config --cflags glfw3)\n";
     mk << "BACKEND_LIBS := $(shell pkg-config --libs glfw3) -lGL\n";
-    mk << "endif\n";
+    mk << "FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil libswscale libswresample 2>/dev/null)\n";
+    mk << "FFMPEG_LIBS := $(shell pkg-config --libs libavformat libavcodec libavutil libswscale libswresample 2>/dev/null)\n";
     mk << "COMPILEOPTS += $(BACKEND_CFLAGS)\n";
-    mk << "LINKLIBS := $(KWIK_RUNTIME) $(BACKEND_LIBS) -ldl -lpthread -lm\n\n";
+    mk << "COMPILEOPTS += $(FFMPEG_CFLAGS)\n";
+    mk << "LINKLIBS := $(KWIK_RUNTIME) $(BACKEND_LIBS) $(FFMPEG_LIBS) -ldl -lpthread -lm\n\n";
     mk << "VITASDK ?= /usr/local/vitasdk\n";
     mk << "KWIK_DIR ?= " << kwik_root.string() << "\n";
     mk << "VITA_PREFIX ?= arm-vita-eabi\n";
@@ -1482,13 +1693,21 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     mk << "VITA_RUNTIME_BUILD ?= $(VITA_BUILD)/runtime-build\n";
     mk << "VITA_RUNTIME := $(VITA_RUNTIME_BUILD)/runtime/libkwik_runtime.a\n";
     mk << "VITA_OBJECTS := $(patsubst Game/%.cpp,$(VITA_BUILD)/%.o,$(SOURCES))\n";
+    mk << "VITA_OBJECTS_RSP := $(VITA_BUILD)/objects.rsp\n";
     mk << "VITA_COMPILEOPTS ?= -std=c++20 -O2 -I Game -I .\n";
     mk << "VITA_LDFLAGS ?= -Wl,-q -Wl,-z,nocopyreloc\n";
-    mk << "VITA_LINKLIBS := $(VITA_RUNTIME) -lvitaGL -lSceCommonDialog_stub -lSceGxm_stub -lSceDisplay_stub -lSceAppMgr_stub -lSceCtrl_stub -lSceAudio_stub -lmathneon -lvitashark -lSceShaccCgExt -ltaihen_stub -lSceShaccCg_stub -lSceKernelDmacMgr_stub -lpthread -lm\n\n";
+    mk << "VITA_PKG_CONFIG := PKG_CONFIG_DIR= PKG_CONFIG_PATH= PKG_CONFIG_SYSROOT_DIR= PKG_CONFIG_LIBDIR=$(VITASDK)/arm-vita-eabi/lib/pkgconfig:$(VITASDK)/arm-vita-eabi/share/pkgconfig pkg-config\n";
+    mk << "VITA_FFMPEG_CFLAGS := $(shell $(VITA_PKG_CONFIG) --cflags libavformat libavcodec libavutil libswscale libswresample 2>/dev/null)\n";
+    mk << "VITA_FFMPEG_LIBS := $(shell $(VITA_PKG_CONFIG) --libs libavformat libavcodec libavutil libswscale libswresample 2>/dev/null)\n";
+    mk << "VITA_COMPILEOPTS += $(VITA_FFMPEG_CFLAGS)\n";
+    mk << "VITA_LINKLIBS := $(VITA_RUNTIME) $(VITA_FFMPEG_LIBS) -lvitaGL -lSceCommonDialog_stub -lSceGxm_stub -lSceDisplay_stub -lSceAppMgr_stub -lSceCtrl_stub -lSceAudio_stub -lmathneon -lvitashark -lSceShaccCgExt -ltaihen_stub -lSceShaccCg_stub -lSceKernelDmacMgr_stub -lpthread -lm\n\n";
     mk << ".PHONY: all clean vita vita-runtime vita-vpk\n\n";
     mk << "all: $(TARGET)\n\n";
-    mk << "$(TARGET): $(OBJECTS) $(KWIK_RUNTIME)\n";
-    mk << "\t$(COMPILER) $(OBJECTS) -o $@ $(LINKLIBS)\n\n";
+    mk << "$(TARGET): $(OBJECTS_RSP) $(KWIK_RUNTIME)\n";
+    mk << "\t$(COMPILER) @$(OBJECTS_RSP) -o $@ $(LINKLIBS)\n\n";
+    mk << "$(OBJECTS_RSP): $(OBJECTS)\n";
+    mk << "\t@mkdir -p out\n";
+    mk << "\t$(file >$@,$(OBJECTS))\n\n";
     mk << "out/%.o: Game/%.cpp Game/pch.hpp\n";
     mk << "\t@mkdir -p out\n";
     mk << "\t$(COMPILER) $(COMPILEOPTS) -c -o $@ $<\n\n";
@@ -1501,8 +1720,11 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     mk << "$(VITA_BUILD)/%.o: Game/%.cpp Game/pch.hpp\n";
     mk << "\t@mkdir -p \"$(VITA_BUILD)\"\n";
     mk << "\t$(VITA_CXX) $(VITA_COMPILEOPTS) -c -o $@ $<\n\n";
-    mk << "$(VITA_BUILD)/$(TARGET).elf: $(VITA_OBJECTS) $(VITA_RUNTIME)\n";
-    mk << "\t$(VITA_CXX) $(VITA_LDFLAGS) $(VITA_OBJECTS) -o $@ $(VITA_LINKLIBS)\n\n";
+    mk << "$(VITA_BUILD)/$(TARGET).elf: $(VITA_OBJECTS_RSP) $(VITA_RUNTIME)\n";
+    mk << "\t$(VITA_CXX) $(VITA_LDFLAGS) @$(VITA_OBJECTS_RSP) -o $@ $(VITA_LINKLIBS)\n\n";
+    mk << "$(VITA_OBJECTS_RSP): $(VITA_OBJECTS)\n";
+    mk << "\t@mkdir -p \"$(VITA_BUILD)\"\n";
+    mk << "\t$(file >$@,$(VITA_OBJECTS))\n\n";
     mk << "$(VITA_BUILD)/$(TARGET).velf: $(VITA_BUILD)/$(TARGET).elf\n";
     mk << "\t$(VITASDK)/bin/vita-elf-create $< $@\n\n";
     mk << "$(VITA_BUILD)/eboot.bin: $(VITA_BUILD)/$(TARGET).velf\n";
@@ -1514,6 +1736,7 @@ bool emit_dir(const GameData& gd, const std::string& out_dir) {
     mk << "\t@set -e; args=\"-s $(VITA_BUILD)/param.sfo -b $(VITA_BUILD)/eboot.bin\"; if [ -f Assets.dat ]; then args=\"$$args -a Assets.dat=Assets.dat\"; fi; if [ -f sce_sys/icon0.png ]; then args=\"$$args -a sce_sys/icon0.png=sce_sys/icon0.png\"; fi; if [ -d sce_sys/livearea ]; then while IFS= read -r f; do args=\"$$args -a $$f=$$f\"; done < <(find sce_sys/livearea -type f -print); fi; eval \"$(VITASDK)/bin/vita-pack-vpk $$args $(TARGET).vpk\"\n\n";
     mk << "clean:\n";
     mk << "\trm -rf out $(TARGET) $(TARGET).vpk\n";
+#endif
     mk.close();
 
     fs::remove(root / "CMakeLists.txt", ec);

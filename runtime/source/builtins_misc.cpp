@@ -5,12 +5,23 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <string>
 #include <utility>
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#elif !defined(__vita__)
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 namespace gml {
 
 static double A(const Value* args, int argc, int i, double dflt = 0.0) {
     return i < argc ? (double)args[i] : dflt;
+}
+static std::string S(const Value* args, int argc, int i) {
+    return i < argc ? (std::string)args[i] : std::string();
 }
 
 static bool autoz_enabled() {
@@ -34,29 +45,68 @@ static bool autoz_pressed(int vk) {
     return (g_frame_counter % 16) == 0;
 }
 
+static int g_keyboard_map[512];
+static bool g_keyboard_map_init = false;
+
+static void ensure_keyboard_map() {
+    if (g_keyboard_map_init) return;
+    g_keyboard_map_init = true;
+    for (int i = 0; i < 512; ++i)
+        g_keyboard_map[i] = i;
+}
+
+static bool keyboard_any_mapped(int vk, bool (*fn)(int)) {
+    ensure_keyboard_map();
+    if (vk == 1) {
+        for (int i = 2; i < 512; ++i)
+            if (fn(i)) return true;
+        return false;
+    }
+    if (vk < 0 || vk >= 512) return false;
+    if (fn(vk)) return true;
+    for (int key = 0; key < 512; ++key)
+        if (key != vk && g_keyboard_map[key] == vk && fn(key))
+            return true;
+    return false;
+}
+
+bool kwik_keyboard_mapped_down(int vk) { return keyboard_any_mapped(vk, render_key_down); }
+bool kwik_keyboard_mapped_pressed(int vk) { return keyboard_any_mapped(vk, render_key_pressed); }
+bool kwik_keyboard_mapped_released(int vk) { return keyboard_any_mapped(vk, render_key_released); }
+
+void kwik_keyboard_set_map(int key, int maps_to) {
+    ensure_keyboard_map();
+    if (key >= 0 && key < 512 && maps_to >= 0 && maps_to < 512)
+        g_keyboard_map[key] = maps_to;
+}
+
+void kwik_keyboard_unset_map(int key) {
+    ensure_keyboard_map();
+    if (key >= 0 && key < 512)
+        g_keyboard_map[key] = key;
+}
+
 GMLFN(keyboard_check) {
     (void)self;
     int vk = (int)A(args, argc, 0);
     if (autoz_down(vk)) return Value(1.0);
-    return Value(render_key_down(vk));
+    return Value(kwik_keyboard_mapped_down(vk));
 }
 GMLFN(keyboard_check_pressed) {
     (void)self;
     int vk = (int)A(args, argc, 0);
     if (autoz_pressed(vk)) return Value(1.0);
-    if (vk == 1) {
-        for (int i = 2; i < 512; ++i)
-            if (render_key_pressed(i)) return Value(1.0);
-        return Value(0.0);
-    }
-    return Value(render_key_pressed(vk));
+    return Value(kwik_keyboard_mapped_pressed(vk));
 }
 GMLFN(keyboard_check_released) {
     (void)self;
-    return Value(render_key_released((int)A(args, argc, 0)));
+    return Value(kwik_keyboard_mapped_released((int)A(args, argc, 0)));
 }
 GMLFN(keyboard_key_press) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(keyboard_key_release) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(keyboard_virtual_show) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(keyboard_virtual_hide) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(keyboard_virtual_status) { (void)self; (void)args; (void)argc; return Value(0.0); }
 
 GMLFN(mouse_check_button) {
     (void)self;
@@ -76,18 +126,25 @@ GMLFN(exception_unhandled_handler) {
 }
 
 GMLFN(gamepad_is_connected) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(gamepad_enumerate) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(gamepad_get_device_count) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_button_check) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_button_check_pressed) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_button_check_released) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_button_count) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_button_value) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(gamepad_hat_count) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(gamepad_axis_count) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_axis_value) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(gamepad_get_description) { (void)self; (void)args; (void)argc; return Value(""); }
 GMLFN(gamepad_get_guid) { (void)self; (void)args; (void)argc; return Value("none"); }
 GMLFN(gamepad_test_mapping) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(gamepad_set_vibration) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(gamepad_set_axis_deadzone) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(ps5_gamepad_set_trigger_effect_feedback) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(ps5_gamepad_set_trigger_effect_off) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(ps5_gamepad_set_trigger_effect_vibration) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(ps5_gamepad_set_trigger_effect_weapon) { (void)self; (void)args; (void)argc; return Value(); }
 
 GMLFN(os_get_info) { (void)self; (void)args; (void)argc; return ds_map_create(self, nullptr, 0); }
 GMLFN(os_get_language) { (void)self; (void)args; (void)argc; return Value("en"); }
@@ -140,6 +197,10 @@ GMLFN(psn_unlock_trophy) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(switch_accounts_is_user_open) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(switch_accounts_open_user) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(switch_accounts_select_account) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(switch_controller_acceleration) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(switch_controller_angular_velocity) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(switch_controller_joycon_left_connected) { (void)self; (void)args; (void)argc; return Value(0.0); }
+GMLFN(switch_controller_joycon_right_connected) { (void)self; (void)args; (void)argc; return Value(0.0); }
 GMLFN(switch_controller_set_supported_styles) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(switch_controller_support_get_selected_id) { (void)self; (void)args; (void)argc; return Value(-1.0); }
 GMLFN(switch_controller_support_set_defaults) { (void)self; (void)args; (void)argc; return Value(); }
@@ -170,8 +231,18 @@ GMLFN(device_mouse_check_button_pressed) {
     (void)self;
     return Value(render_mouse_pressed((int)A(args, argc, 1) - 1));
 }
+GMLFN(device_mouse_check_button_released) {
+    (void)self;
+    return Value(render_mouse_released((int)A(args, argc, 1) - 1));
+}
+GMLFN(device_mouse_x) { (void)self; (void)args; (void)argc; return Value(render_mouse_x()); }
+GMLFN(device_mouse_y) { (void)self; (void)args; (void)argc; return Value(render_mouse_y()); }
+GMLFN(device_mouse_raw_x) { (void)self; (void)args; (void)argc; return Value(render_mouse_x()); }
+GMLFN(device_mouse_raw_y) { (void)self; (void)args; (void)argc; return Value(render_mouse_y()); }
 GMLFN(device_mouse_x_to_gui) { (void)self; (void)args; (void)argc; return Value(render_mouse_x()); }
 GMLFN(device_mouse_y_to_gui) { (void)self; (void)args; (void)argc; return Value(render_mouse_y()); }
+GMLFN(display_mouse_get_x) { (void)self; (void)args; (void)argc; return Value(render_mouse_x()); }
+GMLFN(display_mouse_get_y) { (void)self; (void)args; (void)argc; return Value(render_mouse_y()); }
 GMLFN(display_set_gui_size) {
     (void)self;
     render_set_gui_size((int)A(args, argc, 0), (int)A(args, argc, 1));
@@ -185,6 +256,35 @@ GMLFN(window_set_position) {
     (void)self;
     render_set_window_position((int)A(args, argc, 0), (int)A(args, argc, 1));
     return Value();
+}
+
+GMLFN(url_open) { return url_open_ext(self, args, argc); }
+
+GMLFN(url_open_ext) {
+    (void)self;
+    std::string url = S(args, argc, 0);
+    if (url.empty()) return Value(0.0);
+#ifdef _WIN32
+    std::string target = S(args, argc, 1);
+    HINSTANCE r = ShellExecuteA(nullptr, "open", url.c_str(), nullptr,
+                                target.empty() ? nullptr : target.c_str(), SW_SHOWNORMAL);
+    return Value((intptr_t)r > 32 ? 1.0 : 0.0);
+#elif defined(__vita__)
+    return Value(0.0);
+#else
+    pid_t pid = fork();
+    if (pid < 0) return Value(0.0);
+    if (pid == 0) {
+        pid_t grandchild = fork();
+        if (grandchild < 0) _exit(127);
+        if (grandchild > 0) _exit(0);
+        execlp("xdg-open", "xdg-open", url.c_str(), (char*)nullptr);
+        _exit(127);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return Value(1.0);
+#endif
 }
 
 static Value g_scissor_saved;

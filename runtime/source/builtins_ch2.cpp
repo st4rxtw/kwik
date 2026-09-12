@@ -23,6 +23,13 @@ static unsigned int C(const Value* args, int argc, int i, unsigned int dflt = 0x
     return i < argc ? (unsigned int)(long long)(double)args[i] : dflt;
 }
 
+static Value mk_array() {
+    Value v;
+    v.type = Value::ARR;
+    v.arr = std::make_shared<GmlArray>();
+    return v;
+}
+
 GMLFN(lerp) {
     (void)self;
     double a = A(args, argc, 0), b = A(args, argc, 1), t = A(args, argc, 2);
@@ -51,14 +58,31 @@ GMLFN(game_set_speed) {
 GMLFN(make_colour_rgb) { return make_color_rgb(self, args, argc); }
 GMLFN(make_colour_hsv) { return make_color_hsv(self, args, argc); }
 GMLFN(merge_colour) { return merge_color(self, args, argc); }
-GMLFN(keyboard_check_direct) { return keyboard_check(self, args, argc); }
+GMLFN(keyboard_check_direct) {
+    (void)self;
+    return Value(render_key_down((int)A(args, argc, 0)));
+}
 GMLFN(get_string) { (void)self; return Value(argc > 1 ? (std::string)args[1] : ""); }
 GMLFN(get_string_async) { (void)self; return Value(argc > 1 ? (std::string)args[1] : ""); }
 GMLFN(clipboard_set_text) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(xboxone_show_account_picker) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(keyboard_set_map) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(keyboard_unset_map) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(vertex_format_add_texcoord) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(keyboard_set_map) {
+    (void)self;
+    if (argc >= 2)
+        kwik_keyboard_set_map((int)A(args, argc, 0), (int)A(args, argc, 1));
+    return Value();
+}
+GMLFN(keyboard_unset_map) {
+    (void)self;
+    if (argc >= 1)
+        kwik_keyboard_unset_map((int)A(args, argc, 0));
+    return Value();
+}
+GMLFN(vertex_format_add_texcoord) {
+    (void)self; (void)args; (void)argc;
+    kwik_vertex_format_add_rt(2, 4);
+    return Value();
+}
 
 GMLFN(object_exists) {
     (void)self;
@@ -80,6 +104,7 @@ GMLFN(array_get) {
     if (argc < 2) return Value();
     return kwik_array_elem(args[0], (int)(double)args[1]);
 }
+GMLFN(__array_get__) { return array_get(self, args, argc); }
 GMLFN(array_length_2d) {
     (void)self;
     if (argc < 2 || args[0].type != Value::ARR || !args[0].arr) return Value(0.0);
@@ -127,6 +152,11 @@ GMLFN(path_add) { (void)self; (void)args; (void)argc; return Value((double)kwik_
 GMLFN(path_add_point) {
     (void)self;
     if (argc >= 3) kwik_path_add_point((int)A(args, argc, 0), A(args, argc, 1), A(args, argc, 2));
+    return Value();
+}
+GMLFN(path_clear_points) {
+    (void)self;
+    if (argc >= 1) kwik_path_clear((int)A(args, argc, 0));
     return Value();
 }
 GMLFN(path_delete) {
@@ -239,6 +269,11 @@ GMLFN(draw_clear_alpha) {
     render_surface_clear(C(args, argc, 0), A(args, argc, 1));
     return Value();
 }
+GMLFN(draw_clear_depth) {
+    (void)self;
+    render_surface_clear_depth(A(args, argc, 0, 1.0));
+    return Value();
+}
 GMLFN(draw_get_font) {
     (void)self; (void)args; (void)argc;
     return Value((double)kwik_get_font_rt() + 10000);
@@ -296,6 +331,19 @@ GMLFN(draw_vertex) {
                             render_get_alpha(), false);
     return Value();
 }
+GMLFN(draw_vertex_3d) {
+    (void)self;
+    render_primitive_vertex_3d(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2), 0, 0,
+                               render_get_color(), render_get_alpha(), false);
+    return Value();
+}
+GMLFN(draw_vertex_3d_color) {
+    (void)self;
+    render_primitive_vertex_3d(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2), 0, 0,
+                               C(args, argc, 3), A(args, argc, 4, 1), false);
+    return Value();
+}
+GMLFN(draw_vertex_3d_colour) { return draw_vertex_3d_color(self, args, argc); }
 GMLFN(draw_vertex_texture_color) {
     (void)self;
     render_primitive_vertex(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2), A(args, argc, 3),
@@ -316,6 +364,21 @@ GMLFN(draw_vertex_texture) {
                             render_get_color(), render_get_alpha(), g_prim_textured);
     return Value();
 }
+GMLFN(draw_vertex_texture_3d) {
+    (void)self;
+    render_primitive_vertex_3d(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2),
+                               A(args, argc, 3), A(args, argc, 4), render_get_color(),
+                               render_get_alpha(), g_prim_textured);
+    return Value();
+}
+GMLFN(draw_vertex_texture_3d_color) {
+    (void)self;
+    render_primitive_vertex_3d(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2),
+                               A(args, argc, 3), A(args, argc, 4), C(args, argc, 5),
+                               A(args, argc, 6, 1), g_prim_textured);
+    return Value();
+}
+GMLFN(draw_vertex_texture_3d_colour) { return draw_vertex_texture_3d_color(self, args, argc); }
 
 GMLFN(draw_sprite_general) {
     (void)self;
@@ -391,8 +454,20 @@ GMLFN(shader_get_sampler_index) { (void)self; (void)args; (void)argc; return Val
 GMLFN(texture_set_stage) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(texture_get_texel_width) { (void)self; (void)args; (void)argc; return Value(1.0 / 2048.0); }
 GMLFN(texture_get_texel_height) { (void)self; (void)args; (void)argc; return Value(1.0 / 2048.0); }
-GMLFN(gpu_set_alphatestenable) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(gpu_set_alphatestref) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(gpu_set_alphatestenable) {
+    (void)self;
+    g_gpu_alphatest = argc > 0 && gml_truthy(args[0]) ? 1 : 0;
+    render_set_alphatest(g_gpu_alphatest != 0, g_gpu_alphatest_ref);
+    return Value();
+}
+GMLFN(gpu_set_alphatestref) {
+    (void)self;
+    g_gpu_alphatest_ref = A(args, argc, 0) / 255.0;
+    if (g_gpu_alphatest_ref < 0.0) g_gpu_alphatest_ref = 0.0;
+    if (g_gpu_alphatest_ref > 1.0) g_gpu_alphatest_ref = 1.0;
+    render_set_alphatest(g_gpu_alphatest != 0, g_gpu_alphatest_ref);
+    return Value();
+}
 GMLFN(gpu_set_blendmode_ext) {
     (void)self;
     g_gpu_blend_src = (int)A(args, argc, 0, 2);
@@ -522,6 +597,76 @@ GMLFN(layer_background_get_id) {
     RtLayer* l = kwik_layer_by_id((int)(double)args[0]);
     return Value(l ? (double)l->id : -1.0);
 }
+
+static RtLayer* layer_from_value(const Value& v) {
+    if (v.type == Value::STR) {
+        for (RtLayer& l : g_rt_layers)
+            if (l.name == v.str) return &l;
+        return nullptr;
+    }
+    return kwik_layer_by_id((int)(double)v);
+}
+
+static bool is_fx_value(const Value& v) {
+    if (v.type != Value::OBJ || !v.obj) return false;
+    auto it = v.obj->vars.find(KWIK_STR_KEY("__kwik_fx"));
+    return it != v.obj->vars.end() && gml_truthy(it->second);
+}
+
+GMLFN(fx_create) {
+    (void)self;
+    if (argc < 1) return Value(-1.0);
+    static int next_fx_id = 1;
+    auto fx = std::make_shared<Instance>();
+    Value out = kwik_register_struct_value(fx);
+    fx->var("__kwik_fx") = Value(1.0);
+    fx->var("id") = Value((double)next_fx_id++);
+    fx->var("name") = Value((std::string)args[0]);
+    fx->var("parameters") = kwik_register_struct_value(std::make_shared<Instance>());
+    return out;
+}
+
+GMLFN(fx_set_parameter) {
+    (void)self;
+    if (argc < 3 || !is_fx_value(args[0])) return Value(-1.0);
+    std::string name = (std::string)args[1];
+    Value val = args[2];
+    if (argc > 3) {
+        val = mk_array();
+        for (int i = 2; i < argc; ++i) val.arr->items.push_back(args[i]);
+    }
+    args[0].obj->var(name) = val;
+    Value& params = args[0].obj->var("parameters");
+    if (params.type == Value::OBJ && params.obj) params.obj->var(name) = val;
+    return Value();
+}
+
+GMLFN(layer_set_fx) {
+    (void)self;
+    if (argc < 2 || !is_fx_value(args[1])) return Value(-1.0);
+    RtLayer* l = layer_from_value(args[0]);
+    if (!l) return Value(-1.0);
+    l->fx = args[1];
+    return Value();
+}
+
+GMLFN(layer_get_fx) {
+    (void)self;
+    if (argc < 1) return Value(-1.0);
+    RtLayer* l = layer_from_value(args[0]);
+    if (!l || l->fx.type == Value::UNDEF) return Value(-1.0);
+    return l->fx;
+}
+
+GMLFN(layer_clear_fx) {
+    (void)self;
+    if (argc < 1) return Value(-1.0);
+    RtLayer* l = layer_from_value(args[0]);
+    if (!l) return Value(-1.0);
+    l->fx = Value();
+    return Value();
+}
+
 GMLFN(layer_script_begin) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(layer_script_end) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(layer_sprite_change) { (void)self; (void)args; (void)argc; return Value(); }
@@ -545,8 +690,53 @@ GMLFN(layer_tilemap_get_id) {
     if (!l || l->grid_blob < 0) return Value(-1.0);
     return Value((double)(900000 + l->id));
 }
-GMLFN(tilemap_get_x) { (void)self; (void)args; (void)argc; return Value(0.0); }
-GMLFN(tilemap_x) { (void)self; (void)args; (void)argc; return Value(); }
+
+static RtLayer* tilemap_layer_from_value(const Value& v) {
+    int id = (int)(double)v;
+    if (id >= 900000) id -= 900000;
+    RtLayer* l = kwik_layer_by_id(id);
+    return l && l->grid_blob >= 0 ? l : nullptr;
+}
+
+static bool tilemap_value_matches_layer(const Value& v, const RtLayer* l) {
+    if (!l) return false;
+    int id = (int)(double)v;
+    return id == l->id || id == 900000 + l->id;
+}
+
+GMLFN(layer_tilemap_exists) {
+    (void)self;
+    if (argc < 1) return Value(0.0);
+    RtLayer* a = tilemap_layer_from_value(args[0]);
+    if (argc < 2) return Value(a ? 1.0 : 0.0);
+    RtLayer* b = tilemap_layer_from_value(args[1]);
+    bool ok = (a && (tilemap_value_matches_layer(args[1], a) || a == b)) ||
+              (b && tilemap_value_matches_layer(args[0], b));
+    return Value(ok ? 1.0 : 0.0);
+}
+
+GMLFN(tilemap_get_x) {
+    (void)self;
+    RtLayer* l = argc > 0 ? tilemap_layer_from_value(args[0]) : nullptr;
+    return Value(l ? l->x : 0.0);
+}
+GMLFN(tilemap_get_y) {
+    (void)self;
+    RtLayer* l = argc > 0 ? tilemap_layer_from_value(args[0]) : nullptr;
+    return Value(l ? l->y : 0.0);
+}
+GMLFN(tilemap_x) {
+    (void)self;
+    RtLayer* l = argc > 0 ? tilemap_layer_from_value(args[0]) : nullptr;
+    if (l && argc > 1) l->x = (double)args[1];
+    return Value();
+}
+GMLFN(tilemap_y) {
+    (void)self;
+    RtLayer* l = argc > 0 ? tilemap_layer_from_value(args[0]) : nullptr;
+    if (l && argc > 1) l->y = (double)args[1];
+    return Value();
+}
 
 struct DsPriority {
     std::multimap<double, Value> data;
@@ -584,6 +774,17 @@ GMLFN(ds_priority_copy) {
     if (dst && src) dst->data = src->data;
     return Value();
 }
+GMLFN(ds_priority_size) {
+    (void)self;
+    DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
+    return Value(p ? (double)p->data.size() : 0.0);
+}
+GMLFN(ds_priority_find_min) {
+    (void)self;
+    DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
+    if (!p || p->data.empty()) return Value();
+    return p->data.begin()->second;
+}
 GMLFN(ds_priority_delete_min) {
     (void)self;
     DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
@@ -597,6 +798,12 @@ GMLFN(ds_priority_empty) {
     DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
     return Value(!p || p->data.empty());
 }
+GMLFN(ds_priority_find_max) {
+    (void)self;
+    DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
+    if (!p || p->data.empty()) return Value();
+    return std::prev(p->data.end())->second;
+}
 GMLFN(ds_priority_delete_max) {
     (void)self;
     DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;
@@ -606,6 +813,42 @@ GMLFN(ds_priority_delete_max) {
     p->data.erase(it);
     return v;
 }
+GMLFN(ds_priority_change_priority) {
+    (void)self;
+    DsPriority* p = argc > 2 ? prio_of(args[0]) : nullptr;
+    if (!p) return Value();
+    for (auto it = p->data.begin(); it != p->data.end(); ++it) {
+        if (gml_truthy(gml_eq(it->second, args[1]))) {
+            Value v = it->second;
+            p->data.erase(it);
+            p->data.insert({(double)args[2], v});
+            break;
+        }
+    }
+    return Value();
+}
+GMLFN(ds_priority_find_priority) {
+    (void)self;
+    DsPriority* p = argc > 1 ? prio_of(args[0]) : nullptr;
+    if (!p) return Value();
+    for (const auto& kv : p->data)
+        if (gml_truthy(gml_eq(kv.second, args[1]))) return Value(kv.first);
+    return Value();
+}
+GMLFN(ds_priority_delete_value) {
+    (void)self;
+    DsPriority* p = argc > 1 ? prio_of(args[0]) : nullptr;
+    if (!p) return Value();
+    for (auto it = p->data.begin(); it != p->data.end(); ++it) {
+        if (gml_truthy(gml_eq(it->second, args[1]))) {
+            p->data.erase(it);
+            break;
+        }
+    }
+    return Value();
+}
+GMLFN(ds_priority_write) { return kwik_missing(self, "ds_priority_write"); }
+GMLFN(ds_priority_read) { return kwik_missing(self, "ds_priority_read"); }
 GMLFN(ds_priority_destroy) {
     (void)self;
     DsPriority* p = argc > 0 ? prio_of(args[0]) : nullptr;

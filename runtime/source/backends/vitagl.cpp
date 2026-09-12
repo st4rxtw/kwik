@@ -43,6 +43,7 @@ static bool g_keys_now[512] = {false};
 static bool g_keys_prev[512] = {false};
 static bool g_mouse_now[3] = {false};
 static bool g_mouse_prev[3] = {false};
+static bool g_texrepeat[8] = {};
 
 static double g_last_time = 0.0;
 static double g_dt = 0.0;
@@ -54,6 +55,13 @@ static int g_fbo_h = 0;
 
 static void flush_batch();
 
+static void apply_texture_repeat(int stage) {
+    if (stage < 0 || stage >= 8) return;
+    GLenum wrap = g_texrepeat[stage] ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
+}
+
 static GLuint make_target_texture(int w, int h) {
     GLuint tex = 0;
     glGenTextures(1, &tex);
@@ -62,8 +70,7 @@ static GLuint make_target_texture(int w, int h) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, zero.data());
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    apply_texture_repeat(0);
     return tex;
 }
 
@@ -229,6 +236,7 @@ void render_surface_clear(unsigned int bgr, double alpha) {
                  ((bgr >> 16) & 0xFF) / 255.0f, (float)alpha);
     glClear(GL_COLOR_BUFFER_BIT);
 }
+void render_surface_clear_depth(double depth) { (void)depth; }
 
 struct Vtx {
     float x, y;
@@ -268,6 +276,7 @@ static void flush_batch() {
     if (g_batch.empty()) return;
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, g_batch_tex);
+    apply_texture_repeat(0);
     apply_fog_env(g_batch_fog);
     submit(g_batch.data(), (int)g_batch.size(), GL_TRIANGLES);
     g_batch.clear();
@@ -298,6 +307,7 @@ void render_primitive_begin(int kind, unsigned int tex) {
     if (tex) {
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, tex);
+        apply_texture_repeat(0);
     } else {
         glDisable(GL_TEXTURE_2D);
     }
@@ -325,6 +335,11 @@ void render_primitive_vertex(double x, double y, double u, double v, unsigned in
     vtx.b = ((color >> 16) & 0xFF) / 255.0f;
     vtx.a = (float)alpha;
     g_prim_verts.push_back(vtx);
+}
+void render_primitive_vertex_3d(double x, double y, double z, double u, double v,
+                                unsigned int color, double alpha, bool textured) {
+    (void)z;
+    render_primitive_vertex(x, y, u, v, color, alpha, textured);
 }
 
 void render_primitive_end() {
@@ -737,6 +752,35 @@ void render_end_frame() {
 }
 
 double render_wheel_delta() { return g_wheel_frame; }
+void render_set_matrix(int which, const double* m16) { (void)which; (void)m16; }
+void render_get_matrix(int which, double* m16) {
+    (void)which;
+    if (!m16) return;
+    for (int i = 0; i < 16; ++i) m16[i] = (i == 0 || i == 5 || i == 10 || i == 15) ? 1.0 : 0.0;
+}
+void render_set_depth(double depth) { (void)depth; }
+double render_get_depth() { return 0.0; }
+void render_set_ztest(bool enable) { (void)enable; }
+bool render_get_ztest() { return false; }
+void render_set_zwrite(bool enable) { (void)enable; }
+bool render_get_zwrite() { return false; }
+void render_set_zfunc(int func) { (void)func; }
+int render_get_zfunc() { return 4; }
+void render_set_cullmode(int mode) { (void)mode; }
+int render_get_cullmode() { return 0; }
+void render_set_alphatest(bool enable, double ref) {
+    flush_batch();
+    if (enable) {
+        glEnable(GL_ALPHA_TEST);
+        glAlphaFunc(GL_GREATER, (GLclampf)std::max(0.0, std::min(1.0, ref)));
+    } else {
+        glDisable(GL_ALPHA_TEST);
+    }
+}
+double render_mouse_delta_x() { return 0.0; }
+double render_mouse_delta_y() { return 0.0; }
+void render_mouse_set_locked(bool locked) { (void)locked; }
+bool render_mouse_get_locked() { return false; }
 
 void render_idle() {}
 
@@ -847,6 +891,13 @@ void render_set_colorwrite(bool r, bool g, bool b, bool a) {
                 a ? GL_TRUE : GL_FALSE);
 }
 
+void render_set_texture_repeat(int stage, bool repeat) {
+    if (stage < 0 || stage >= 8) return;
+    flush_batch();
+    g_texrepeat[stage] = repeat;
+    if (stage == 0) apply_texture_repeat(stage);
+}
+
 void render_free_texture(unsigned int tex) {
     if (!tex) return;
     if (!g_batch.empty() && g_batch_tex == tex) flush_batch();
@@ -861,8 +912,7 @@ unsigned int render_upload_texture(const unsigned char* rgba, int w, int h) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    apply_texture_repeat(0);
     return tex;
 }
 

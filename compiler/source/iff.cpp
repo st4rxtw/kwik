@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include "iff.h"
 
 #include <cstdio>
@@ -221,16 +222,24 @@ void GameData::parse_objects() {
     const Chunk* c = chunk("OBJT");
     if (!c) return;
     uint32_t count = u32(c->offset);
+    int non_bool_persistent = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t ptr = u32(c->offset + 4 + i * 4);
+        int32_t v = i32(ptr + 24);
+        if (v != 0 && v != 1) ++non_bool_persistent;
+    }
+    bool old_layout = non_bool_persistent > 0;
     for (uint32_t i = 0; i < count; ++i) {
         uint32_t ptr = u32(c->offset + 4 + i * 4);
         GameObject o;
         o.name = string_at_offset(u32(ptr));
         o.sprite_index = i32(ptr + 4);
         o.visible = i32(ptr + 8);
-        o.depth = i32(ptr + 20);
-        o.persistent = i32(ptr + 24);
-        o.parent_index = i32(ptr + 28);
-        o.mask_index = i32(ptr + 32);
+        o.solid = i32(ptr + (old_layout ? 12 : 16));
+        o.depth = i32(ptr + (old_layout ? 16 : 20));
+        o.persistent = i32(ptr + (old_layout ? 20 : 24));
+        o.parent_index = i32(ptr + (old_layout ? 24 : 28));
+        o.mask_index = i32(ptr + (old_layout ? 28 : 32));
         objects_.push_back(o);
     }
 }
@@ -343,10 +352,17 @@ void GameData::parse_rooms() {
                 rl.y = (int32_t)ly;
                 rl.visible = i32(lp + 32) ? 1 : 0;
                 if (rl.type == 1) {
-                    int32_t sprite = i32(lp + 56);
-                    rl.color = u32(lp + 72);
+                    uint32_t bg = 36;
+                    int32_t sprite = i32(lp + bg + 8);
+                    int32_t sprite_alt = i32(lp + 48 + 8);
+                    if ((sprite < 0 || sprite >= sprite_count) && sprite_alt >= 0 && sprite_alt < sprite_count) {
+                        bg = 48;
+                        sprite = sprite_alt;
+                    }
+                    rl.visible = (rl.visible && i32(lp + bg) != 0) ? 1 : 0;
+                    rl.color = u32(lp + bg + 24);
                     if (sprite >= 0 && sprite < sprite_count) rl.sprite = sprite;
-                    uint32_t ht = u32(lp + 60), vt = u32(lp + 64), st = u32(lp + 68);
+                    uint32_t ht = u32(lp + bg + 12), vt = u32(lp + bg + 16), st = u32(lp + bg + 20);
                     if (ht <= 1) rl.htiled = (int32_t)ht;
                     if (vt <= 1) rl.vtiled = (int32_t)vt;
                     if (st <= 1) rl.stretch = (int32_t)st;
@@ -362,7 +378,16 @@ void GameData::parse_rooms() {
                     }
                     r.layers.push_back(rl);
                 } else if (rl.type == 3) {
-                    uint32_t tl = u32(lp + 48);
+                    uint32_t tl = u32(lp + 36);
+                    uint32_t sl = u32(lp + 40);
+                    if (tl <= c->offset || tl >= c->offset + c->size) {
+                        uint32_t tl_alt = u32(lp + 48);
+                        uint32_t sl_alt = u32(lp + 52);
+                        if (tl_alt > c->offset && tl_alt < c->offset + c->size) {
+                            tl = tl_alt;
+                            sl = sl_alt;
+                        }
+                    }
                     rl.tile_first = (int32_t)r.tiles.size();
                     if (tl > c->offset && tl < c->offset + c->size) {
                         uint32_t tn = u32(tl);
@@ -379,18 +404,17 @@ void GameData::parse_rooms() {
                                 t.h = i32(tp + 24);
                                 t.depth = i32(tp + 28);
                                 float fsx, fsy;
-                                uint32_t usx = u32(tp + 36), usy = u32(tp + 40);
+                                uint32_t usx = u32(tp + 32), usy = u32(tp + 36);
                                 std::memcpy(&fsx, &usx, 4);
                                 std::memcpy(&fsy, &usy, 4);
                                 t.scale_x = fsx;
                                 t.scale_y = fsy;
-                                t.color = u32(tp + 44);
+                                t.color = u32(tp + 40);
                                 if (t.sprite >= 0 && t.sprite < sprite_count && t.w > 0 && t.h > 0)
                                     r.tiles.push_back(t);
                             }
                         }
                     }
-                    uint32_t sl = u32(lp + 52);
                     if (sl > c->offset && sl < c->offset + c->size) {
                         uint32_t sn = u32(sl);
                         if (sn <= 100000) {

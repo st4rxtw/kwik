@@ -32,6 +32,7 @@ struct GameObject {
     int32_t parent_index = -100;
     int32_t persistent = 0;
     int32_t visible = 1;
+    int32_t solid = 0;
     int32_t depth = 0;
     int32_t mask_index = -1;
 };

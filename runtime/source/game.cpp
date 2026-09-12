@@ -4,6 +4,10 @@
 
 #include "gml_runtime.h"
 #include "engine_internal.h"
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+#include "NXFile.hpp"
+#include "NXSave.hpp"
+#endif
 #include "render.h"
 
 #include <algorithm>
@@ -48,6 +52,22 @@ bool g_game_restart_requested = false;
 bool g_room_restart_requested = false;
 unsigned long long g_frame_counter = 0;
 
+struct TimeSource {
+    int parent = 1;
+    double period = 1.0;
+    int units = 1;
+    Value callback;
+    std::vector<Value> callback_args;
+    long long reps_initial = 1;
+    long long reps_remaining = 1;
+    long long reps_completed = 0;
+    int state = 0;
+    double elapsed = 0.0;
+};
+
+static std::unordered_map<int, TimeSource> g_time_sources;
+static int g_next_time_source = 2;
+
 ObjectDef* g_objects_rt = nullptr;
 int g_object_count_rt = 0;
 const RoomDef* g_room_defs_rt = nullptr;
@@ -64,18 +84,47 @@ static std::string normalize_slashes(const std::string& s) {
 
 std::string kwik_save_path(const std::string& rel_) {
     std::string rel = normalize_slashes(rel_);
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    const size_t mount = rel.find(':');
+    if (mount != std::string::npos) {
+        if (rel.compare(0, mount, "save") == 0)
+            return rel;
+        rel = rel.substr(mount + 1);
+    }
+    while (rel.rfind("./", 0) == 0)
+        rel.erase(0, 2);
+    while (!rel.empty() && rel.front() == '/')
+        rel.erase(0, 1);
+#endif
     if (rel.empty() || rel[0] == '/' || g_save_dir.empty()) return rel;
     return g_save_dir + "/" + rel;
 }
 
+static bool readable_file(const std::string& path) {
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    NXFile* file = NXFile_Open(path.c_str(), "rb");
+    if (!file) return false;
+    NXFile_Close(file);
+    return true;
+#else
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    std::fclose(f);
+    return true;
+#endif
+}
+
 std::string kwik_resolve_read(const std::string& rel_) {
     std::string rel = normalize_slashes(rel_);
-    if (rel.empty() || rel[0] == '/' || g_save_dir.empty()) return rel;
-    std::string in_save = g_save_dir + "/" + rel;
-    std::FILE* f = std::fopen(in_save.c_str(), "rb");
-    if (f) {
-        std::fclose(f);
-        return in_save;
+    if (rel.empty() || rel[0] == '/' || rel.find(':') != std::string::npos) return rel;
+    if (!g_save_dir.empty()) {
+        std::string in_save = g_save_dir + "/" + rel;
+        if (readable_file(in_save)) return in_save;
+    }
+    if (readable_file(rel)) return rel;
+    if (!g_game_dir.empty()) {
+        std::string in_game = g_game_dir + "/" + rel;
+        if (readable_file(in_game)) return in_game;
     }
     return rel;
 }
@@ -87,6 +136,25 @@ static int g_next_layer_id = 1000000;
 RtLayer* kwik_layer_by_id(int id) {
     for (auto& l : g_rt_layers)
         if (l.id == id) return &l;
+    return nullptr;
+}
+
+static RtLayer* layer_by_name(const std::string& name) {
+    for (auto& l : g_rt_layers)
+        if (l.name == name) return &l;
+    return nullptr;
+}
+
+static RtLayer* layer_from_value(const Value& v) {
+    if (v.type == Value::STR) return layer_by_name(v.str);
+    return kwik_layer_by_id((int)(double)v);
+}
+
+static RtLayer* instance_layer_for_depth(double depth) {
+    for (auto& l : g_rt_layers)
+        if (l.type == 2 && l.depth == depth) return &l;
+    for (auto& l : g_rt_layers)
+        if (l.depth == depth) return &l;
     return nullptr;
 }
 
@@ -109,6 +177,7 @@ int g_gpu_blend_src = 2;
 int g_gpu_blend_dst = 6;
 int g_gpu_colorwrite[4] = {1, 1, 1, 1};
 int g_gpu_alphatest = 0;
+double g_gpu_alphatest_ref = 0.0;
 
 static int g_next_instance_id = 10000000;
 static int g_next_struct_id = 20000000;
@@ -473,13 +542,17 @@ static bool boxes_overlap(double al, double at, double ar, double ab,
     return al < br && ar > bl && at < bb && ab > bt;
 }
 
-Instance* collision_at(Instance* self, double px, double py, int who, bool) {
+Instance* collision_at(Instance* self, double px, double py, int who, bool solid_only) {
     if (!self) return nullptr;
     HitProbe p;
     if (!probe_init(self, px, py, p)) return nullptr;
     for (auto& sp : g_instances) {
         Instance* other = sp.get();
         if (other == self || !inst_matches(other, who)) continue;
+        if (solid_only) {
+            auto it = other->vars.find("solid");
+            if (it == other->vars.end() || !gml_truthy(it->second)) continue;
+        }
         if (probe_hits(p, other)) return other;
     }
     return nullptr;
@@ -540,7 +613,7 @@ static void init_instance_vars(Instance* inst, const ObjectDef* def) {
     inst->var("gravity") = Value(0.0);
     inst->var("gravity_direction") = Value(270.0);
     inst->var("friction") = Value(0.0);
-    inst->var("solid") = Value(0.0);
+    inst->var("solid") = Value(def ? (double)def->solid : 0.0);
     inst->var("mask_index") = Value(def ? (double)def->mask_index : -1.0);
     inst->var("sprite_index") = Value(def ? (double)def->sprite_index : -1.0);
     Value alarms;
@@ -699,11 +772,28 @@ Value kwik_create_instance(int obj_index, double x, double y, double depth, bool
     sp->object_index = obj_index;
     init_instance_vars(sp.get(), &g_objects_rt[obj_index]);
     if (use_depth) sp->depth = depth;
+    if (RtLayer* layer = instance_layer_for_depth(sp->depth)) {
+        sp->layer_id = layer->id;
+        sp->layer_name = layer->name;
+    }
     g_instances.push_back(sp);
     Instance* raw = sp.get();
     fire(raw, EVK_PRE_CREATE, 0);
     fire(raw, EVK_CREATE, 0);
     return Value((double)raw->id);
+}
+
+Value kwik_create_instance_on_layer(int obj_index, double x, double y, const Value& layer_value) {
+    RtLayer* layer = layer_from_value(layer_value);
+    if (!layer) return Value(-4.0);
+    Value out = kwik_create_instance(obj_index, x, y, layer->depth, true);
+    Instance* inst = kwik_instance_by_id((int)(double)out);
+    if (inst) {
+        inst->layer_id = layer->id;
+        inst->layer_name = layer->name;
+        inst->depth = layer->depth;
+    }
+    return out;
 }
 
 void kwik_destroy_instance(Instance* inst, bool run_event) {
@@ -763,6 +853,8 @@ Value kwik_new_object(Instance* self, const Value* args, int argc) {
     auto sp = std::make_shared<Instance>();
     Value out = kwik_register_struct_value(sp);
     if (argc > 0 && args[0].type == Value::FN && args[0].fn) {
+        sp->constructor = args[0].fn;
+        sp->constructor_name = args[0].fn_name;
         Instance* saved_other = g_other_ptr;
         g_other_ptr = self;
         args[0].fn(sp.get(), argc > 1 ? args + 1 : nullptr, argc - 1);
@@ -795,6 +887,201 @@ Value kwik_call_method(Instance* self, const Value& fnval, const Value& target,
     }
     if (fnval.type == Value::FN && fnval.fn) return fnval.fn(callee, args, argc);
     return Value();
+}
+
+static bool time_source_exists_id(int id) {
+    return id == 0 || id == 1 || g_time_sources.find(id) != g_time_sources.end();
+}
+
+static TimeSource* time_source_find(int id) {
+    auto it = g_time_sources.find(id);
+    return it == g_time_sources.end() ? nullptr : &it->second;
+}
+
+static double time_source_period(double period, int units) {
+    if (units == 0) return std::max(period, 0.000001);
+    return std::max(1.0, std::floor(period));
+}
+
+static std::vector<Value> time_source_args(const Value& v) {
+    if (v.type == Value::ARR && v.arr) return v.arr->items;
+    if (v.type != Value::UNDEF) return {v};
+    return {};
+}
+
+static void time_source_configure(TimeSource& ts, double period, int units, const Value& callback,
+                                  const Value& callback_args, long long reps) {
+    ts.period = time_source_period(period, units);
+    ts.units = units == 0 ? 0 : 1;
+    ts.callback = callback;
+    ts.callback_args = time_source_args(callback_args);
+    ts.reps_initial = reps;
+    ts.reps_remaining = reps;
+    ts.reps_completed = 0;
+    ts.elapsed = 0.0;
+    ts.state = 0;
+}
+
+static void tick_time_sources() {
+    std::vector<int> ids;
+    ids.reserve(g_time_sources.size());
+    for (const auto& kv : g_time_sources) ids.push_back(kv.first);
+
+    for (int id : ids) {
+        auto it = g_time_sources.find(id);
+        if (it == g_time_sources.end()) continue;
+        TimeSource& ts = it->second;
+        if (ts.state != 1 || ts.reps_remaining == 0) continue;
+
+        ts.elapsed += ts.units == 0 ? render_delta_time() : 1.0;
+        int guard = 0;
+        while (ts.elapsed >= ts.period && ts.reps_remaining != 0 && guard++ < 16) {
+            ++ts.reps_completed;
+            if (ts.reps_remaining > 0) --ts.reps_remaining;
+
+            bool finished = ts.reps_remaining == 0;
+            if (finished) {
+                ts.elapsed = ts.period;
+                ts.state = 3;
+            } else {
+                ts.elapsed = std::fmod(ts.elapsed, ts.period);
+            }
+
+            Value callback = ts.callback;
+            std::vector<Value> callback_args = ts.callback_args;
+            if (callback.type == Value::FN && callback.fn) {
+                kwik_call_value(g_dummy_instance, callback,
+                                callback_args.empty() ? nullptr : callback_args.data(),
+                                (int)callback_args.size());
+            }
+
+            if (g_time_sources.find(id) == g_time_sources.end() || finished) break;
+        }
+    }
+}
+
+GMLFN(time_source_create) {
+    int parent = argc > 0 ? (int)(double)args[0] : 1;
+    if (!time_source_exists_id(parent)) return Value(-1.0);
+
+    TimeSource ts;
+    ts.parent = parent;
+    double period = argc > 1 ? (double)args[1] : 1.0;
+    int units = argc > 2 ? (int)(double)args[2] : 1;
+    Value callback = argc > 3 ? args[3] : Value();
+    Value callback_args = argc > 4 ? args[4] : kwik_new_array(nullptr, 0);
+    long long reps = argc > 5 ? (long long)std::llround((double)args[5]) : 1;
+    time_source_configure(ts, period, units, callback, callback_args, reps);
+
+    int id = g_next_time_source++;
+    g_time_sources[id] = std::move(ts);
+    return Value((double)id);
+}
+
+GMLFN(time_source_destroy) {
+    (void)self;
+    if (argc < 1) return Value();
+    int id = (int)(double)args[0];
+    if (id >= 2) g_time_sources.erase(id);
+    return Value();
+}
+
+GMLFN(time_source_exists) {
+    (void)self;
+    if (argc < 1) return Value(0.0);
+    return Value(time_source_exists_id((int)(double)args[0]) ? 1.0 : 0.0);
+}
+
+GMLFN(time_source_start) {
+    (void)self;
+    if (argc < 1) return Value();
+    if (TimeSource* ts = time_source_find((int)(double)args[0])) {
+        ts->elapsed = 0.0;
+        ts->state = 1;
+    }
+    return Value();
+}
+
+GMLFN(time_source_stop) {
+    (void)self;
+    if (argc < 1) return Value();
+    if (TimeSource* ts = time_source_find((int)(double)args[0])) ts->state = 3;
+    return Value();
+}
+
+GMLFN(time_source_pause) {
+    (void)self;
+    if (argc < 1) return Value();
+    if (TimeSource* ts = time_source_find((int)(double)args[0]); ts && ts->state == 1) ts->state = 2;
+    return Value();
+}
+
+GMLFN(time_source_resume) {
+    (void)self;
+    if (argc < 1) return Value();
+    if (TimeSource* ts = time_source_find((int)(double)args[0]); ts && ts->state == 2) ts->state = 1;
+    return Value();
+}
+
+GMLFN(time_source_reset) {
+    (void)self;
+    if (argc < 1) return Value();
+    if (TimeSource* ts = time_source_find((int)(double)args[0])) {
+        ts->elapsed = 0.0;
+        ts->reps_completed = 0;
+        ts->reps_remaining = ts->reps_initial;
+        ts->state = 0;
+    }
+    return Value();
+}
+
+GMLFN(time_source_reconfigure) {
+    (void)self;
+    if (argc < 4) return Value();
+    TimeSource* ts = time_source_find((int)(double)args[0]);
+    if (!ts) return Value();
+    Value callback_args = argc > 4 ? args[4] : kwik_new_array(nullptr, 0);
+    long long reps = argc > 5 ? (long long)std::llround((double)args[5]) : 1;
+    time_source_configure(*ts, (double)args[1], (int)(double)args[2], args[3], callback_args, reps);
+    return Value();
+}
+
+GMLFN(time_source_get_period) {
+    (void)self;
+    TimeSource* ts = argc > 0 ? time_source_find((int)(double)args[0]) : nullptr;
+    return ts ? Value(ts->period) : Value();
+}
+
+GMLFN(time_source_get_reps_completed) {
+    (void)self;
+    TimeSource* ts = argc > 0 ? time_source_find((int)(double)args[0]) : nullptr;
+    return ts ? Value((double)ts->reps_completed) : Value();
+}
+
+GMLFN(time_source_get_reps_remaining) {
+    (void)self;
+    TimeSource* ts = argc > 0 ? time_source_find((int)(double)args[0]) : nullptr;
+    return ts ? Value((double)ts->reps_remaining) : Value();
+}
+
+GMLFN(time_source_get_units) {
+    (void)self;
+    TimeSource* ts = argc > 0 ? time_source_find((int)(double)args[0]) : nullptr;
+    return ts ? Value((double)ts->units) : Value();
+}
+
+GMLFN(time_source_get_time_remaining) {
+    (void)self;
+    TimeSource* ts = argc > 0 ? time_source_find((int)(double)args[0]) : nullptr;
+    return ts ? Value(std::max(0.0, ts->period - ts->elapsed)) : Value();
+}
+
+GMLFN(time_source_get_state) {
+    (void)self;
+    int id = argc > 0 ? (int)(double)args[0] : -1;
+    if (id == 0 || id == 1) return Value(1.0);
+    TimeSource* ts = time_source_find(id);
+    return ts ? Value((double)ts->state) : Value();
 }
 
 enum class SpecialVar : unsigned char {
@@ -1390,7 +1677,8 @@ GMLFN(instance_create_depth) {
 GMLFN(instance_create_layer) {
     (void)self;
     if (argc < 4) return Value(-4.0);
-    return kwik_create_instance((int)(double)args[3], (double)args[0], (double)args[1], 0.0, false);
+    return kwik_create_instance_on_layer((int)(double)args[3], (double)args[0], (double)args[1],
+                                         args[2]);
 }
 
 GMLFN(instance_destroy) {
@@ -1504,7 +1792,7 @@ GMLFN(place_meeting) {
 
 GMLFN(place_free) {
     if (argc < 2) return Value(1.0);
-    return Value(collision_at(self, (double)args[0], (double)args[1], -3, false) == nullptr);
+    return Value(collision_at(self, (double)args[0], (double)args[1], -3, true) == nullptr);
 }
 
 GMLFN(position_meeting) {
@@ -1734,6 +2022,8 @@ GMLFN(instance_copy) {
     sp->id = g_next_instance_id++;
     sp->object_index = self->object_index;
     sp->depth = self->depth;
+    sp->layer_id = self->layer_id;
+    sp->layer_name = self->layer_name;
     sp->visible = self->visible;
     sp->persistent = self->persistent;
     sp->m_speed = self->m_speed;
@@ -1758,7 +2048,34 @@ GMLFN(instance_id_get) {
     return Value(-4.0);
 }
 
-GMLFN(instance_deactivate_layer) { (void)self; (void)args; (void)argc; return Value(); }
+static bool inst_on_layer(Instance* inst, RtLayer* layer) {
+    if (!inst || !layer) return false;
+    if (inst->layer_id == layer->id) return true;
+    return inst->layer_id < 0 && inst->layer_name.empty() && inst->depth == layer->depth;
+}
+
+GMLFN(instance_activate_layer) {
+    (void)self;
+    if (argc < 1) return Value();
+    RtLayer* layer = layer_from_value(args[0]);
+    if (!layer) return Value();
+    for (auto& sp : g_instances)
+        if (!sp->dead && inst_on_layer(sp.get(), layer)) sp->active = true;
+    return Value();
+}
+
+GMLFN(instance_deactivate_layer) {
+    if (argc < 1) return Value();
+    RtLayer* layer = layer_from_value(args[0]);
+    if (!layer) return Value();
+    bool notme = argc > 1 && gml_truthy(args[1]);
+    for (auto& sp : g_instances) {
+        if (sp->dead) continue;
+        if (notme && sp.get() == self) continue;
+        if (inst_on_layer(sp.get(), layer)) sp->active = false;
+    }
+    return Value();
+}
 
 GMLFN(mouse_check_button_released) {
     (void)self;
@@ -1782,6 +2099,16 @@ GMLFN(alarm_set) {
             it->second.arr->items[idx] = Value((double)args[1]);
     }
     return Value();
+}
+
+GMLFN(alarm_get) {
+    if (!self || argc < 1) return Value(-1.0);
+    auto it = self->vars.find("alarm");
+    if (it == self->vars.end() || it->second.type != Value::ARR || !it->second.arr)
+        return Value(-1.0);
+    int idx = (int)(double)args[0];
+    if (idx < 0 || (size_t)idx >= it->second.arr->items.size()) return Value(-1.0);
+    return it->second.arr->items[idx];
 }
 
 GMLFN(camera_get_active) {
@@ -2036,6 +2363,16 @@ GMLFN(method) {
     return out;
 }
 
+GMLFN(method_call) {
+    if (argc < 1) return Value();
+    if (argc >= 2 && args[1].type == Value::ARR && args[1].arr) {
+        const auto& items = args[1].arr->items;
+        return kwik_call_value(self, args[0], items.empty() ? nullptr : items.data(),
+                               (int)items.size());
+    }
+    return kwik_call_value(self, args[0], argc > 1 ? args + 1 : nullptr, argc - 1);
+}
+
 GMLFN(script_execute) {
     if (argc < 1) return Value();
     return kwik_call_value(self, args[0], args + 1, argc - 1);
@@ -2043,6 +2380,18 @@ GMLFN(script_execute) {
 
 static const ScriptEntry* g_script_entries = nullptr;
 static int g_script_entry_count = 0;
+
+GMLFN(script_get_name) {
+    (void)self;
+    if (argc < 1) return Value("");
+    if (args[0].type == Value::FN) {
+        if (args[0].fn_name && args[0].fn_name[0]) return Value(args[0].fn_name);
+        for (int i = 0; i < g_script_entry_count; ++i)
+            if (g_script_entries[i].fn == args[0].fn)
+                return Value(g_script_entries[i].name ? g_script_entries[i].name : "");
+    }
+    return Value("");
+}
 
 GMLFN(asset_get_index) {
     (void)self;
@@ -2056,6 +2405,8 @@ GMLFN(asset_get_index) {
     }
     for (int i = 0; i < g_sound_count; ++i)
         if (g_sound_table[i].name && n == g_sound_table[i].name) return Value((double)i);
+    for (int i = 0; i < g_font_count; ++i)
+        if (g_fonts && g_fonts[i].name && n == g_fonts[i].name) return Value((double)i);
     for (int i = 0; i < g_room_count_rt; ++i)
         if (n == g_room_defs_rt[i].name) return Value((double)i);
     for (int i = 0; i < g_script_entry_count; ++i)
@@ -2068,6 +2419,29 @@ GMLFN(camera_create) {
     (void)self; (void)args; (void)argc;
     Camera c;
     c.in_use = true;
+    g_cameras.push_back(c);
+    return Value((double)(g_cameras.size() - 1));
+}
+GMLFN(camera_create_view) {
+    (void)self;
+    Camera c;
+    c.in_use = true;
+    if (argc >= 4) {
+        c.x = (double)args[0];
+        c.y = (double)args[1];
+        c.w = (double)args[2];
+        c.h = (double)args[3];
+    }
+    if (argc >= 5) c.angle = (double)args[4];
+    if (argc >= 6) c.target = (int)(double)args[5];
+    if (argc >= 8) {
+        c.border_x = (double)args[6];
+        c.border_y = (double)args[7];
+    }
+    if (argc >= 10) {
+        c.speed_x = (double)args[8];
+        c.speed_y = (double)args[9];
+    }
     g_cameras.push_back(c);
     return Value((double)(g_cameras.size() - 1));
 }
@@ -2824,6 +3198,7 @@ static void load_room(int index, bool clear_persistent) {
     }
 
     std::vector<Instance*> created;
+    std::vector<const InstanceInit*> created_init;
     for (int i = 0; i < room.instance_count; ++i) {
         const InstanceInit& init = room.instances[i];
         if (init.object_index < 0 || init.object_index >= g_object_count_rt) continue;
@@ -2839,18 +3214,23 @@ static void load_room(int index, bool clear_persistent) {
         sp->var("image_angle") = Value(init.angle);
         if (init.image_index > 0) sp->var("image_index") = Value((double)init.image_index);
         sp->depth = init.depth;
+        if (RtLayer* layer = instance_layer_for_depth(init.depth)) {
+            sp->layer_id = layer->id;
+            sp->layer_name = layer->name;
+        }
         g_instances.push_back(sp);
         created.push_back(sp.get());
+        created_init.push_back(&init);
     }
 
     for (size_t i = 0; i < created.size(); ++i) {
         fire(created[i], EVK_PRE_CREATE, 0);
-        const InstanceInit& init = room.instances[i];
+        const InstanceInit& init = *created_init[i];
         if (init.precreate_code && !created[i]->dead) init.precreate_code(created[i], nullptr, 0);
     }
     for (size_t i = 0; i < created.size(); ++i) {
         fire(created[i], EVK_CREATE, 0);
-        const InstanceInit& init = room.instances[i];
+        const InstanceInit& init = *created_init[i];
         if (init.creation_code && !created[i]->dead) init.creation_code(created[i], nullptr, 0);
     }
 
@@ -2996,8 +3376,7 @@ static void draw_world() {
     std::sort(items.begin(), items.end(), [](const DrawItem& a, const DrawItem& b) {
         if (a.depth != b.depth) return a.depth > b.depth;
         if (a.type != b.type) return a.type < b.type;
-        if (a.type == 0) return a.order < b.order;
-        return a.order > b.order;
+        return a.order < b.order;
     });
 
     for (auto& sp : g_instances) {
@@ -3087,7 +3466,7 @@ static void draw_world() {
         }
         std::sort(gitems.begin(), gitems.end(), [](const DrawItem& a, const DrawItem& b) {
             if (a.depth != b.depth) return a.depth > b.depth;
-            return a.order > b.order;
+            return a.order < b.order;
         });
         for (const DrawItem& it : gitems) {
             if (it.inst->dead) continue;
@@ -3203,6 +3582,7 @@ static void run_step_phase() {
         run_alarms(inst);
     }
 
+    tick_time_sources();
     tick_call_later();
 
     {
@@ -3411,6 +3791,8 @@ static std::string executable_dir() {
     DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
     if (n == 0 || n == MAX_PATH) return "";
     return std::filesystem::path(buf).parent_path().string();
+#elif defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    return "rom:";
 #elif defined(__vita__)
     return "app0:";
 #else
@@ -3465,9 +3847,17 @@ int run_game(const GameTables& tables) {
             root = std::string(home ? home : ".") + "/.local/share";
         }
 #endif
+    #if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+        g_save_dir = "save:";
+    #else
         g_save_dir = root + "/kwik/saves/" + clean;
+    #endif
         std::error_code ec;
+    #if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+        ec.clear();
+    #else
         std::filesystem::create_directories(g_save_dir, ec);
+    #endif
         if (ec) {
             std::fprintf(stderr, "[kwik] could not create save dir %s\n", g_save_dir.c_str());
             g_save_dir.clear();
@@ -3528,12 +3918,14 @@ restart_game:
         std::getenv("KWIK_AUTOZ") != nullptr || std::getenv("KWIK_NOFOCUS_PAUSE") != nullptr;
     while (!render_should_close() && !g_game_end_requested) {
         if (!ignore_focus && !render_has_focus()) {
+            kwik_video_focus_pause(true);
             render_present_last();
             kwik_sleep_us(30000);
             last_t = now_ms() / 1000.0;
             accumulator = 0.0;
             continue;
         }
+        kwik_video_focus_pause(false);
         double t = now_ms() / 1000.0;
         accumulator += t - last_t;
         last_t = t;

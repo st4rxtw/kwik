@@ -10,18 +10,25 @@ using namespace kwik;
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s <game.unx> [<out_dir>] [--emit <out.cpp>] [--emit-dir <out_dir>]\n",
+        std::fprintf(stderr, "usage: %s <game.unx> [<out_dir>] [--emit <out.cpp>] [--emit-dir <out_dir>] [--target nx --nx-runtime <dir> --nx-template <dir>]\n",
                      argv[0]);
         return 1;
     }
 
     std::string emit_path;
     std::string emit_dir_path;
+    ExportOptions export_options;
     for (int i = 2; i < argc; ++i) {
         if (std::strcmp(argv[i], "--emit") == 0 && i + 1 < argc)
             emit_path = argv[++i];
         else if (std::strcmp(argv[i], "--emit-dir") == 0 && i + 1 < argc)
             emit_dir_path = argv[++i];
+        else if (std::strcmp(argv[i], "--target") == 0 && i + 1 < argc)
+            export_options.target = argv[++i];
+        else if (std::strcmp(argv[i], "--nx-runtime") == 0 && i + 1 < argc)
+            export_options.nx_runtime_root = argv[++i];
+        else if (std::strcmp(argv[i], "--nx-template") == 0 && i + 1 < argc)
+            export_options.nx_template_dir = argv[++i];
         else if (argv[i][0] != '-' && emit_dir_path.empty())
             emit_dir_path = argv[i];
     }
@@ -33,7 +40,16 @@ int main(int argc, char** argv) {
     }
 
     if (!emit_dir_path.empty()) {
-        if (!emit_dir(gd, emit_dir_path)) {
+        if (!export_options.target.empty() && export_options.target != "nx") {
+            std::fprintf(stderr, "unsupported export target: %s\n", export_options.target.c_str());
+            return 1;
+        }
+        if (export_options.target == "nx" &&
+            (export_options.nx_runtime_root.empty() || export_options.nx_template_dir.empty())) {
+            std::fprintf(stderr, "--target nx requires --nx-runtime and --nx-template\n");
+            return 1;
+        }
+        if (!emit_dir(gd, emit_dir_path, export_options)) {
             std::fprintf(stderr, "failed to write %s\n", emit_dir_path.c_str());
             return 1;
         }

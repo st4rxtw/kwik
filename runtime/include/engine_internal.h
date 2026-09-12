@@ -10,6 +10,8 @@ struct Camera {
     double border_x = 32, border_y = 32;
     double speed_x = -1, speed_y = -1;
     double angle = 0;
+    double view_mat[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    double proj_mat[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     bool in_use = false;
     bool script_controlled = false;
 };
@@ -77,6 +79,7 @@ struct RtLayer {
     double xscale = 1.0, yscale = 1.0;
     int tile_first = 0, tile_count = 0;
     int tileset = -1, grid_w = 0, grid_h = 0, grid_blob = -1;
+    Value fx;
 };
 
 const uint32_t* kwik_tilemap_grid(int blob, int cells);
@@ -90,12 +93,17 @@ void kwik_draw_image_part(int image, double sx, double sy, double sw, double sh,
 void kwik_draw_image_part_rot(int image, double sx, double sy, double sw, double sh, double dx,
                               double dy, double ox, double oy, double xs, double ys, double angle,
                               unsigned int blend, double alpha);
+bool kwik_world_transform_active();
+void kwik_world_transform_point(double x, double y, double& ox, double& oy);
+void kwik_world_transform_compose(double& x, double& y, double& angle_deg, double& xscale,
+                                  double& yscale);
 bool kwik_ds_list_push(int list, const Value& v);
 extern int g_gpu_blendmode;
 extern int g_gpu_blend_src;
 extern int g_gpu_blend_dst;
 extern int g_gpu_colorwrite[4];
 extern int g_gpu_alphatest;
+extern double g_gpu_alphatest_ref;
 
 extern std::vector<RtLayer> g_rt_layers;
 RtLayer* kwik_layer_by_id(int id);
@@ -125,7 +133,25 @@ double kwik_sound_length_seconds(int what);
 double kwik_voice_gain(int what);
 double kwik_voice_pitch(int what);
 bool kwik_voice_paused(int what);
+int kwik_audio_play_pcm(short* pcm, unsigned int channels, unsigned int rate,
+                        unsigned long long frames, bool loop, float volume);
+void kwik_audio_stop_handle(int handle);
+void kwik_audio_pause_handle(int handle);
+void kwik_audio_resume_handle(int handle);
+void kwik_audio_set_handle_volume(int handle, float volume);
+void kwik_audio_set_handle_looping(int handle, bool loop);
+void kwik_audio_seek_handle(int handle, double seconds);
+void kwik_video_focus_pause(bool paused);
+void kwik_vertex_format_begin_rt();
+void kwik_vertex_format_add_rt(int type, int usage);
+int kwik_vertex_format_end_rt();
 unsigned int kwik_image_texture(int image, int& w, int& h);
 void kwik_flush_textures();
+
+bool kwik_keyboard_mapped_down(int vk);
+bool kwik_keyboard_mapped_pressed(int vk);
+bool kwik_keyboard_mapped_released(int vk);
+void kwik_keyboard_set_map(int key, int maps_to);
+void kwik_keyboard_unset_map(int key);
 
 }

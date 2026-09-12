@@ -1,5 +1,8 @@
 #include "gml_runtime.h"
 #include "engine_internal.h"
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+#include "NXFile.hpp"
+#endif
 
 #define MINIAUDIO_IMPLEMENTATION
 #define MA_NO_ENCODING
@@ -202,6 +205,24 @@ static bool init_voice_pcm(Voice* v, const unsigned char* data, unsigned int siz
 }
 
 static bool read_file_bytes(const std::string& path, std::vector<unsigned char>& out) {
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    NXFile* file = NXFile_Open(path.c_str(), "rb");
+    if (!file) return false;
+    if (NXFile_Seek(file, 0, SEEK_END) != 0) {
+        NXFile_Close(file);
+        return false;
+    }
+    long size = NXFile_Tell(file);
+    if (size <= 0 || NXFile_Seek(file, 0, SEEK_SET) != 0) {
+        NXFile_Close(file);
+        return false;
+    }
+    out.resize(static_cast<size_t>(size));
+    size_t count = NXFile_Read(out.data(), 1, out.size(), file);
+    NXFile_Close(file);
+    out.resize(count);
+    return !out.empty();
+#else
     std::FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) return false;
     std::fseek(f, 0, SEEK_END);
@@ -216,6 +237,7 @@ static bool read_file_bytes(const std::string& path, std::vector<unsigned char>&
     std::fclose(f);
     out.resize(got);
     return !out.empty();
+#endif
 }
 
 static Voice* start_voice(int what, bool loop) {
@@ -307,6 +329,75 @@ static Voice* voice_of_handle(int h) {
     return g_voices[i];
 }
 
+int kwik_audio_play_pcm(short* pcm, unsigned int channels, unsigned int rate,
+                        unsigned long long frames, bool loop, float volume) {
+    if (!pcm || channels == 0 || rate == 0 || frames == 0 || !ensure_engine()) {
+        if (pcm) std::free(pcm);
+        return -1;
+    }
+    Voice* v = new Voice();
+    if (!finish_voice_from_pcm(v, pcm, channels, rate, frames)) {
+        if (v->buffer) {
+            ma_audio_buffer_uninit(v->buffer);
+            delete v->buffer;
+        }
+        if (v->pcm) std::free(v->pcm);
+        delete v;
+        return -1;
+    }
+    v->base_gain = volume;
+    v->gain = 1.0f;
+    ma_sound_set_volume(&v->snd, volume);
+    ma_sound_set_looping(&v->snd, loop ? MA_TRUE : MA_FALSE);
+    ma_sound_start(&v->snd);
+    v->active = true;
+    return kHandleBase + store_voice(v);
+}
+
+void kwik_audio_stop_handle(int handle) {
+    int i = handle - kHandleBase;
+    if (i < 0 || (size_t)i >= g_voices.size() || !g_voices[i]) return;
+    free_voice(g_voices[i]);
+    g_voices[i] = nullptr;
+}
+
+void kwik_audio_pause_handle(int handle) {
+    Voice* v = voice_of_handle(handle);
+    if (v && v->active && !v->paused) {
+        ma_sound_stop(&v->snd);
+        v->paused = true;
+    }
+}
+
+void kwik_audio_resume_handle(int handle) {
+    Voice* v = voice_of_handle(handle);
+    if (v && v->active && v->paused) {
+        ma_sound_start(&v->snd);
+        v->paused = false;
+    }
+}
+
+void kwik_audio_set_handle_volume(int handle, float volume) {
+    Voice* v = voice_of_handle(handle);
+    if (!v) return;
+    v->base_gain = volume;
+    v->gain = 1.0f;
+    v->fade_target = -1.0f;
+    ma_sound_set_volume(&v->snd, volume);
+}
+
+void kwik_audio_set_handle_looping(int handle, bool loop) {
+    Voice* v = voice_of_handle(handle);
+    if (v) ma_sound_set_looping(&v->snd, loop ? MA_TRUE : MA_FALSE);
+}
+
+void kwik_audio_seek_handle(int handle, double seconds) {
+    Voice* v = voice_of_handle(handle);
+    if (!v || !v->buffer) return;
+    ma_uint32 rate = v->buffer->ref.sampleRate;
+    ma_sound_seek_to_pcm_frame(&v->snd, (ma_uint64)(seconds * rate));
+}
+
 template <typename F>
 static void for_matching(int what, F f) {
     if (what >= kHandleBase) {
@@ -374,6 +465,22 @@ GMLFN(audio_is_playing) {
         if (v->active && (v->paused || ma_sound_is_playing(&v->snd))) playing = true;
     });
     return Value(playing);
+}
+
+GMLFN(audio_sound_get_asset) {
+    (void)self;
+    if (argc < 1) return Value(-1.0);
+    int what = (int)(double)args[0];
+    if (what >= kHandleBase) {
+        Voice* v = voice_of_handle(what);
+        if (!v) return Value(-1.0);
+        if (v->asset >= 0) return Value((double)v->asset);
+        if (v->stream >= 0) return Value((double)v->stream);
+        return Value(-1.0);
+    }
+    if ((what >= kStreamBase && what < kHandleBase) || (what >= 0 && what < g_sound_count))
+        return Value((double)what);
+    return Value(-1.0);
 }
 
 GMLFN(audio_pause_sound) {

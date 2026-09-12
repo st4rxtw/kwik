@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 namespace gml {
 
@@ -12,6 +13,85 @@ static double A(const Value* args, int argc, int i, double dflt = 0.0) {
 }
 static unsigned int C(const Value* args, int argc, int i, unsigned int dflt = 0xFFFFFF) {
     return i < argc ? (unsigned int)(long long)(double)args[i] : dflt;
+}
+
+struct VertexFormatElement {
+    int type = 0;
+    int usage = 0;
+    int offset = 0;
+    unsigned int bit = 0;
+};
+
+struct VertexFormat {
+    std::vector<VertexFormatElement> elements;
+    int byte_size = 0;
+    unsigned int bit_mask = 0;
+    unsigned int next_bit = 1;
+};
+
+static std::vector<VertexFormat> g_vertex_formats;
+static VertexFormat g_build_vertex_format;
+static bool g_building_vertex_format = false;
+
+static int vertex_format_type_size(int type) {
+    switch (type) {
+        case 1: return 4;
+        case 2: return 8;
+        case 3: return 12;
+        case 4: return 16;
+        case 5: return 4;
+        case 6: return 4;
+        default: return 0;
+    }
+}
+
+static bool vertex_format_equal(const VertexFormat& a, const VertexFormat& b) {
+    if (a.byte_size != b.byte_size || a.bit_mask != b.bit_mask ||
+        a.elements.size() != b.elements.size())
+        return false;
+    for (size_t i = 0; i < a.elements.size(); ++i) {
+        const VertexFormatElement& ae = a.elements[i];
+        const VertexFormatElement& be = b.elements[i];
+        if (ae.type != be.type || ae.usage != be.usage || ae.offset != be.offset ||
+            ae.bit != be.bit)
+            return false;
+    }
+    return true;
+}
+
+void kwik_vertex_format_begin_rt() {
+    if (g_building_vertex_format) return;
+    g_build_vertex_format = VertexFormat();
+    g_building_vertex_format = true;
+}
+
+void kwik_vertex_format_add_rt(int type, int usage) {
+    if (!g_building_vertex_format) return;
+    if (type < 1 || type > 6 || usage < 1 || usage > 14) return;
+    int size = vertex_format_type_size(type);
+    if (size <= 0) return;
+
+    VertexFormatElement el;
+    el.type = type;
+    el.usage = usage;
+    el.offset = g_build_vertex_format.byte_size;
+    el.bit = g_build_vertex_format.next_bit;
+    g_build_vertex_format.elements.push_back(el);
+    g_build_vertex_format.byte_size += size;
+    g_build_vertex_format.bit_mask |= el.bit;
+    if (g_build_vertex_format.next_bit < 0x80000000u)
+        g_build_vertex_format.next_bit <<= 1;
+}
+
+int kwik_vertex_format_end_rt() {
+    if (!g_building_vertex_format) return -1;
+    g_building_vertex_format = false;
+    for (size_t i = 0; i < g_vertex_formats.size(); ++i) {
+        if (vertex_format_equal(g_vertex_formats[i], g_build_vertex_format))
+            return (int)i;
+    }
+    g_vertex_formats.push_back(g_build_vertex_format);
+    return (int)g_vertex_formats.size() - 1;
 }
 
 GMLFN(draw_set_color) { (void)self; render_set_color(C(args, argc, 0)); return Value(); }
@@ -41,6 +121,14 @@ GMLFN(font_add_sprite_ext) {
     int rt = kwik_font_add_sprite((int)(double)args[0], (std::string)args[1], gml_truthy(args[2]),
                                   (int)(double)args[3]);
     return Value(rt < 0 ? -1.0 : (double)(rt + 10000));
+}
+GMLFN(font_delete) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(font_exists) {
+    (void)self;
+    if (argc < 1) return Value(0.0);
+    int id = (int)A(args, argc, 0);
+    if (id >= 10000) return Value(1.0);
+    return Value(id >= 0 && id < g_font_count && kwik_font_for_asset(id) >= 0);
 }
 
 GMLFN(string_width) {
@@ -172,19 +260,55 @@ GMLFN(draw_surface_ext) {
     return Value();
 }
 
+static void draw_rectangle_transformed(double x1, double y1, double x2, double y2, unsigned int c1,
+                                       unsigned int c2, unsigned int c3, unsigned int c4,
+                                       bool outline, double alpha) {
+    double px[4], py[4];
+    kwik_world_transform_point(x1, y1, px[0], py[0]);
+    kwik_world_transform_point(x2 + 1, y1, px[1], py[1]);
+    kwik_world_transform_point(x2 + 1, y2 + 1, px[2], py[2]);
+    kwik_world_transform_point(x1, y2 + 1, px[3], py[3]);
+    if (outline) {
+        render_primitive_begin(3, 0);
+        for (int i = 0; i < 4; ++i) render_primitive_vertex(px[i], py[i], 0, 0, c1, alpha, false);
+        render_primitive_vertex(px[0], py[0], 0, 0, c1, alpha, false);
+        render_primitive_end();
+        return;
+    }
+    render_primitive_begin(4, 0);
+    unsigned int cc[4] = {c1, c2, c3, c4};
+    const int idx[6] = {0, 1, 2, 0, 2, 3};
+    for (int i : idx) render_primitive_vertex(px[i], py[i], 0, 0, cc[i], alpha, false);
+    render_primitive_end();
+}
+
 GMLFN(draw_rectangle) {
     (void)self;
     if (argc < 5) return Value();
-    render_draw_rectangle(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2), A(args, argc, 3),
-                          gml_truthy(args[4]));
+    double x1 = A(args, argc, 0), y1 = A(args, argc, 1), x2 = A(args, argc, 2),
+           y2 = A(args, argc, 3);
+    bool outline = gml_truthy(args[4]);
+    if (kwik_world_transform_active()) {
+        unsigned int c = render_get_color();
+        draw_rectangle_transformed(x1, y1, x2, y2, c, c, c, c, outline, render_get_alpha());
+        return Value();
+    }
+    render_draw_rectangle(x1, y1, x2, y2, outline);
     return Value();
 }
 GMLFN(draw_rectangle_color) {
     (void)self;
     if (argc < 9) return Value();
-    render_draw_rectangle_color(A(args, argc, 0), A(args, argc, 1), A(args, argc, 2),
-                                A(args, argc, 3), C(args, argc, 4), C(args, argc, 5),
-                                C(args, argc, 6), C(args, argc, 7), gml_truthy(args[8]));
+    double x1 = A(args, argc, 0), y1 = A(args, argc, 1), x2 = A(args, argc, 2),
+           y2 = A(args, argc, 3);
+    unsigned int c1 = C(args, argc, 4), c2 = C(args, argc, 5), c3 = C(args, argc, 6),
+                c4 = C(args, argc, 7);
+    bool outline = gml_truthy(args[8]);
+    if (kwik_world_transform_active()) {
+        draw_rectangle_transformed(x1, y1, x2, y2, c1, c2, c3, c4, outline, render_get_alpha());
+        return Value();
+    }
+    render_draw_rectangle_color(x1, y1, x2, y2, c1, c2, c3, c4, outline);
     return Value();
 }
 GMLFN(draw_rectangle_colour) { return draw_rectangle_color(self, args, argc); }
@@ -347,8 +471,10 @@ GMLFN(gpu_set_fog) {
     render_set_fog(argc > 0 && gml_truthy(args[0]), C(args, argc, 1, 0));
     return Value();
 }
-GMLFN(gpu_set_texfilter) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(gpu_set_texfilter_ext) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(gpu_set_texfilter) { return gpu_set_tex_filter(self, args, argc); }
+GMLFN(gpu_set_texfilter_ext) {
+    return argc >= 2 ? gpu_set_tex_filter(self, args + 1, argc - 1) : gpu_set_tex_filter(self, args, argc);
+}
 
 GMLFN(surface_get_width) {
     (void)self;
@@ -376,12 +502,40 @@ GMLFN(texturegroup_get_textures) {
 GMLFN(application_surface_draw_enable) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(application_surface_enable) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(vertex_create_buffer) { (void)self; (void)args; (void)argc; return Value(-1.0); }
-GMLFN(vertex_format_add_colour) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(vertex_format_add_normal) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(vertex_format_add_position_3d) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(vertex_format_add_textcoord) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(vertex_format_begin) { (void)self; (void)args; (void)argc; return Value(); }
-GMLFN(vertex_format_end) { (void)self; (void)args; (void)argc; return Value(-1.0); }
+GMLFN(vertex_format_add_colour) {
+    (void)self; (void)args; (void)argc;
+    kwik_vertex_format_add_rt(5, 2);
+    return Value();
+}
+GMLFN(vertex_format_add_custom) {
+    (void)self;
+    kwik_vertex_format_add_rt((int)A(args, argc, 0), (int)A(args, argc, 1));
+    return Value();
+}
+GMLFN(vertex_format_add_normal) {
+    (void)self; (void)args; (void)argc;
+    kwik_vertex_format_add_rt(3, 3);
+    return Value();
+}
+GMLFN(vertex_format_add_position_3d) {
+    (void)self; (void)args; (void)argc;
+    kwik_vertex_format_add_rt(3, 1);
+    return Value();
+}
+GMLFN(vertex_format_add_textcoord) {
+    (void)self; (void)args; (void)argc;
+    kwik_vertex_format_add_rt(2, 4);
+    return Value();
+}
+GMLFN(vertex_format_begin) {
+    (void)self; (void)args; (void)argc;
+    kwik_vertex_format_begin_rt();
+    return Value();
+}
+GMLFN(vertex_format_end) {
+    (void)self; (void)args; (void)argc;
+    return Value((double)kwik_vertex_format_end_rt());
+}
 
 GMLFN(sprite_exists) {
     (void)self;
@@ -417,6 +571,7 @@ GMLFN(sprite_get_yoffset) {
     const KwikSprite* s = kwik_sprite_at((int)A(args, argc, 0, -1));
     return Value(s ? (double)s->origin_y : 0.0);
 }
+GMLFN(sprite_flush) { (void)self; (void)args; (void)argc; return Value(); }
 GMLFN(sprite_create_from_surface) {
     (void)self;
     if (argc < 5) return Value(-1.0);
@@ -507,6 +662,23 @@ GMLFN(window_set_caption) {
     return Value();
 }
 GMLFN(window_set_cursor) { (void)self; (void)args; (void)argc; return Value(); }
+GMLFN(window_mouse_get_delta_x) { (void)self; (void)args; (void)argc; return Value(render_mouse_delta_x()); }
+GMLFN(window_mouse_get_delta_y) { (void)self; (void)args; (void)argc; return Value(render_mouse_delta_y()); }
+GMLFN(window_mouse_set_locked) {
+    (void)self;
+    render_mouse_set_locked(argc > 0 && gml_truthy(args[0]));
+    return Value();
+}
+
+GMLFN(application_get_position) {
+    (void)self; (void)args; (void)argc;
+    Value out = kwik_new_array(nullptr, 0);
+    out.arr->items.push_back(Value(0.0));
+    out.arr->items.push_back(Value(0.0));
+    out.arr->items.push_back(Value((double)render_app_width()));
+    out.arr->items.push_back(Value((double)render_app_height()));
+    return out;
+}
 
 GMLFN(display_get_width) { (void)self; (void)args; (void)argc; return Value((double)render_display_width()); }
 GMLFN(display_get_height) { (void)self; (void)args; (void)argc; return Value((double)render_display_height()); }
