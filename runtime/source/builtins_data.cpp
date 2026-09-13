@@ -1,13 +1,20 @@
 #include "gml_runtime.h"
 #include "engine_internal.h"
 #include "render.h"
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+#include "NXFile.hpp"
+#endif
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <vector>
+
+#include "nlohmann/json.hpp"
 
 namespace gml {
 
@@ -493,66 +500,168 @@ GMLFN(json_encode) {
     return Value(out);
 }
 
-static bool json_parse_struct(JsonParser& jp, Instance* self, Value& out);
+static bool json_to_value(const nlohmann::json& j, Instance* self, Value& out) {
+    if (j.is_null()) {
+        out = Value();
+        return true;
+    }
+    if (j.is_boolean()) {
+        out = Value(j.get<bool>());
+        return true;
+    }
+    if (j.is_number()) {
+        out = Value(j.get<double>());
+        return true;
+    }
+    if (j.is_string()) {
+        out = Value(j.get<std::string>());
+        return true;
+    }
+    if (j.is_array()) {
+        out = kwik_new_array(nullptr, 0);
+        if (!out.arr) return false;
+        for (const auto& item : j) {
+            Value v;
+            if (!json_to_value(item, self, v)) return false;
+            out.arr->items.push_back(v);
+        }
+        return true;
+    }
+    if (j.is_object()) {
+        out = kwik_new_object(self, nullptr, 0);
+        if (!out.obj) return false;
+        for (const auto& item : j.items()) {
+            Value v;
+            if (!json_to_value(item.value(), self, v)) return false;
+            out.obj->var(item.key()) = v;
+        }
+        return true;
+    }
+    return false;
+}
 
 GMLFN(json_parse) {
     (void)self;
     std::string src = S(args, argc, 0);
-    JsonParser jp{src.c_str(), src.c_str() + src.size()};
+    nlohmann::json j = nlohmann::json::parse(src, nullptr, false);
+    if (j.is_discarded()) return Value();
     Value out;
-    if (!json_parse_struct(jp, self, out)) return Value();
+    if (!json_to_value(j, self, out)) return Value();
     return out;
 }
 
-static bool json_parse_struct(JsonParser& jp, Instance* self, Value& out) {
-    jp.skip_ws();
-    if (jp.p >= jp.end) return false;
-    if (*jp.p == '{') {
-        ++jp.p;
-        Value obj = kwik_new_object(self, nullptr, 0);
-        jp.skip_ws();
-        if (jp.p < jp.end && *jp.p == '}') { ++jp.p; out = obj; return true; }
-        while (jp.p < jp.end) {
-            jp.skip_ws();
-            std::string key;
-            if (!jp.parse_string(key)) return false;
-            jp.skip_ws();
-            if (jp.p >= jp.end || *jp.p != ':') return false;
-            ++jp.p;
-            Value v;
-            if (!json_parse_struct(jp, self, v)) return false;
-            if (obj.obj) obj.obj->var(key) = v;
-            jp.skip_ws();
-            if (jp.p < jp.end && *jp.p == ',') { ++jp.p; continue; }
-            break;
+static nlohmann::json value_to_json(const Value& v, std::set<const void*>& seen_arrays,
+                                    std::set<const void*>& seen_objects) {
+    switch (v.type) {
+        case Value::UNDEF: return nullptr;
+        case Value::REAL: return v.num;
+        case Value::STR: return v.str;
+        case Value::ARR: {
+            if (!v.arr) return nullptr;
+            const void* key = v.arr.get();
+            if (seen_arrays.count(key)) return nullptr;
+            seen_arrays.insert(key);
+            nlohmann::json out = nlohmann::json::array();
+            for (const Value& item : v.arr->items)
+                out.push_back(value_to_json(item, seen_arrays, seen_objects));
+            seen_arrays.erase(key);
+            return out;
         }
-        jp.skip_ws();
-        if (jp.p < jp.end && *jp.p == '}') ++jp.p;
-        out = obj;
-        return true;
-    }
-    if (*jp.p == '[') {
-        ++jp.p;
-        Value arr = kwik_new_array(nullptr, 0);
-        jp.skip_ws();
-        if (jp.p < jp.end && *jp.p == ']') { ++jp.p; out = arr; return true; }
-        while (jp.p < jp.end) {
-            Value v;
-            if (!json_parse_struct(jp, self, v)) return false;
-            arr.arr->items.push_back(v);
-            jp.skip_ws();
-            if (jp.p < jp.end && *jp.p == ',') { ++jp.p; continue; }
-            break;
+        case Value::OBJ: {
+            if (!v.obj) return nullptr;
+            const void* key = v.obj.get();
+            if (seen_objects.count(key)) return nullptr;
+            seen_objects.insert(key);
+            nlohmann::json out = nlohmann::json::object();
+            for (const auto& kv : v.obj->vars)
+                out[kv.first] = value_to_json(kv.second, seen_arrays, seen_objects);
+            seen_objects.erase(key);
+            return out;
         }
-        jp.skip_ws();
-        if (jp.p < jp.end && *jp.p == ']') ++jp.p;
-        out = arr;
-        return true;
+        case Value::FN:
+            return nullptr;
     }
-    return jp.parse_ds(out);
+    return nullptr;
 }
 
-GMLFN(json_stringify) { (void)args; (void)argc; return kwik_missing(self, "json_stringify"); }
+GMLFN(json_stringify) {
+    (void)self;
+    std::set<const void*> seen_arrays;
+    std::set<const void*> seen_objects;
+    nlohmann::json j = value_to_json(argc > 0 ? args[0] : Value(), seen_arrays, seen_objects);
+    return Value(j.dump());
+}
+
+static Value csv_row_value(const std::vector<std::string>& cells) {
+    Value row = kwik_new_array(nullptr, 0);
+    for (const std::string& cell : cells)
+        row.arr->items.push_back(Value(cell));
+    return row;
+}
+
+GMLFN(load_csv) {
+    (void)self;
+    std::string path = S(args, argc, 0);
+    Value out = kwik_new_array(nullptr, 0);
+    std::string text;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    std::vector<unsigned char> bytes;
+    if (!NXFile_ReadAll(kwik_resolve_read(path).c_str(), &bytes)) return out;
+    text.assign(bytes.begin(), bytes.end());
+#else
+    std::FILE* f = std::fopen(kwik_resolve_read(path).c_str(), "rb");
+    if (!f) return out;
+    char buf[4096];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0)
+        text.append(buf, n);
+    std::fclose(f);
+#endif
+
+    std::vector<std::string> row;
+    std::string cell;
+    bool quoted = false;
+    bool have_cell = false;
+    for (size_t i = 0; i < text.size(); ++i) {
+        char c = text[i];
+        have_cell = true;
+        if (quoted) {
+            if (c == '"') {
+                if (i + 1 < text.size() && text[i + 1] == '"') {
+                    cell.push_back('"');
+                    ++i;
+                } else {
+                    quoted = false;
+                }
+            } else {
+                cell.push_back(c);
+            }
+            continue;
+        }
+        if (c == '"') {
+            quoted = true;
+        } else if (c == ',') {
+            row.push_back(cell);
+            cell.clear();
+            have_cell = false;
+        } else if (c == '\n' || c == '\r') {
+            row.push_back(cell);
+            cell.clear();
+            if (!row.empty())
+                out.arr->items.push_back(csv_row_value(row));
+            row.clear();
+            have_cell = false;
+            if (c == '\r' && i + 1 < text.size() && text[i + 1] == '\n') ++i;
+        } else {
+            cell.push_back(c);
+        }
+    }
+    if (have_cell || !cell.empty() || !row.empty()) {
+        row.push_back(cell);
+        out.arr->items.push_back(csv_row_value(row));
+    }
+    return out;
+}
 
 struct IniSection {
     std::map<std::string, std::string> entries;
@@ -600,6 +709,11 @@ GMLFN(ini_open) {
     g_ini_open = true;
     g_ini_dirty = false;
     g_ini_from_string = false;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    std::vector<unsigned char> bytes;
+    if (NXFile_ReadAll(g_ini_file.c_str(), &bytes))
+        ini_parse(std::string(bytes.begin(), bytes.end()));
+#else
     std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
     if (f) {
         std::string text;
@@ -609,6 +723,7 @@ GMLFN(ini_open) {
         std::fclose(f);
         ini_parse(text);
     }
+#endif
     return Value();
 }
 
@@ -631,11 +746,15 @@ GMLFN(ini_close) {
         for (auto& kv : sec.second.entries) out += kv.first + "=\"" + kv.second + "\"\n";
     }
     if (g_ini_open && g_ini_dirty && !g_ini_from_string && !g_ini_file.empty()) {
+    #if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+        NXFile_WriteAll(g_ini_file.c_str(), out.data(), out.size());
+    #else
         std::FILE* f = std::fopen(g_ini_file.c_str(), "wb");
         if (f) {
             std::fwrite(out.data(), 1, out.size(), f);
             std::fclose(f);
         }
+    #endif
     }
     g_ini_open = false;
     g_ini.clear();
@@ -710,36 +829,63 @@ GMLFN(ini_key_delete) {
 
 GMLFN(file_exists) {
     (void)self;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    const std::string save_path = kwik_save_path(S(args, argc, 0));
+    return Value(NXFile_Exists(save_path.c_str()));
+#else
     std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
     if (f) { std::fclose(f); return Value(1.0); }
     return Value(0.0);
+#endif
 }
 
 GMLFN(directory_exists) {
     (void)self;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    return Value(NXFile_IsDirectory(kwik_resolve_read(S(args, argc, 0)).c_str()));
+#else
     std::error_code ec;
     return Value(std::filesystem::is_directory(kwik_resolve_read(S(args, argc, 0)), ec));
+#endif
 }
 
 GMLFN(directory_create) {
     (void)self;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    return Value(NXFile_CreateDirectories(kwik_save_path(S(args, argc, 0)).c_str()));
+#else
     std::error_code ec;
     std::filesystem::create_directories(kwik_save_path(S(args, argc, 0)), ec);
     return Value();
+#endif
 }
 
 GMLFN(file_delete) {
     (void)self;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    return Value(NXFile_Delete(kwik_save_path(S(args, argc, 0)).c_str()));
+#else
     return Value(std::remove(kwik_resolve_read(S(args, argc, 0)).c_str()) == 0);
+#endif
 }
 
 GMLFN(file_rename) {
     (void)self;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    return Value(NXFile_Rename(kwik_resolve_read(S(args, argc, 0)).c_str(),
+                               kwik_save_path(S(args, argc, 1)).c_str()));
+#else
     return Value(std::rename(kwik_resolve_read(S(args, argc, 0)).c_str(), kwik_save_path(S(args, argc, 1)).c_str()) == 0);
+#endif
 }
 
 GMLFN(file_copy) {
     (void)self;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    std::vector<unsigned char> bytes;
+    if (!NXFile_ReadAll(kwik_resolve_read(S(args, argc, 0)).c_str(), &bytes)) return Value(0.0);
+    return Value(NXFile_WriteAll(kwik_save_path(S(args, argc, 1)).c_str(), bytes.data(), bytes.size()));
+#else
     std::FILE* in = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
     if (!in) return Value(0.0);
     std::FILE* out = std::fopen(kwik_save_path(S(args, argc, 1)).c_str(), "wb");
@@ -750,25 +896,161 @@ GMLFN(file_copy) {
     std::fclose(in);
     std::fclose(out);
     return Value(1.0);
+#endif
+}
+
+static std::vector<std::string> g_file_find_results;
+static size_t g_file_find_pos = 0;
+
+static std::string normalize_file_find_path(std::string s) {
+    for (char& c : s)
+        if (c == '\\') c = '/';
+    return s;
+}
+
+static bool file_find_wildcard_match(const std::string& pattern, const std::string& name) {
+    size_t p = 0, n = 0;
+    size_t star = std::string::npos, retry = 0;
+    while (n < name.size()) {
+        if (p < pattern.size() &&
+            (pattern[p] == '?' ||
+             std::tolower((unsigned char)pattern[p]) == std::tolower((unsigned char)name[n]))) {
+            ++p;
+            ++n;
+        } else if (p < pattern.size() && pattern[p] == '*') {
+            star = p++;
+            retry = n;
+        } else if (star != std::string::npos) {
+            p = star + 1;
+            n = ++retry;
+        } else {
+            return false;
+        }
+    }
+    while (p < pattern.size() && pattern[p] == '*') ++p;
+    return p == pattern.size();
+}
+
+static bool file_find_attrs_match(const std::filesystem::directory_entry& entry, int attr) {
+    std::error_code ec;
+    bool is_dir = entry.is_directory(ec);
+    if (is_dir) return (attr & 0x10) != 0;
+    std::string name = entry.path().filename().string();
+    if (!name.empty() && name[0] == '.' && (attr & 0x02) == 0) return false;
+    return true;
+}
+
+static std::vector<std::filesystem::path> file_find_candidate_dirs(const std::string& dir) {
+    std::vector<std::filesystem::path> dirs;
+    std::filesystem::path p(dir.empty() ? "." : dir);
+    if (p.is_absolute()) {
+        dirs.push_back(p);
+        return dirs;
+    }
+    if (!g_save_dir.empty()) dirs.emplace_back(std::filesystem::path(g_save_dir) / p);
+    dirs.push_back(p);
+    if (!g_game_dir.empty()) dirs.emplace_back(std::filesystem::path(g_game_dir) / p);
+    return dirs;
+}
+
+GMLFN(file_find_first) {
+    (void)self;
+    g_file_find_results.clear();
+    g_file_find_pos = 0;
+    if (argc < 1) return Value("");
+
+    std::string mask = normalize_file_find_path(S(args, argc, 0));
+    int attr = (int)A(args, argc, 1);
+    size_t slash = mask.find_last_of('/');
+    std::string dir = slash == std::string::npos ? "" : mask.substr(0, slash);
+    std::string pattern = slash == std::string::npos ? mask : mask.substr(slash + 1);
+    if (pattern.empty()) pattern = "*";
+
+    for (const std::filesystem::path& base : file_find_candidate_dirs(dir)) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(base, ec)) continue;
+        for (const auto& entry : std::filesystem::directory_iterator(base, ec)) {
+            if (ec) break;
+            std::string name = entry.path().filename().string();
+            if (file_find_wildcard_match(pattern, name) && file_find_attrs_match(entry, attr))
+                g_file_find_results.push_back(name);
+        }
+        if (!g_file_find_results.empty()) break;
+    }
+
+    std::sort(g_file_find_results.begin(), g_file_find_results.end());
+    g_file_find_results.erase(std::unique(g_file_find_results.begin(), g_file_find_results.end()),
+                              g_file_find_results.end());
+    return g_file_find_results.empty() ? Value("") : Value(g_file_find_results[0]);
+}
+
+GMLFN(file_find_next) {
+    (void)self; (void)args; (void)argc;
+    if (g_file_find_pos + 1 >= g_file_find_results.size()) return Value("");
+    return Value(g_file_find_results[++g_file_find_pos]);
+}
+
+GMLFN(file_find_close) {
+    (void)self; (void)args; (void)argc;
+    g_file_find_results.clear();
+    g_file_find_pos = 0;
+    return Value();
 }
 
 struct TextFile {
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    NXFile* f = nullptr;
+#else
     std::FILE* f = nullptr;
+#endif
     bool write = false;
     bool alive = false;
 };
 static std::vector<TextFile> g_text_files;
 
+static int tf_getc(TextFile* tf) {
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    unsigned char c = 0;
+    return NXFile_Read(&c, 1, 1, tf->f) == 1 ? c : EOF;
+#else
+    return std::fgetc(tf->f);
+#endif
+}
+
+static void tf_ungetc(TextFile* tf, int c) {
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    NXFile_Seek(tf->f, -1, SEEK_CUR);
+#else
+    std::ungetc(c, tf->f);
+#endif
+}
+
+static void tf_write(TextFile* tf, const char* data, size_t size) {
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    NXFile_Write(data, 1, size, tf->f);
+#else
+    std::fwrite(data, 1, size, tf->f);
+#endif
+}
+
 GMLFN(file_text_open_read) {
     (void)self;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    NXFile* f = NXFile_Open(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
+#else
     std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
+#endif
     if (!f) return Value(-1.0);
     g_text_files.push_back({f, false, true});
     return Value((double)(g_text_files.size() - 1));
 }
 GMLFN(file_text_open_write) {
     (void)self;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    NXFile* f = NXFile_Open(kwik_save_path(S(args, argc, 0)).c_str(), "wb");
+#else
     std::FILE* f = std::fopen(kwik_save_path(S(args, argc, 0)).c_str(), "wb");
+#endif
     if (!f) return Value(-1.0);
     g_text_files.push_back({f, true, true});
     return Value((double)(g_text_files.size() - 1));
@@ -782,7 +1064,11 @@ GMLFN(file_text_close) {
     (void)self;
     TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
     if (tf) {
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+        NXFile_Close(tf->f);
+#else
         std::fclose(tf->f);
+#endif
         tf->f = nullptr;
         tf->alive = false;
     }
@@ -792,19 +1078,27 @@ GMLFN(file_text_eof) {
     (void)self;
     TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
     if (!tf) return Value(1.0);
-    int c = std::fgetc(tf->f);
+    int c = tf_getc(tf);
     if (c == EOF) return Value(1.0);
-    std::ungetc(c, tf->f);
+    tf_ungetc(tf, c);
     return Value(0.0);
 }
 static std::string tf_read_line_peek(TextFile* tf) {
     std::string line;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    long pos = NXFile_Tell(tf->f);
+#else
     long pos = std::ftell(tf->f);
+#endif
     int c;
-    while ((c = std::fgetc(tf->f)) != EOF && c != '\n') {
+    while ((c = tf_getc(tf)) != EOF && c != '\n') {
         if (c != '\r') line.push_back((char)c);
     }
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    NXFile_Seek(tf->f, pos, SEEK_SET);
+#else
     std::fseek(tf->f, pos, SEEK_SET);
+#endif
     return line;
 }
 GMLFN(file_text_read_string) {
@@ -812,7 +1106,7 @@ GMLFN(file_text_read_string) {
     TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
     if (!tf) return Value("");
     std::string line = tf_read_line_peek(tf);
-    for (size_t i = 0; i < line.size(); ++i) std::fgetc(tf->f);
+    for (size_t i = 0; i < line.size(); ++i) tf_getc(tf);
     return Value(line);
 }
 GMLFN(file_text_read_real) {
@@ -820,7 +1114,15 @@ GMLFN(file_text_read_real) {
     TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
     if (!tf) return Value(0.0);
     double d = 0;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    std::string text = tf_read_line_peek(tf);
+    for (size_t i = 0; i < text.size(); ++i) tf_getc(tf);
+    char* end = nullptr;
+    d = std::strtod(text.c_str(), &end);
+    if (end == text.c_str()) d = 0;
+#else
     if (std::fscanf(tf->f, "%lf", &d) != 1) d = 0;
+#endif
     return Value(d);
 }
 GMLFN(file_text_readln) {
@@ -829,7 +1131,7 @@ GMLFN(file_text_readln) {
     if (!tf) return Value("");
     std::string line;
     int c;
-    while ((c = std::fgetc(tf->f)) != EOF && c != '\n')
+    while ((c = tf_getc(tf)) != EOF && c != '\n')
         if (c != '\r') line.push_back((char)c);
     return Value(line);
 }
@@ -838,7 +1140,7 @@ GMLFN(file_text_write_string) {
     TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
     if (tf && argc > 1) {
         std::string s = (std::string)args[1];
-        std::fwrite(s.data(), 1, s.size(), tf->f);
+        tf_write(tf, s.data(), s.size());
     }
     return Value();
 }
@@ -847,17 +1149,19 @@ GMLFN(file_text_write_real) {
     TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
     if (tf && argc > 1) {
         double d = (double)args[1];
+        char text[64];
         if (d == (long long)d)
-            std::fprintf(tf->f, "%lld", (long long)d);
+            std::snprintf(text, sizeof(text), "%lld", (long long)d);
         else
-            std::fprintf(tf->f, "%g", d);
+            std::snprintf(text, sizeof(text), "%g", d);
+        tf_write(tf, text, std::strlen(text));
     }
     return Value();
 }
 GMLFN(file_text_writeln) {
     (void)self;
     TextFile* tf = argc > 0 ? tf_of(args[0]) : nullptr;
-    if (tf) std::fputc('\n', tf->f);
+    if (tf) tf_write(tf, "\n", 1);
     return Value();
 }
 
@@ -909,6 +1213,15 @@ GMLFN(buffer_get_size) {
 }
 GMLFN(buffer_load) {
     (void)self;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    std::vector<unsigned char> bytes;
+    if (!NXFile_ReadAll(kwik_resolve_read(S(args, argc, 0)).c_str(), &bytes)) return Value(-1.0);
+    Buffer b;
+    b.alive = true;
+    b.data = std::move(bytes);
+    g_buffers.push_back(std::move(b));
+    return Value((double)(g_buffers.size() - 1));
+#else
     std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 0)).c_str(), "rb");
     if (!f) return Value(-1.0);
     Buffer b;
@@ -920,6 +1233,7 @@ GMLFN(buffer_load) {
     std::fclose(f);
     g_buffers.push_back(std::move(b));
     return Value((double)(g_buffers.size() - 1));
+#endif
 }
 GMLFN(buffer_read) {
     (void)self;
@@ -1030,12 +1344,16 @@ GMLFN(buffer_save_async) {
                                                      : b->data.size();
         if (off > b->data.size()) off = b->data.size();
         if (off + sz > b->data.size()) sz = b->data.size() - off;
+    #if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+        ok = NXFile_WriteAll(kwik_save_path(S(args, argc, 1)).c_str(), b->data.data() + off, sz);
+    #else
         std::FILE* f = std::fopen(kwik_save_path(S(args, argc, 1)).c_str(), "wb");
         if (f) {
             std::fwrite(b->data.data() + off, 1, sz, f);
             std::fclose(f);
             ok = true;
         }
+    #endif
     }
     int id = g_next_async_id++;
     if (g_async_group_active)
@@ -1050,15 +1368,19 @@ GMLFN(buffer_load_async) {
     Buffer* b = argc > 0 ? buf_of(args[0]) : nullptr;
     bool ok = false;
     if (b && argc > 1) {
+        size_t off = argc > 2 ? (size_t)(double)args[2] : 0;
+        std::vector<unsigned char> bytes;
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+        if (NXFile_ReadAll(kwik_resolve_read(S(args, argc, 1)).c_str(), &bytes)) {
+#else
         std::FILE* f = std::fopen(kwik_resolve_read(S(args, argc, 1)).c_str(), "rb");
         if (f) {
-            size_t off = argc > 2 ? (size_t)(double)args[2] : 0;
-            std::vector<unsigned char> bytes;
             char tmp[8192];
             size_t n;
             while ((n = std::fread(tmp, 1, sizeof(tmp), f)) > 0)
                 bytes.insert(bytes.end(), tmp, tmp + n);
             std::fclose(f);
+#endif
             if (b->data.size() < off + bytes.size()) b->data.resize(off + bytes.size());
             std::memcpy(b->data.data() + off, bytes.data(), bytes.size());
             b->pos = 0;
@@ -1245,11 +1567,20 @@ GMLFN(ds_grid_destroy) {
 GMLFN(ds_grid_width) {
     (void)self;
     DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
+    if (!g && argc > 0 && args[0].type == Value::ARR && args[0].arr) {
+        size_t best = 0;
+        for (const Value& row : args[0].arr->items)
+            if (row.type == Value::ARR && row.arr)
+                best = std::max(best, row.arr->items.size());
+        return Value((double)best);
+    }
     return Value(g ? (double)g->w : 0.0);
 }
 GMLFN(ds_grid_height) {
     (void)self;
     DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
+    if (!g && argc > 0 && args[0].type == Value::ARR && args[0].arr)
+        return Value((double)args[0].arr->items.size());
     return Value(g ? (double)g->h : 0.0);
 }
 GMLFN(ds_grid_clear) {
@@ -1264,8 +1595,15 @@ GMLFN(ds_grid_clear) {
 GMLFN(ds_grid_get) {
     (void)self;
     DsGrid* g = argc > 0 ? grid_of(args[0]) : nullptr;
-    if (!g) return Value();
     int x = (int)A(args, argc, 1), y = (int)A(args, argc, 2);
+    if (!g && argc > 0 && args[0].type == Value::ARR && args[0].arr) {
+        if (x < 0 || y < 0 || (size_t)y >= args[0].arr->items.size()) return Value(0.0);
+        const Value& row = args[0].arr->items[(size_t)y];
+        if (row.type != Value::ARR || !row.arr || (size_t)x >= row.arr->items.size())
+            return Value(0.0);
+        return row.arr->items[(size_t)x];
+    }
+    if (!g) return Value();
     if (x < 0 || x >= g->w || y < 0 || y >= g->h) return Value(0.0);
     return g->data[(size_t)y * g->w + x];
 }

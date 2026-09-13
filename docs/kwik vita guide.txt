@@ -1,1 +1,7 @@
+Building the runtime for PSVita (after getting the required libs):
+
 cmake -B buildpsv -DCMAKE_TOOLCHAIN_FILE=$VITASDK/share/vita.toolchain.cmake && cmake --build buildpsv -j$(nproc)
+
+Building the recompiled game for PSVita:
+
+make vita

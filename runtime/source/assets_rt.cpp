@@ -1,6 +1,9 @@
 #include "gml_runtime.h"
 #include "engine_internal.h"
 #include "render.h"
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+#include "NXFile.hpp"
+#endif
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -29,6 +32,42 @@ static std::vector<uint8_t> g_assets;
 static bool g_assets_tried = false;
 static std::vector<LoadedImage> g_images;
 
+static bool read_asset_file(const char* path, std::vector<unsigned char>& out) {
+#if defined(NN_NINTENDO_SDK) || defined(__SWITCH__)
+    NXFile* file = NXFile_Open(path, "rb");
+    if (!file) return false;
+    if (NXFile_Seek(file, 0, SEEK_END) != 0) {
+        NXFile_Close(file);
+        return false;
+    }
+    long size = NXFile_Tell(file);
+    if (size <= 0 || NXFile_Seek(file, 0, SEEK_SET) != 0) {
+        NXFile_Close(file);
+        return false;
+    }
+    out.resize(static_cast<size_t>(size));
+    size_t count = NXFile_Read(out.data(), 1, out.size(), file);
+    NXFile_Close(file);
+    out.resize(count);
+    return !out.empty();
+#else
+    std::FILE* file = std::fopen(path, "rb");
+    if (!file) return false;
+    std::fseek(file, 0, SEEK_END);
+    long size = std::ftell(file);
+    std::fseek(file, 0, SEEK_SET);
+    if (size <= 0) {
+        std::fclose(file);
+        return false;
+    }
+    out.resize(static_cast<size_t>(size));
+    size_t count = std::fread(out.data(), 1, out.size(), file);
+    std::fclose(file);
+    out.resize(count);
+    return !out.empty();
+#endif
+}
+
 static uint32_t rd32(size_t o) {
     if (o + 4 > g_assets.size()) return 0;
     return g_assets[o] | (g_assets[o + 1] << 8) | (g_assets[o + 2] << 16) |
@@ -39,20 +78,8 @@ static void ensure_assets() {
     if (g_assets_tried) return;
     g_assets_tried = true;
     const char* path = g_assets_path.empty() ? "Assets.dat" : g_assets_path.c_str();
-    std::FILE* f = std::fopen(path, "rb");
-    if (f) {
-        std::fseek(f, 0, SEEK_END);
-        long n = std::ftell(f);
-        std::fseek(f, 0, SEEK_SET);
-        if (n > 0) {
-            g_assets.resize(n);
-            size_t got = std::fread(g_assets.data(), 1, n, f);
-            g_assets.resize(got);
-        }
-        std::fclose(f);
-    } else {
+    if (!read_asset_file(path, g_assets))
         std::fprintf(stderr, "[kwik] could not open %s\n", path);
-    }
     g_images.resize(g_image_count);
 }
 
@@ -321,13 +348,8 @@ uint32_t* kwik_tilemap_grid_mut(int blob, int cells) {
 }
 
 static bool load_sprite_from_file(const std::string& path, int xorig, int yorig, KwikSprite& s) {
-    std::FILE* f = std::fopen(kwik_resolve_read(path).c_str(), "rb");
-    if (!f) return false;
     std::vector<unsigned char> bytes;
-    char tmp[8192];
-    size_t n;
-    while ((n = std::fread(tmp, 1, sizeof(tmp), f)) > 0) bytes.insert(bytes.end(), tmp, tmp + n);
-    std::fclose(f);
+    if (!read_asset_file(kwik_resolve_read(path).c_str(), bytes)) return false;
     int w, h, ch;
     unsigned char* pixels =
         stbi_load_from_memory(bytes.data(), (int)bytes.size(), &w, &h, &ch, 4);
@@ -578,6 +600,12 @@ void kwik_set_font_rt(int rt_font) {
 
 int kwik_get_font_rt() { return g_cur_font; }
 
+static int current_font_or_default() {
+    build_fonts();
+    if (g_cur_font >= 0 && g_cur_font < (int)g_rt_fonts.size()) return g_cur_font;
+    return g_rt_fonts.empty() ? -1 : 0;
+}
+
 static const RtGlyph* find_glyph(const RtFont& f, int ch) {
     if (ch >= 0 && ch < 256) {
         int i = f.index[ch];
@@ -588,10 +616,37 @@ static const RtGlyph* find_glyph(const RtFont& f, int ch) {
     return nullptr;
 }
 
+static int utf8_next(const std::string& text, size_t& i) {
+    unsigned char c0 = (unsigned char)text[i++];
+    if (c0 < 0x80) return c0;
+    int need = 0;
+    int cp = 0;
+    if ((c0 & 0xE0) == 0xC0) {
+        need = 1;
+        cp = c0 & 0x1F;
+    } else if ((c0 & 0xF0) == 0xE0) {
+        need = 2;
+        cp = c0 & 0x0F;
+    } else if ((c0 & 0xF8) == 0xF0) {
+        need = 3;
+        cp = c0 & 0x07;
+    } else {
+        return c0;
+    }
+    for (int j = 0; j < need; ++j) {
+        if (i >= text.size()) return c0;
+        unsigned char cx = (unsigned char)text[i];
+        if ((cx & 0xC0) != 0x80) return c0;
+        ++i;
+        cp = (cp << 6) | (cx & 0x3F);
+    }
+    return cp;
+}
+
 static double line_width(const RtFont& f, const std::string& text, size_t a, size_t b) {
     double w = 0;
-    for (size_t i = a; i < b; ++i) {
-        const RtGlyph* g = find_glyph(f, (unsigned char)text[i]);
+    for (size_t i = a; i < b;) {
+        const RtGlyph* g = find_glyph(f, utf8_next(text, i));
         if (g) w += g->shift;
     }
     return w;
@@ -610,9 +665,9 @@ static void split_lines(const std::string& text, std::vector<std::pair<size_t, s
 }
 
 double kwik_string_width(const std::string& s) {
-    build_fonts();
-    if (g_cur_font < 0) return 0;
-    const RtFont& f = g_rt_fonts[g_cur_font];
+    int font = current_font_or_default();
+    if (font < 0) return 0;
+    const RtFont& f = g_rt_fonts[font];
     std::vector<std::pair<size_t, size_t>> lines;
     split_lines(s, lines);
     double best = 0;
@@ -621,9 +676,9 @@ double kwik_string_width(const std::string& s) {
 }
 
 double kwik_string_height(const std::string& s) {
-    build_fonts();
-    if (g_cur_font < 0) return 0;
-    const RtFont& f = g_rt_fonts[g_cur_font];
+    int font = current_font_or_default();
+    if (font < 0) return 0;
+    const RtFont& f = g_rt_fonts[font];
     std::vector<std::pair<size_t, size_t>> lines;
     split_lines(s, lines);
     return f.line_height * (double)lines.size();
@@ -631,25 +686,26 @@ double kwik_string_height(const std::string& s) {
 
 void kwik_draw_text_ext_rt(double x, double y, const std::string& text, double sep, double wrapw,
                            double xs, double ys, double angle) {
-    build_fonts();
-    if (g_cur_font < 0) return;
-    const RtFont& f = g_rt_fonts[g_cur_font];
+    int font = current_font_or_default();
+    if (font < 0) return;
+    const RtFont& f = g_rt_fonts[font];
     std::string wrapped;
     if (wrapw > 0) {
         double linew = 0;
         size_t last_space = std::string::npos;
         double width_at_space = 0;
-        for (size_t i = 0; i < text.size(); ++i) {
-            char c = text[i];
-            wrapped.push_back(c);
-            if (c == '\n') {
+        for (size_t i = 0; i < text.size();) {
+            size_t start = i;
+            int ch = utf8_next(text, i);
+            wrapped.append(text, start, i - start);
+            if (ch == '\n') {
                 linew = 0;
                 last_space = std::string::npos;
                 continue;
             }
-            const RtGlyph* g = find_glyph(f, (unsigned char)c);
+            const RtGlyph* g = find_glyph(f, ch);
             double adv = g ? g->shift : 0;
-            if (c == ' ') {
+            if (ch == ' ') {
                 last_space = wrapped.size() - 1;
                 width_at_space = linew;
             }
@@ -666,28 +722,33 @@ void kwik_draw_text_ext_rt(double x, double y, const std::string& text, double s
     }
     double saved = -1;
     if (sep > 0) {
-        saved = g_rt_fonts[g_cur_font].line_height;
-        g_rt_fonts[g_cur_font].line_height = sep;
+        saved = g_rt_fonts[font].line_height;
+        g_rt_fonts[font].line_height = sep;
     }
     kwik_draw_text_rt(x, y, wrapped, xs, ys, angle);
-    if (saved >= 0) g_rt_fonts[g_cur_font].line_height = saved;
+    if (saved >= 0) g_rt_fonts[font].line_height = saved;
 }
 
 void kwik_draw_text_rt(double x, double y, const std::string& text, double xs, double ys,
                        double angle) {
-    build_fonts();
+    if (kwik_world_transform_active()) kwik_world_transform_compose(x, y, angle, xs, ys);
+    int font = current_font_or_default();
     static int dbg_left = std::getenv("KWIK_DEBUG_TEXT") ? 40 : 0;
     if (dbg_left > 0 && !text.empty()) {
         --dbg_left;
         int found = 0;
-        if (g_cur_font >= 0)
-            for (char c : text)
-                if (find_glyph(g_rt_fonts[g_cur_font], (unsigned char)c)) ++found;
+        size_t glyphs = 0;
+        if (font >= 0) {
+            for (size_t i = 0; i < text.size();) {
+                ++glyphs;
+                if (find_glyph(g_rt_fonts[font], utf8_next(text, i))) ++found;
+            }
+        }
         std::fprintf(stderr, "[text] font=%d at(%.0f,%.0f) glyphs=%d/%zu \"%.40s\"\n", g_cur_font,
-                     x, y, found, text.size(), text.c_str());
+                     x, y, found, glyphs, text.c_str());
     }
-    if (g_cur_font < 0) return;
-    const RtFont& f = g_rt_fonts[g_cur_font];
+    if (font < 0) return;
+    const RtFont& f = g_rt_fonts[font];
     std::vector<std::pair<size_t, size_t>> lines;
     split_lines(text, lines);
 
@@ -718,8 +779,8 @@ void kwik_draw_text_rt(double x, double y, const std::string& text, double xs, d
         else if (halign == 2) ox -= w;
         double liney = oy + (double)li * line_h;
         double pen = ox;
-        for (size_t i = lines[li].first; i < lines[li].second; ++i) {
-            const RtGlyph* g = find_glyph(f, (unsigned char)text[i]);
+        for (size_t i = lines[li].first; i < lines[li].second;) {
+            const RtGlyph* g = find_glyph(f, utf8_next(text, i));
             if (!g) continue;
             if (g->w > 0 && g->h > 0) {
                 LoadedImage& img = load_image(g->image);
