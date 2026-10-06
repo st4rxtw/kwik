@@ -68,7 +68,7 @@ GMLFN(max) {
 GMLFN(clamp) {
     (void)self;
     double v = A(args, argc, 0), lo = A(args, argc, 1), hi = A(args, argc, 2);
-    return Value(v < lo ? lo : v > hi ? hi : v);
+    return Value(std::max(lo, std::min(v, hi)));
 }
 
 GMLFN(random) { (void)self; return Value(gml_random01() * A(args, argc, 0)); }
