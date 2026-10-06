@@ -352,20 +352,29 @@ void GameData::parse_rooms() {
                 rl.y = (int32_t)ly;
                 rl.visible = i32(lp + 32) ? 1 : 0;
                 if (rl.type == 1) {
+                    auto valid_bg = [&](uint32_t bg) {
+                        int32_t vis = i32(lp + bg);
+                        int32_t fg = i32(lp + bg + 4);
+                        int32_t spr = i32(lp + bg + 8);
+                        uint32_t ht = u32(lp + bg + 12);
+                        uint32_t vt = u32(lp + bg + 16);
+                        uint32_t st = u32(lp + bg + 20);
+                        return (vis == 0 || vis == 1) && (fg == 0 || fg == 1) &&
+                               spr >= -1 && spr < sprite_count && ht <= 1 && vt <= 1 && st <= 1;
+                    };
                     uint32_t bg = 36;
-                    int32_t sprite = i32(lp + bg + 8);
-                    int32_t sprite_alt = i32(lp + 48 + 8);
-                    if ((sprite < 0 || sprite >= sprite_count) && sprite_alt >= 0 && sprite_alt < sprite_count) {
+                    bool old_ok = valid_bg(36);
+                    bool fx_ok = valid_bg(48);
+                    if (fx_ok && (!old_ok || chunk("SEQN") || chunk("FEAT") || chunk("PSEM") || chunk("UILR")))
                         bg = 48;
-                        sprite = sprite_alt;
-                    }
+                    int32_t sprite = i32(lp + bg + 8);
                     rl.visible = (rl.visible && i32(lp + bg) != 0) ? 1 : 0;
                     rl.color = u32(lp + bg + 24);
                     if (sprite >= 0 && sprite < sprite_count) rl.sprite = sprite;
                     uint32_t ht = u32(lp + bg + 12), vt = u32(lp + bg + 16), st = u32(lp + bg + 20);
-                    if (ht <= 1) rl.htiled = (int32_t)ht;
-                    if (vt <= 1) rl.vtiled = (int32_t)vt;
-                    if (st <= 1) rl.stretch = (int32_t)st;
+                    rl.htiled = ht <= 1 ? (int32_t)ht : 0;
+                    rl.vtiled = vt <= 1 ? (int32_t)vt : 0;
+                    rl.stretch = st <= 1 ? (int32_t)st : 0;
                     r.layers.push_back(rl);
                 } else if (rl.type == 2) {
                     uint32_t n = u32(lp + 48);

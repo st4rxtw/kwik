@@ -290,6 +290,13 @@ static int inst_mask(Instance* inst) {
     return m >= 0 ? m : inst_sprite(inst);
 }
 
+static void inst_collision_origin(Instance* inst, const KwikSprite* mask, double& ox, double& oy) {
+    const KwikSprite* visual = kwik_sprite_at(inst_sprite(inst));
+    const KwikSprite* anchor = visual ? visual : mask;
+    ox = anchor ? anchor->origin_x : 0.0;
+    oy = anchor ? anchor->origin_y : 0.0;
+}
+
 struct KBox {
     double x = 0, y = 0;
     double lx0 = 0, lx1 = 0, ly0 = 0, ly1 = 0;
@@ -310,10 +317,12 @@ static KBox make_box(Instance* inst, double px, double py) {
     if (ix != inst->vars.end()) xs = (double)ix->second;
     if (iy != inst->vars.end()) ys = (double)iy->second;
     if (ia != inst->vars.end()) ang = (double)ia->second;
-    double x0 = (s->bbox_left - s->origin_x) * xs;
-    double x1 = (s->bbox_right + 1 - s->origin_x) * xs;
-    double y0 = (s->bbox_top - s->origin_y) * ys;
-    double y1 = (s->bbox_bottom + 1 - s->origin_y) * ys;
+    double ox = 0.0, oy = 0.0;
+    inst_collision_origin(inst, s, ox, oy);
+    double x0 = (s->bbox_left - ox) * xs;
+    double x1 = (s->bbox_right + 1 - ox) * xs;
+    double y0 = (s->bbox_top - oy) * ys;
+    double y1 = (s->bbox_bottom + 1 - oy) * ys;
     b.lx0 = std::min(x0, x1);
     b.lx1 = std::max(x0, x1);
     b.ly0 = std::min(y0, y1);
@@ -342,8 +351,16 @@ static void box_corners(const KBox& b, double cx[4], double cy[4]) {
 static bool boxes_hit(const KBox& a, const KBox& b) {
     if (!a.valid || !b.valid) return false;
     if (!a.rot && !b.rot) {
-        return a.x + a.lx0 < b.x + b.lx1 && a.x + a.lx1 > b.x + b.lx0 &&
-               a.y + a.ly0 < b.y + b.ly1 && a.y + a.ly1 > b.y + b.ly0;
+        double al = a.x + a.lx0, ar = a.x + a.lx1;
+        double at = a.y + a.ly0, ab = a.y + a.ly1;
+        double bl = b.x + b.lx0, br = b.x + b.lx1;
+        double bt = b.y + b.ly0, bb = b.y + b.ly1;
+        if (al >= br || ar <= bl || at >= bb || ab <= bt) return false;
+        double l = std::max(al, bl), r = std::min(ar, br);
+        double t = std::max(at, bt), bot = std::min(ab, bb);
+        if (std::floor(l + 0.5) == std::floor(r + 0.5)) return false;
+        if (std::floor(t + 0.5) == std::floor(bot + 0.5)) return false;
+        return true;
     }
     double ax[4], ay[4], bx[4], by[4];
     box_corners(a, ax, ay);
@@ -380,6 +397,7 @@ static const MaskSet* inst_masks(Instance* inst) {
 }
 
 struct MaskCtx {
+    Instance* inst = nullptr;
     const KwikSprite* s = nullptr;
     const unsigned char* mask = nullptr;
     int mask_w = 0, mask_h = 0, rowbytes = 0;
@@ -390,6 +408,7 @@ struct MaskCtx {
 };
 
 static bool mask_ctx_init(Instance* inst, double at_x, double at_y, MaskCtx& c) {
+    c.inst = inst;
     int spr_idx = inst_mask(inst);
     c.s = kwik_sprite_at(spr_idx);
     if (!c.s) return false;
@@ -431,8 +450,10 @@ static bool mask_ctx_test(const MaskCtx& c, double px, double py) {
         dx = rx;
         dy = ry;
     }
-    double local_x = dx / c.xs + c.s->origin_x;
-    double local_y = dy / c.ys + c.s->origin_y;
+    const KwikSprite* visual = kwik_sprite_at(inst_sprite(c.inst));
+    const KwikSprite* anchor = visual ? visual : c.s;
+    double local_x = dx / c.xs + (anchor ? anchor->origin_x : 0.0);
+    double local_y = dy / c.ys + (anchor ? anchor->origin_y : 0.0);
     int lx = (int)local_x;
     int ly = (int)local_y;
     if (local_x < 0 || local_y < 0 || lx >= c.s->width || ly >= c.s->height) return false;
@@ -492,7 +513,13 @@ static bool probe_hits(HitProbe& p, Instance* b) {
     if (p.l >= br || bl >= p.r || p.t >= bb || bt >= p.b) return false;
 
     const MaskSet* mb = inst_masks(b);
-    if (!p.masks && !mb) return boxes_hit(p.box, kb);
+    if (!p.masks && !mb) {
+        double l = std::max(p.l, bl), r = std::min(p.r, br);
+        double t = std::max(p.t, bt), bot = std::min(p.b, bb);
+        if (std::floor(l + 0.5) == std::floor(r + 0.5)) return false;
+        if (std::floor(t + 0.5) == std::floor(bot + 0.5)) return false;
+        return true;
+    }
 
     if (!p.ctx_ok) {
         if (!mask_ctx_init(p.inst, p.px, p.py, p.ctx)) return false;
